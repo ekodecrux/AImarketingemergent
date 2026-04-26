@@ -1,0 +1,261 @@
+import { useEffect, useState } from "react";
+import api from "@/lib/api";
+import { toast } from "sonner";
+import PageHeader from "@/components/PageHeader";
+import { Plus, Trash, MagnifyingGlass, X } from "@phosphor-icons/react";
+
+const STATUSES = ["NEW", "CONTACTED", "INTERESTED", "CONVERTED", "NOT_INTERESTED"];
+
+export default function Leads() {
+    const [data, setData] = useState({ leads: [], pagination: { total: 0, page: 1, pages: 1 } });
+    const [page, setPage] = useState(1);
+    const [statusFilter, setStatusFilter] = useState("");
+    const [showAdd, setShowAdd] = useState(false);
+    const [showScrape, setShowScrape] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    const load = () => {
+        setLoading(true);
+        const params = { page, limit: 20 };
+        if (statusFilter) params.status_filter = statusFilter;
+        api.get("/leads", { params })
+            .then((r) => setData(r.data))
+            .finally(() => setLoading(false));
+    };
+
+    useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, statusFilter]);
+
+    const handleDelete = async (id) => {
+        await api.delete(`/leads/${id}`);
+        toast.success("Lead deleted");
+        load();
+    };
+
+    const handleStatusChange = async (id, status) => {
+        await api.put(`/leads/${id}`, { status });
+        load();
+    };
+
+    return (
+        <div>
+            <PageHeader
+                eyebrow="// Pipeline"
+                title="Leads"
+                subtitle={`${data.pagination.total} total · page ${data.pagination.page} of ${data.pagination.pages || 1}`}
+                action={
+                    <div className="flex gap-3">
+                        <button data-testid="open-scrape-modal" onClick={() => setShowScrape(true)} className="zm-btn-secondary">
+                            <MagnifyingGlass size={14} weight="bold" /> Scrape
+                        </button>
+                        <button data-testid="open-add-lead-modal" onClick={() => setShowAdd(true)} className="zm-btn-primary">
+                            <Plus size={14} weight="bold" /> Add Lead
+                        </button>
+                    </div>
+                }
+            />
+
+            <div className="px-8 py-6">
+                <div className="flex items-center gap-3 mb-4">
+                    <span className="zm-section-label">Filter</span>
+                    <select
+                        value={statusFilter}
+                        onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+                        className="zm-input w-auto"
+                        data-testid="leads-status-filter"
+                    >
+                        <option value="">All statuses</option>
+                        {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                </div>
+
+                <div className="zm-card overflow-x-auto">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="border-b border-[#E4E4E7]">
+                                <th className="text-left px-4 py-3 zm-section-label">Name</th>
+                                <th className="text-left px-4 py-3 zm-section-label">Email</th>
+                                <th className="text-left px-4 py-3 zm-section-label">Phone</th>
+                                <th className="text-left px-4 py-3 zm-section-label">Source</th>
+                                <th className="text-left px-4 py-3 zm-section-label">Status</th>
+                                <th className="text-left px-4 py-3 zm-section-label">Score</th>
+                                <th className="px-4 py-3"></th>
+                            </tr>
+                        </thead>
+                        <tbody data-testid="leads-table-body">
+                            {loading && (
+                                <tr><td colSpan={7} className="px-4 py-12 text-center text-[#A1A1AA]">Loading…</td></tr>
+                            )}
+                            {!loading && data.leads.length === 0 && (
+                                <tr><td colSpan={7} className="px-4 py-16 text-center text-[#A1A1AA]">
+                                    No leads. Add manually or use Scrape.
+                                </td></tr>
+                            )}
+                            {data.leads.map((l) => (
+                                <tr key={l.id} className="border-b border-[#E4E4E7] last:border-b-0 hover:bg-[#F9F9FB]">
+                                    <td className="px-4 py-3 font-semibold">{l.name}</td>
+                                    <td className="px-4 py-3 text-[#71717A]">{l.email || "—"}</td>
+                                    <td className="px-4 py-3 text-[#71717A]">{l.phone || "—"}</td>
+                                    <td className="px-4 py-3"><span className="zm-badge bg-[#F4F4F5] text-[#09090B]">{l.source}</span></td>
+                                    <td className="px-4 py-3">
+                                        <select value={l.status} onChange={(e) => handleStatusChange(l.id, e.target.value)} className="text-xs border border-[#E4E4E7] px-2 py-1 bg-white">
+                                            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                    </td>
+                                    <td className="px-4 py-3 font-mono text-xs">{l.score}</td>
+                                    <td className="px-4 py-3 text-right">
+                                        <button data-testid={`delete-lead-${l.id}`} onClick={() => handleDelete(l.id)} className="text-[#71717A] hover:text-[#E32636]">
+                                            <Trash size={16} weight="bold" />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Pagination */}
+                <div className="flex items-center justify-between mt-4">
+                    <p className="text-xs text-[#71717A]">
+                        {data.pagination.total} results
+                    </p>
+                    <div className="flex gap-2">
+                        <button disabled={page === 1} onClick={() => setPage(page - 1)} className="zm-btn-secondary disabled:opacity-40" data-testid="leads-prev-page">Prev</button>
+                        <button disabled={page >= (data.pagination.pages || 1)} onClick={() => setPage(page + 1)} className="zm-btn-secondary disabled:opacity-40" data-testid="leads-next-page">Next</button>
+                    </div>
+                </div>
+            </div>
+
+            {showAdd && <AddLeadModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
+            {showScrape && <ScrapeModal onClose={() => setShowScrape(false)} onDone={() => { setShowScrape(false); load(); }} />}
+        </div>
+    );
+}
+
+function AddLeadModal({ onClose, onSaved }) {
+    const [form, setForm] = useState({ name: "", email: "", phone: "", company: "", notes: "" });
+    const [loading, setLoading] = useState(false);
+    const submit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            await api.post("/leads", form);
+            toast.success("Lead added");
+            onSaved();
+        } catch (err) {
+            toast.error("Failed to add");
+        } finally {
+            setLoading(false);
+        }
+    };
+    return (
+        <ModalShell title="Add lead" eyebrow="// New record" onClose={onClose}>
+            <form onSubmit={submit} className="space-y-4" data-testid="add-lead-form">
+                {["name", "email", "phone", "company"].map((k) => (
+                    <div key={k}>
+                        <label className="zm-label">{k}</label>
+                        <input className="zm-input" required={k === "name"} value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} data-testid={`add-lead-${k}`} />
+                    </div>
+                ))}
+                <div>
+                    <label className="zm-label">Notes</label>
+                    <textarea className="zm-input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} data-testid="add-lead-notes" />
+                </div>
+                <div className="flex gap-3 pt-2">
+                    <button type="submit" disabled={loading} className="zm-btn-primary flex-1" data-testid="add-lead-submit">{loading ? "Saving…" : "Add lead"}</button>
+                    <button type="button" onClick={onClose} className="zm-btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </ModalShell>
+    );
+}
+
+function ScrapeModal({ onClose, onDone }) {
+    const [type, setType] = useState("GOOGLE_MAPS_LEADS");
+    const [location, setLocation] = useState("");
+    const [keyword, setKeyword] = useState("");
+    const [website, setWebsite] = useState("");
+    const [loading, setLoading] = useState(false);
+
+    const submit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            const res = await api.post("/scraping/start", { type, location, keyword, website });
+            toast.success(`Imported ${res.data.count} leads`);
+            onDone();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Scrape failed");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <ModalShell title="AI Lead Discovery" eyebrow="// Scrape engine" onClose={onClose}>
+            <form onSubmit={submit} className="space-y-4" data-testid="scrape-form">
+                <div className="grid grid-cols-3 gap-2">
+                    {[
+                        ["GOOGLE_MAPS_LEADS", "Maps"],
+                        ["LINKEDIN_LEADS", "LinkedIn"],
+                        ["COMPETITOR_KEYWORDS", "Competitors"],
+                    ].map(([v, label]) => (
+                        <button
+                            key={v} type="button" onClick={() => setType(v)}
+                            data-testid={`scrape-type-${v}`}
+                            className={`px-3 py-2.5 text-xs uppercase tracking-[0.15em] font-bold border ${
+                                type === v ? "bg-[#09090B] text-white border-[#09090B]" : "bg-white text-[#71717A] border-[#E4E4E7] hover:border-[#09090B]"
+                            }`}
+                        >{label}</button>
+                    ))}
+                </div>
+
+                {type !== "COMPETITOR_KEYWORDS" ? (
+                    <>
+                        <div>
+                            <label className="zm-label">Location {type === "LINKEDIN_LEADS" && "(optional)"}</label>
+                            <input className="zm-input" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g., Bangalore, India" data-testid="scrape-location" />
+                        </div>
+                        <div>
+                            <label className="zm-label">Keyword / Role</label>
+                            <input className="zm-input" required value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="e.g., dental clinics" data-testid="scrape-keyword" />
+                        </div>
+                    </>
+                ) : (
+                    <div>
+                        <label className="zm-label">Competitor website</label>
+                        <input className="zm-input" required value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://example.com" data-testid="scrape-website" />
+                    </div>
+                )}
+
+                <p className="text-xs text-[#71717A] bg-[#F4F4F5] p-3 border-l-2 border-[#002EB8]">
+                    Powered by Groq AI · Generates research-grade lead data based on your inputs and auto-imports into your pipeline.
+                </p>
+
+                <div className="flex gap-3">
+                    <button type="submit" disabled={loading} className="zm-btn-primary flex-1" data-testid="scrape-submit">{loading ? "Scraping…" : "Start scrape"}</button>
+                    <button type="button" onClick={onClose} className="zm-btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </ModalShell>
+    );
+}
+
+export function ModalShell({ title, eyebrow, onClose, children, size = "md" }) {
+    const widths = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-4xl" };
+    return (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+            <div className={`bg-white border border-[#E4E4E7] w-full ${widths[size]} max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start justify-between p-6 border-b border-[#E4E4E7]">
+                    <div>
+                        {eyebrow && <p className="zm-section-label mb-1">{eyebrow}</p>}
+                        <h2 className="font-display text-2xl font-bold tracking-tight">{title}</h2>
+                    </div>
+                    <button onClick={onClose} className="text-[#71717A] hover:text-[#09090B]" data-testid="modal-close">
+                        <X size={18} weight="bold" />
+                    </button>
+                </div>
+                <div className="p-6">{children}</div>
+            </div>
+        </div>
+    );
+}

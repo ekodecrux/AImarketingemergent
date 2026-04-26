@@ -1,0 +1,46 @@
+{
+  "summary": "Backend integration testing of ZeroMark AI complete. 37/37 tests pass covering Auth, Business, Leads, Campaigns, Approvals, AI generation (Groq), Dashboard, Reports, Scraping (AI-generated leads), Subscription/Razorpay.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/register", "issue": "Password min_length=6 is weak (industry standard is 8+); also register endpoint doesn't enforce password complexity."},
+      {"endpoint": "GET /api/auth/me", "issue": "Falls back to cookie when no Authorization header. Works correctly but means a logged-in browser session can hit endpoints without explicit token; expected for cookie auth but worth documenting."},
+      {"endpoint": "POST /api/auth/login", "issue": "No brute-force lockout / rate limiting per playbook (5-fail lockout). Currently unlimited login attempts allowed."},
+      {"endpoint": "set_cookie samesite=lax + no secure flag", "issue": "Cookie missing 'secure=True' and not 'samesite=none' which is required for cross-site (frontend on different domain than backend) - cookie may not be sent for cross-origin requests in production. Bearer token works fine; cookie auth from browser may break."},
+      {"endpoint": "CORSMiddleware", "issue": "CORS_ORIGINS is set to '*' in .env while allow_credentials=True. Browsers reject wildcard origin with credentials; should be explicit origin list."},
+      {"endpoint": "POST /api/leads/import", "issue": "No upper bound on bulk size; could be abused for huge inserts."},
+      {"endpoint": "POST /api/campaigns/{id}/send", "issue": "Always pulls all leads (limit 500), no segmentation/targeting. Synchronous SMTP/Twilio loop will timeout for large lists; should be async/background."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_zeromark_backend.py",
+    "/app/test_reports/pytest/zeromark_results.xml"
+  ],
+  "action_items": [
+    "Tighten CORS: replace wildcard with explicit allowed origins since allow_credentials=True is set (browsers will reject '*' + credentials).",
+    "Add cookie 'secure=True' and 'samesite=none' so cookie auth works across origins; or document that frontend must use Bearer token (currently does).",
+    "Add login brute-force lockout (per auth playbook: lock after 5 failed attempts).",
+    "Move /api/campaigns/{id}/send to a background task; current implementation blocks the request loop and will time out on >50 leads.",
+    "Add limit/cap on /api/leads/import bulk size."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~977 lines - approaching split threshold; consider modularising (auth.py, leads.py, campaigns.py, ai.py, billing.py).",
+    "Approval modify endpoint allows ANY user-supplied content to overwrite campaign content with no length/sanitization checks.",
+    "Razorpay client initialised on every checkout/verify call - okay but could be cached.",
+    "smtplib in run_in_executor is synchronous-per-lead; for production use aiosmtplib or queue.",
+    "Trial days calc: datetime.fromisoformat may throw on bad data; wrap in try/except.",
+    "_ai_generate_sample_leads inserts straight into leads collection without dedup against existing email/phone.",
+    "Password min length of 6 chars is weak; recommend >=8 with at least one digit/symbol."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_zeromark_backend.py"
+  ],
+  "success_rate": {"backend": "100% (37/37)", "frontend": "not tested"},
+  "test_credentials": "admin@zeromark.ai / admin123 (auto-seeded, login verified)",
+  "seed_data_creation": "Tests create TEST_-prefixed leads, campaigns, business profile; session-scoped fixture cleans up TEST_ leads & campaigns at end. Reports/scraping jobs/approvals are not cleaned (no DELETE endpoints).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All backend endpoints from review_request verified end-to-end. Razorpay test mode creates real test orders; signature verify correctly rejects bad signatures. Groq AI generation (EMAIL/SMS) returns content within ~2-5s. Real SMTP/Twilio sends executed during test_send_campaign_after_approval - they may rate-limit but endpoint returns 200 with sent/failed counts. CORS '*' + credentials=True is the most likely production-time blocker for browser cookie auth.",
+  "rca of the issue": "Two initial test failures were both test-side issues, not backend bugs: (1) backend lowercases emails on register but test asserted exact case; (2) shared requests.Session retained admin cookie from earlier login, so unauth-check returned 200 - fixed by using a fresh session. After fixes, 100% pass."
+}
