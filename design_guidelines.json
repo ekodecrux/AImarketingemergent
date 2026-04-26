@@ -1,0 +1,123 @@
+{
+  "theme": "light",
+  "archetype": "Swiss & High-Contrast",
+  "domain": "B2B Marketing SaaS, Admin Dashboard",
+  "design_decisions": {
+    "philosophy": "ZeroMark AI is an authoritative, precision-focused B2B marketing engine. We are avoiding the standard 'soft UI' and 'AI gradients'. Instead, we embrace the Swiss & High-Contrast archetype. Content is stripped of decoration so the data, leads, and metrics take center stage. Every pixel must feel deliberate, rigid, and functional.",
+    "anti_patterns": [
+      "No purple-blue gradients",
+      "No Inter font",
+      "No rounded, soft, friendly UI elements (no rounded-2xl or rounded-3xl)",
+      "No center-aligned dense data"
+    ]
+  },
+  "typography": {
+    "headings": {
+      "family": "Cabinet Grotesk",
+      "source": "https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,500,700,900&display=swap",
+      "weights": ["500", "700", "900"],
+      "styling": "tracking-tight"
+    },
+    "body": {
+      "family": "Manrope",
+      "source": "https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap",
+      "weights": ["400", "500", "600", "700"],
+      "styling": "leading-relaxed tracking-normal"
+    },
+    "scales": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-black tracking-tighter",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-bold tracking-tight",
+      "h4": "text-lg sm:text-xl font-semibold tracking-tight",
+      "body": "text-base",
+      "small_label": "text-xs font-bold uppercase tracking-[0.2em]"
+    }
+  },
+  "colors": {
+    "background": "#F4F4F5",
+    "card": "#FFFFFF",
+    "foreground": "#09090B",
+    "primary": {
+      "DEFAULT": "#002EB8",
+      "foreground": "#FFFFFF",
+      "hover": "#001A7A"
+    },
+    "secondary": {
+      "DEFAULT": "#18181B",
+      "foreground": "#FFFFFF"
+    },
+    "muted": {
+      "DEFAULT": "#E4E4E7",
+      "foreground": "#71717A"
+    },
+    "border": "#E4E4E7",
+    "destructive": {
+      "DEFAULT": "#E32636",
+      "foreground": "#FFFFFF"
+    },
+    "success": {
+      "DEFAULT": "#10B981",
+      "foreground": "#FFFFFF"
+    },
+    "warning": {
+      "DEFAULT": "#F59E0B",
+      "foreground": "#FFFFFF"
+    }
+  },
+  "spacing_and_layout": {
+    "grid_strategy": "The 'Control Room' Grid",
+    "base_grid": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4",
+    "gap": "gap-4 md:gap-6",
+    "padding": "p-6 md:p-8",
+    "radius": "rounded-none md:rounded-sm",
+    "shadows": "shadow-none",
+    "borders": "1px solid border-border",
+    "alignment": "Strictly left-aligned for data and paragraphs. Optical alignment over mathematical."
+  },
+  "surfaces_and_components": {
+    "cards": "Flat background (bg-white), 1px solid subtle border (border-border), no shadow. Sharp corners (rounded-none).",
+    "buttons": "Rectangle, no border-radius. Primary uses #002EB8. Explicit hover states required (hover:bg-[#001A7A] hover:text-white).",
+    "tables": "Grid Borders pattern. Border-collapse style. Border-b on every row. No alternating row colors, pure white background.",
+    "badges": "Tiny, uppercase, wide letter spacing (tracking-[0.2em]). Solid colors (destructive, success, warning) with white text, or stark black-and-white.",
+    "sidebar": "Stark white background (bg-white) with sharp right border (border-r border-border), compact padding.",
+    "forms": "Inputs have 1px solid border, rounded-none, ring-0, focus:border-primary focus:ring-1 focus:ring-primary."
+  },
+  "interactions": {
+    "hover_states": "ALWAYS explicitly set text color on hover. Slight background darken or translate-y-[-2px] for interactive cards.",
+    "focus_states": "High contrast focus ring (focus:ring-2 focus:ring-primary focus:outline-none).",
+    "testing_attributes": "All interactive elements MUST include data-testid (e.g., data-testid='login-submit-button')."
+  },
+  "icons_library": {
+    "package": "@phosphor-icons/react",
+    "installation": "yarn add @phosphor-icons/react",
+    "usage": "Use bold or regular weight depending on the text context. Avoid duotone for dashboards to maintain the Swiss aesthetic."
+  },
+  "media": {
+    "images": {
+      "onboarding_bg": {
+        "url": "https://images.unsplash.com/photo-1765408217205-1c42d81f1677?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MDV8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGRhdGElMjBnZW9tZXRyeXxlbnwwfHx8fDE3NzcyMjcxMDR8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract black and white geometric shapes and lines for login/onboarding split screen."
+      },
+      "team_collaboration": {
+        "url": "https://images.pexels.com/photos/36733304/pexels-photo-36733304.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Professional corporate team for profile or settings context."
+      }
+    },
+    "logos": {
+      "placeholder_integrations": [
+        "https://images.unsplash.com/photo-1765448808249-a3610f38e612?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwyfHxjb21wYW55JTIwbG9nbyUyMGJsYWNrJTIwYW5kJTIwd2hpdGV8ZW58MHx8fHwxNzc3MjI3MTEzfDA&ixlib=rb-4.1.0&q=85",
+        "https://images.pexels.com/photos/6197157/pexels-photo-6197157.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ]
+    }
+  },
+  "instructions_to_main_agent": [
+    "Load Cabinet Grotesk from Fontshare and Manrope from Google Fonts in index.html or index.css.",
+    "Do NOT use standard Shadcn border radii. Modify tailwind.config.js to set --radius to 0px or 2px max.",
+    "Implement the Layout using a permanent sidebar navigation and a top header for breadcrumbs/user profile.",
+    "Use standard HTML/Tailwind for structural layouts; customize Shadcn components heavily to remove their Vercel-like soft aesthetics.",
+    "Replace standard 100% overlay layers with subtle bg-black/40 if placing text over images.",
+    "Every actionable button or link must have a stable data-testid for testing.",
+    "Ensure 'Approvals Queue' heavily uses the Swiss pattern with stark color-coded actions for Approve/Reject.",
+    "Implement Web Scraping Lead Import modal using a strict, minimal UI to emphasize the technical nature of the task."
+  ]
+}
