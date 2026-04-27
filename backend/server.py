@@ -27,6 +27,11 @@ import jwt
 import requests as _http
 from cryptography.fernet import Fernet
 import base64
+import imaplib
+import email as _email_lib
+from email.header import decode_header
+from email.utils import parseaddr
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -72,6 +77,11 @@ def _dec(value: str) -> Optional[str]:
 
 
 SENSITIVE_INTEGRATION_KEYS = {"access_token", "auth_token", "bearer_token", "api_key", "client_secret", "page_access_token"}
+
+
+def ws(user: Dict[str, Any]) -> str:
+    """Return the workspace_id for a user (defaults to user.id for solo)."""
+    return user.get("workspace_id") or user["id"]
 
 # Module-level Groq client reused across calls
 _GROQ = Groq(api_key=os.environ["GROQ_API_KEY"])
@@ -307,6 +317,7 @@ async def register(payload: RegisterIn, response: Response):
         "first_name": payload.first_name,
         "last_name": payload.last_name,
         "role": "user",
+        "workspace_id": user_id,
         "created_at": now_utc().isoformat(),
     }
     await db.users.insert_one(doc)
@@ -380,7 +391,7 @@ async def me(user=Depends(get_current_user)):
 # ---------- Business Profile ----------
 @api.get("/business")
 async def get_business(user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0})
     return {"profile": profile}
 
 
@@ -389,14 +400,14 @@ async def upsert_business(payload: BusinessProfileIn, user=Depends(get_current_u
     data = payload.model_dump()
     data["user_id"] = user["id"]
     data["updated_at"] = now_utc().isoformat()
-    existing = await db.business_profiles.find_one({"user_id": user["id"]})
+    existing = await db.business_profiles.find_one({"user_id": ws(user)})
     if existing:
-        await db.business_profiles.update_one({"user_id": user["id"]}, {"$set": data})
+        await db.business_profiles.update_one({"user_id": ws(user)}, {"$set": data})
     else:
         data["id"] = str(uuid.uuid4())
         data["created_at"] = now_utc().isoformat()
         await db.business_profiles.insert_one(data)
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0})
     return {"profile": profile}
 
 
@@ -409,7 +420,7 @@ async def list_leads(
     source: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    q: Dict[str, Any] = {"user_id": user["id"]}
+    q: Dict[str, Any] = {"user_id": ws(user)}
     if status_filter:
         q["status"] = status_filter
     if source:
@@ -440,7 +451,7 @@ async def update_lead(lead_id: str, payload: LeadUpdateIn, user=Depends(get_curr
     if not update:
         raise HTTPException(status_code=400, detail="Nothing to update")
     update["updated_at"] = now_utc().isoformat()
-    res = await db.leads.update_one({"id": lead_id, "user_id": user["id"]}, {"$set": update})
+    res = await db.leads.update_one({"id": lead_id, "user_id": ws(user)}, {"$set": update})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Lead not found")
     return {"success": True}
@@ -448,7 +459,7 @@ async def update_lead(lead_id: str, payload: LeadUpdateIn, user=Depends(get_curr
 
 @api.delete("/leads/{lead_id}")
 async def delete_lead(lead_id: str, user=Depends(get_current_user)):
-    await db.leads.delete_one({"id": lead_id, "user_id": user["id"]})
+    await db.leads.delete_one({"id": lead_id, "user_id": ws(user)})
     return {"success": True}
 
 
@@ -469,7 +480,7 @@ async def import_leads(leads: List[LeadIn], user=Depends(get_current_user)):
 # ---------- Campaigns ----------
 @api.get("/campaigns")
 async def list_campaigns(user=Depends(get_current_user)):
-    cursor = db.campaigns.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1)
+    cursor = db.campaigns.find({"user_id": ws(user)}, {"_id": 0}).sort("created_at", -1)
     campaigns = await cursor.to_list(500)
     return {"campaigns": campaigns}
 
@@ -488,7 +499,7 @@ async def create_campaign(payload: CampaignIn, user=Depends(get_current_user)):
     # Add to approval queue
     await db.approvals.insert_one({
         "id": str(uuid.uuid4()),
-        "user_id": user["id"],
+        "user_id": ws(user),
         "campaign_id": cid,
         "channel": payload.channel,
         "content": payload.content,
@@ -502,7 +513,7 @@ async def create_campaign(payload: CampaignIn, user=Depends(get_current_user)):
 
 @api.get("/campaigns/{cid}")
 async def get_campaign(cid: str, user=Depends(get_current_user)):
-    c = await db.campaigns.find_one({"id": cid, "user_id": user["id"]}, {"_id": 0})
+    c = await db.campaigns.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
     if not c:
         raise HTTPException(status_code=404, detail="Campaign not found")
     return {"campaign": c}
@@ -510,21 +521,21 @@ async def get_campaign(cid: str, user=Depends(get_current_user)):
 
 @api.delete("/campaigns/{cid}")
 async def delete_campaign(cid: str, user=Depends(get_current_user)):
-    await db.campaigns.delete_one({"id": cid, "user_id": user["id"]})
+    await db.campaigns.delete_one({"id": cid, "user_id": ws(user)})
     await db.approvals.delete_many({"campaign_id": cid})
     return {"success": True}
 
 
 @api.post("/campaigns/{cid}/send")
 async def send_campaign(cid: str, background: BackgroundTasks, user=Depends(get_current_user)):
-    campaign = await db.campaigns.find_one({"id": cid, "user_id": user["id"]}, {"_id": 0})
+    campaign = await db.campaigns.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     if campaign["status"] not in ("APPROVED", "MODIFIED"):
         raise HTTPException(status_code=400, detail="Campaign not approved")
     # Mark as SENDING and dispatch background job
     await db.campaigns.update_one({"id": cid}, {"$set": {"status": "SENDING", "started_at": now_utc().isoformat()}})
-    background.add_task(_run_campaign_send, cid, user["id"])
+    background.add_task(_run_campaign_send, cid, ws(user))
     return {"success": True, "queued": True, "message": "Campaign queued for delivery — refresh to see status."}
 
 
@@ -658,7 +669,8 @@ def _send_whatsapp_sync(to: str, body: str, from_number: Optional[str] = None) -
 # ---------- AI Generate ----------
 @api.post("/ai/generate-content")
 async def ai_generate_content(payload: AIGenerateIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    await check_ai_rate_limit(user)
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0})
     business_ctx = ""
     if profile:
         business_ctx = (
@@ -713,7 +725,7 @@ async def ai_generate_content(payload: AIGenerateIn, user=Depends(get_current_us
 # ---------- Approvals ----------
 @api.get("/approvals")
 async def get_approvals(user=Depends(get_current_user)):
-    cursor = db.approvals.find({"user_id": user["id"], "status": "PENDING"}, {"_id": 0}).sort("created_at", -1)
+    cursor = db.approvals.find({"user_id": ws(user), "status": "PENDING"}, {"_id": 0}).sort("created_at", -1)
     approvals = await cursor.to_list(200)
     # Attach campaign info
     for a in approvals:
@@ -724,7 +736,7 @@ async def get_approvals(user=Depends(get_current_user)):
 
 @api.post("/approvals/{aid}/approve")
 async def approve(aid: str, payload: ApprovalActionIn, user=Depends(get_current_user)):
-    a = await db.approvals.find_one({"id": aid, "user_id": user["id"]})
+    a = await db.approvals.find_one({"id": aid, "user_id": ws(user)})
     if not a:
         raise HTTPException(status_code=404, detail="Approval not found")
     await db.approvals.update_one({"id": aid}, {"$set": {
@@ -737,7 +749,7 @@ async def approve(aid: str, payload: ApprovalActionIn, user=Depends(get_current_
 
 @api.post("/approvals/{aid}/reject")
 async def reject(aid: str, payload: ApprovalActionIn, user=Depends(get_current_user)):
-    a = await db.approvals.find_one({"id": aid, "user_id": user["id"]})
+    a = await db.approvals.find_one({"id": aid, "user_id": ws(user)})
     if not a:
         raise HTTPException(status_code=404, detail="Approval not found")
     await db.approvals.update_one({"id": aid}, {"$set": {
@@ -752,7 +764,7 @@ async def reject(aid: str, payload: ApprovalActionIn, user=Depends(get_current_u
 async def modify(aid: str, payload: ApprovalActionIn, user=Depends(get_current_user)):
     if not payload.content:
         raise HTTPException(status_code=400, detail="Content required")
-    a = await db.approvals.find_one({"id": aid, "user_id": user["id"]})
+    a = await db.approvals.find_one({"id": aid, "user_id": ws(user)})
     if not a:
         raise HTTPException(status_code=404, detail="Approval not found")
     await db.approvals.update_one({"id": aid}, {"$set": {
@@ -833,7 +845,7 @@ async def dashboard_stats(user=Depends(get_current_user)):
 # ---------- Reports ----------
 @api.get("/reports")
 async def list_reports(user=Depends(get_current_user)):
-    reports = await db.reports.find({"user_id": user["id"]}, {"_id": 0}).sort("generated_at", -1).to_list(50)
+    reports = await db.reports.find({"user_id": ws(user)}, {"_id": 0}).sort("generated_at", -1).to_list(50)
     return {"reports": reports}
 
 
@@ -904,7 +916,7 @@ async def start_scrape(payload: ScrapeIn, user=Depends(get_current_user)):
     job_id = str(uuid.uuid4())
     job = {
         "id": job_id,
-        "user_id": user["id"],
+        "user_id": ws(user),
         "type": payload.type,
         "params": payload.model_dump(),
         "status": "PROCESSING",
@@ -984,7 +996,7 @@ async def _ai_generate_sample_leads(payload: ScrapeIn, user_id: str) -> List[Dic
 
 @api.get("/scraping/jobs")
 async def list_scraping_jobs(user=Depends(get_current_user)):
-    jobs = await db.scraping_jobs.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    jobs = await db.scraping_jobs.find({"user_id": ws(user)}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
     return {"jobs": jobs}
 
 
@@ -1003,7 +1015,7 @@ async def list_plans():
 
 @api.get("/subscription/me")
 async def my_subscription(user=Depends(get_current_user)):
-    sub = await db.subscriptions.find_one({"user_id": user["id"]}, {"_id": 0})
+    sub = await db.subscriptions.find_one({"user_id": ws(user)}, {"_id": 0})
     return {"subscription": sub}
 
 
@@ -1018,7 +1030,7 @@ async def create_checkout(payload: CheckoutIn, user=Depends(get_current_user)):
         "amount": amount_paise,
         "currency": os.environ.get("RAZORPAY_CURRENCY", "INR"),
         "receipt": f"sub_{user['id'][:8]}_{int(now_utc().timestamp())}",
-        "notes": {"user_id": user["id"], "plan_id": payload.plan_id},
+        "notes": {"user_id": ws(user), "plan_id": payload.plan_id},
     })
     return {
         "order_id": order["id"],
@@ -1043,7 +1055,7 @@ async def verify_payment(payload: VerifyPaymentIn, user=Depends(get_current_user
 
     plan_name = payload.plan_id.upper()
     await db.subscriptions.update_one(
-        {"user_id": user["id"]},
+        {"user_id": ws(user)},
         {"$set": {
             "plan": plan_name,
             "status": "ACTIVE",
@@ -1056,7 +1068,7 @@ async def verify_payment(payload: VerifyPaymentIn, user=Depends(get_current_user
     )
     await db.payments.insert_one({
         "id": str(uuid.uuid4()),
-        "user_id": user["id"],
+        "user_id": ws(user),
         "razorpay_order_id": payload.razorpay_order_id,
         "razorpay_payment_id": payload.razorpay_payment_id,
         "plan_id": payload.plan_id,
@@ -1116,7 +1128,8 @@ def _score_leads_sync(business_ctx: str, leads: List[Dict[str, Any]]) -> List[Di
 
 @api.post("/leads/score-batch")
 async def score_leads_batch(payload: ScoreLeadIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    await check_ai_rate_limit(user)
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0})
     business_ctx = ""
     if profile:
         business_ctx = (
@@ -1125,7 +1138,7 @@ async def score_leads_batch(payload: ScoreLeadIn, user=Depends(get_current_user)
             f"Target Audience: {profile.get('target_audience', '')}\n"
             f"Description: {profile.get('description', '')}\n"
         )
-    q: Dict[str, Any] = {"user_id": user["id"]}
+    q: Dict[str, Any] = {"user_id": ws(user)}
     if payload.lead_ids:
         q["id"] = {"$in": payload.lead_ids}
     leads = await db.leads.find(q, {"_id": 0}).limit(50).to_list(50)
@@ -1137,7 +1150,7 @@ async def score_leads_batch(payload: ScoreLeadIn, user=Depends(get_current_user)
     for s in scores:
         try:
             await db.leads.update_one(
-                {"id": s["id"], "user_id": user["id"]},
+                {"id": s["id"], "user_id": ws(user)},
                 {"$set": {
                     "score": int(s.get("score", 0)),
                     "score_reason": s.get("reason", ""),
@@ -1152,11 +1165,11 @@ async def score_leads_batch(payload: ScoreLeadIn, user=Depends(get_current_user)
 # ---------- Lead Detail / Mini-CRM ----------
 @api.get("/leads/{lead_id}")
 async def get_lead(lead_id: str, user=Depends(get_current_user)):
-    lead = await db.leads.find_one({"id": lead_id, "user_id": user["id"]}, {"_id": 0})
+    lead = await db.leads.find_one({"id": lead_id, "user_id": ws(user)}, {"_id": 0})
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     comms = await db.communications.find(
-        {"lead_id": lead_id, "user_id": user["id"]},
+        {"lead_id": lead_id, "user_id": ws(user)},
         {"_id": 0},
     ).sort("sent_at", -1).limit(50).to_list(50)
     return {"lead": lead, "communications": comms}
@@ -1170,12 +1183,12 @@ class CommIn(BaseModel):
 
 @api.post("/leads/{lead_id}/communications")
 async def log_communication(lead_id: str, payload: CommIn, user=Depends(get_current_user)):
-    lead = await db.leads.find_one({"id": lead_id, "user_id": user["id"]})
+    lead = await db.leads.find_one({"id": lead_id, "user_id": ws(user)})
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     comm = {
         "id": str(uuid.uuid4()),
-        "user_id": user["id"],
+        "user_id": ws(user),
         "lead_id": lead_id,
         "channel": payload.channel,
         "direction": payload.direction,
@@ -1196,10 +1209,10 @@ class AIReplyIn(BaseModel):
 
 @api.post("/leads/{lead_id}/ai-reply")
 async def ai_draft_reply(lead_id: str, payload: AIReplyIn, user=Depends(get_current_user)):
-    lead = await db.leads.find_one({"id": lead_id, "user_id": user["id"]}, {"_id": 0})
+    lead = await db.leads.find_one({"id": lead_id, "user_id": ws(user)}, {"_id": 0})
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
 
     prompt = (
         f"You are an SDR replying to an inbound message from a lead.\n"
@@ -1229,7 +1242,7 @@ class IntegrationIn(BaseModel):
 
 @api.get("/integrations")
 async def list_integrations(user=Depends(get_current_user)):
-    integ = await db.integrations.find_one({"user_id": user["id"]}, {"_id": 0}) or {"user_id": user["id"]}
+    integ = await db.integrations.find_one({"user_id": ws(user)}, {"_id": 0}) or {"user_id": ws(user)}
     # Strip secrets from response
     safe = {"user_id": integ.get("user_id")}
     for k, v in integ.items():
@@ -1253,8 +1266,8 @@ async def upsert_integration(payload: IntegrationIn, user=Depends(get_current_us
     cfg["updated_at"] = now_utc().isoformat()
     update = {field: cfg}
     await db.integrations.update_one(
-        {"user_id": user["id"]},
-        {"$set": update, "$setOnInsert": {"user_id": user["id"]}},
+        {"user_id": ws(user)},
+        {"$set": update, "$setOnInsert": {"user_id": ws(user)}},
         upsert=True,
     )
     return {"success": True, "channel": field}
@@ -1263,7 +1276,7 @@ async def upsert_integration(payload: IntegrationIn, user=Depends(get_current_us
 @api.delete("/integrations/{channel}")
 async def disconnect_integration(channel: str, user=Depends(get_current_user)):
     await db.integrations.update_one(
-        {"user_id": user["id"]},
+        {"user_id": ws(user)},
         {"$unset": {channel.lower(): ""}},
     )
     return {"success": True}
@@ -1272,7 +1285,8 @@ async def disconnect_integration(channel: str, user=Depends(get_current_user)):
 # ---------- Daily AI Growth Briefing ----------
 @api.post("/briefing/generate")
 async def generate_briefing(user=Depends(get_current_user)):
-    uid = user["id"]
+    await check_ai_rate_limit(user)
+    uid = ws(user)
     profile = await db.business_profiles.find_one({"user_id": uid}, {"_id": 0}) or {}
 
     # Pull last 7 days metrics
@@ -1335,7 +1349,7 @@ async def generate_briefing(user=Depends(get_current_user)):
 @api.get("/briefing/latest")
 async def latest_briefing(user=Depends(get_current_user)):
     rec = await db.briefings.find_one(
-        {"user_id": user["id"]}, {"_id": 0}, sort=[("generated_at", -1)]
+        {"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)]
     )
     return {"briefing": rec}
 
@@ -1402,7 +1416,8 @@ class MarketAnalysisIn(BaseModel):
 
 @api.post("/market/analyze")
 async def market_analyze(payload: MarketAnalysisIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    await check_ai_rate_limit(user)
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     url = payload.website_url or profile.get("website_url") or ""
 
     biz_ctx = (
@@ -1440,7 +1455,7 @@ async def market_analyze(payload: MarketAnalysisIn, user=Depends(get_current_use
 
     record = {
         "id": str(uuid.uuid4()),
-        "user_id": user["id"],
+        "user_id": ws(user),
         "type": "MARKET",
         "data": analysis,
         "generated_at": now_utc().isoformat(),
@@ -1453,7 +1468,7 @@ async def market_analyze(payload: MarketAnalysisIn, user=Depends(get_current_use
 @api.get("/market/latest")
 async def market_latest(user=Depends(get_current_user)):
     rec = await db.market_analyses.find_one(
-        {"user_id": user["id"]}, {"_id": 0}, sort=[("generated_at", -1)]
+        {"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)]
     )
     return {"analysis": rec}
 
@@ -1466,10 +1481,17 @@ class SEORequestIn(BaseModel):
 
 @api.post("/seo/keywords")
 async def seo_keywords(payload: SEORequestIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    await check_ai_rate_limit(user)
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     seed = payload.seed_keyword or profile.get("industry", "")
     audience = profile.get("target_audience", "")
 
+    # Try real SEO API first
+    real = await _real_keyword_data(seed)
+    if real:
+        return {"keywords": real, "source": real[0].get("_source", "real")}
+
+    # Fallback to AI
     prompt = (
         f"Act as an SEO research analyst. For the seed keyword '{seed}' targeting '{audience}', "
         f"produce STRICT JSON with key 'keywords' = array of 25 objects with fields: "
@@ -1478,12 +1500,12 @@ async def seo_keywords(payload: SEORequestIn, user=Depends(get_current_user)):
         f"category (short tag e.g. how-to, comparison, brand). "
         f"Mix branded, long-tail, and competitor-comparison keywords."
     )
-    return {"keywords": await _groq_json(prompt, key="keywords", max_tokens=2500)}
+    return {"keywords": await _groq_json(prompt, key="keywords", max_tokens=2500), "source": "ai"}
 
 
 @api.post("/seo/backlinks")
 async def seo_backlinks(payload: SEORequestIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     industry = profile.get("industry", "")
     site = payload.competitor_url or profile.get("website_url", "") or industry
 
@@ -1502,7 +1524,7 @@ async def seo_backlinks(payload: SEORequestIn, user=Depends(get_current_user)):
 
 @api.post("/seo/content-gaps")
 async def seo_content_gaps(payload: SEORequestIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     biz = profile.get("business_name", "") + " — " + profile.get("description", "")
 
     prompt = (
@@ -1525,7 +1547,7 @@ class PressReleaseIn(BaseModel):
 
 @api.post("/pr/press-release")
 async def pr_press_release(payload: PressReleaseIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     spokesperson = payload.quote_from or f"{user['first_name']} {user['last_name']}, founder of {profile.get('business_name','')}"
     prompt = (
         f"Write a polished press release in AP style for: {profile.get('business_name','')}.\n"
@@ -1541,7 +1563,7 @@ async def pr_press_release(payload: PressReleaseIn, user=Depends(get_current_use
 
 @api.post("/pr/media-list")
 async def pr_media_list(payload: SEORequestIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     industry = profile.get("industry", "")
     location = profile.get("location", "")
     prompt = (
@@ -1563,7 +1585,7 @@ class OutreachIn(BaseModel):
 
 @api.post("/pr/outreach-email")
 async def pr_outreach_email(payload: OutreachIn, user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     prompt = (
         f"Draft a personalised media pitch email.\n"
         f"FROM: {user['first_name']} {user['last_name']}, {profile.get('business_name','')} ({profile.get('industry','')})\n"
@@ -1579,9 +1601,10 @@ async def pr_outreach_email(payload: OutreachIn, user=Depends(get_current_user))
 # ---------- Growth Studio: 12-Month Growth Plan ----------
 @api.post("/growth-plan/generate")
 async def growth_plan_generate(user=Depends(get_current_user)):
-    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
-    total_leads = await db.leads.count_documents({"user_id": user["id"]})
-    total_campaigns = await db.campaigns.count_documents({"user_id": user["id"]})
+    await check_ai_rate_limit(user)
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    total_leads = await db.leads.count_documents({"user_id": ws(user)})
+    total_campaigns = await db.campaigns.count_documents({"user_id": ws(user)})
 
     biz_ctx = (
         f"Business: {profile.get('business_name','')} | Industry: {profile.get('industry','')}\n"
@@ -1609,7 +1632,7 @@ async def growth_plan_generate(user=Depends(get_current_user)):
     plan = await _groq_json(prompt, max_tokens=4000)
     record = {
         "id": str(uuid.uuid4()),
-        "user_id": user["id"],
+        "user_id": ws(user),
         "plan": plan,
         "generated_at": now_utc().isoformat(),
     }
@@ -1620,7 +1643,7 @@ async def growth_plan_generate(user=Depends(get_current_user)):
 
 @api.get("/growth-plan/latest")
 async def growth_plan_latest(user=Depends(get_current_user)):
-    rec = await db.growth_plans.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("generated_at", -1)])
+    rec = await db.growth_plans.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)])
     return {"plan": rec}
 
 
@@ -1702,16 +1725,309 @@ async def twilio_inbound_whatsapp(request: Request):
 # ---------- Communications inbox (across leads) ----------
 @api.get("/communications/inbox")
 async def communications_inbox(user=Depends(get_current_user)):
-    cursor = db.communications.find(
-        {"user_id": user["id"], "direction": "INBOUND"},
-        {"_id": 0},
-    ).sort("sent_at", -1).limit(50)
-    items = await cursor.to_list(50)
-    # attach lead names
-    for it in items:
-        lead = await db.leads.find_one({"id": it.get("lead_id")}, {"_id": 0, "name": 1, "email": 1, "phone": 1})
-        it["lead"] = lead
+    pipeline = [
+        {"$match": {"user_id": ws(user), "direction": "INBOUND"}},
+        {"$sort": {"sent_at": -1}},
+        {"$limit": 50},
+        {"$lookup": {
+            "from": "leads",
+            "localField": "lead_id",
+            "foreignField": "id",
+            "as": "lead_doc",
+        }},
+        {"$unwind": {"path": "$lead_doc", "preserveNullAndEmptyArrays": True}},
+        {"$project": {
+            "_id": 0,
+            "id": 1, "user_id": 1, "lead_id": 1, "channel": 1,
+            "direction": 1, "content": 1, "status": 1, "sent_at": 1,
+            "lead": {"name": "$lead_doc.name", "email": "$lead_doc.email", "phone": "$lead_doc.phone"},
+        }},
+    ]
+    items = await db.communications.aggregate(pipeline).to_list(50)
     return {"messages": items}
+
+
+# ---------- Team / Workspaces ----------
+class InviteIn(BaseModel):
+    email: EmailStr
+    first_name: str = ""
+    last_name: str = ""
+
+
+@api.get("/team/members")
+async def list_team_members(user=Depends(get_current_user)):
+    workspace = ws(user)
+    members = await db.users.find(
+        {"workspace_id": workspace},
+        {"_id": 0, "password_hash": 0},
+    ).to_list(100)
+    return {"members": [serialize_user(m) | {"is_owner": m["id"] == workspace} for m in members]}
+
+
+@api.post("/team/invite")
+async def invite_teammate(payload: InviteIn, user=Depends(get_current_user)):
+    workspace = ws(user)
+    if user["id"] != workspace:
+        raise HTTPException(status_code=403, detail="Only workspace owner can invite")
+
+    email = payload.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    temp_password = secrets.token_urlsafe(10)
+    new_id = str(uuid.uuid4())
+    await db.users.insert_one({
+        "id": new_id,
+        "email": email,
+        "password_hash": hash_password(temp_password),
+        "first_name": payload.first_name or email.split("@")[0],
+        "last_name": payload.last_name,
+        "role": "member",
+        "workspace_id": workspace,
+        "created_at": now_utc().isoformat(),
+        "invited_by": user["id"],
+    })
+
+    # Send invite email
+    try:
+        owner_name = f"{user.get('first_name','')} {user.get('last_name','')}".strip()
+        backend_url = os.environ.get("PUBLIC_APP_URL", "")
+        html = f"""
+        <p>Hi {payload.first_name or "there"},</p>
+        <p>{owner_name or 'Your colleague'} invited you to join their ZeroMark AI workspace.</p>
+        <p><b>Sign in:</b> {backend_url or '<your ZeroMark URL>'}</p>
+        <p><b>Email:</b> {email}<br/><b>Temporary password:</b> <code>{temp_password}</code></p>
+        <p>Please change your password after first login.</p>
+        """
+        await asyncio.get_event_loop().run_in_executor(
+            None, _send_email_sync, email, "You've been invited to ZeroMark AI", html
+        )
+    except Exception:
+        logger.exception("Invite email failed")
+
+    return {"success": True, "user_id": new_id, "temp_password": temp_password}
+
+
+@api.delete("/team/members/{member_id}")
+async def remove_member(member_id: str, user=Depends(get_current_user)):
+    workspace = ws(user)
+    if user["id"] != workspace:
+        raise HTTPException(status_code=403, detail="Only workspace owner can remove members")
+    if member_id == workspace:
+        raise HTTPException(status_code=400, detail="Cannot remove workspace owner")
+    res = await db.users.delete_one({"id": member_id, "workspace_id": workspace})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"success": True}
+
+
+# ---------- Per-user AI rate limit (sliding window) ----------
+AI_RATE_LIMIT_PER_HOUR = int(os.environ.get("AI_RATE_LIMIT_PER_HOUR", "60"))
+
+
+async def check_ai_rate_limit(user: Dict[str, Any]):
+    cutoff = (now_utc() - timedelta(hours=1)).isoformat()
+    count = await db.ai_calls.count_documents({"user_id": user["id"], "ts": {"$gte": cutoff}})
+    if count >= AI_RATE_LIMIT_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail=f"AI rate limit reached ({AI_RATE_LIMIT_PER_HOUR}/hour). Please wait or upgrade plan.",
+        )
+    await db.ai_calls.insert_one({
+        "user_id": user["id"],
+        "workspace_id": ws(user),
+        "ts": now_utc().isoformat(),
+    })
+
+
+# ---------- SEO real APIs (DataForSEO/SerpAPI) with AI fallback ----------
+async def _real_keyword_data(seed: str) -> Optional[List[Dict[str, Any]]]:
+    """Try DataForSEO, then SerpAPI; return None if no real provider configured/working."""
+    # DataForSEO
+    df_login = os.environ.get("DATAFORSEO_LOGIN")
+    df_pwd = os.environ.get("DATAFORSEO_PASSWORD")
+    if df_login and df_pwd:
+        try:
+            def _fetch():
+                resp = _http.post(
+                    "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live",
+                    auth=(df_login, df_pwd),
+                    json=[{"keyword": seed, "language_code": "en", "location_code": 2840, "limit": 25}],
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                return resp.json()
+            data = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+            items = data.get("tasks", [{}])[0].get("result", [{}])[0].get("items", []) or []
+            return [{
+                "keyword": it.get("keyword", ""),
+                "intent": (it.get("search_intent_info") or {}).get("main_intent", "informational"),
+                "difficulty": int((it.get("keyword_properties") or {}).get("keyword_difficulty") or 50),
+                "volume_band": _volume_band((it.get("keyword_info") or {}).get("search_volume", 0)),
+                "opportunity_score": _opp_score((it.get("keyword_info") or {}).get("search_volume", 0),
+                                                (it.get("keyword_properties") or {}).get("keyword_difficulty", 50)),
+                "category": "real-data",
+                "_source": "dataforseo",
+            } for it in items[:25]]
+        except Exception:
+            logger.exception("DataForSEO fetch failed, falling back to AI")
+    # SerpAPI (related searches)
+    serp_key = os.environ.get("SERPAPI_KEY")
+    if serp_key:
+        try:
+            def _fetch():
+                resp = _http.get(
+                    "https://serpapi.com/search.json",
+                    params={"engine": "google", "q": seed, "api_key": serp_key},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                return resp.json()
+            data = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+            related = data.get("related_searches", []) or []
+            return [{
+                "keyword": r.get("query", ""),
+                "intent": "informational",
+                "difficulty": 50,
+                "volume_band": "mid",
+                "opportunity_score": 60,
+                "category": "related",
+                "_source": "serpapi",
+            } for r in related[:25]]
+        except Exception:
+            logger.exception("SerpAPI fetch failed, falling back to AI")
+    return None
+
+
+def _volume_band(v):
+    if v >= 10000: return "high"
+    if v >= 1000: return "mid"
+    return "low"
+
+
+def _opp_score(volume, difficulty):
+    return max(0, min(100, int((volume / 100) - (difficulty or 50) + 60)))
+
+
+# ---------- Social OAuth handlers (LinkedIn / Facebook / Twitter) ----------
+OAUTH_PROVIDERS = {
+    "linkedin": {
+        "auth_url": "https://www.linkedin.com/oauth/v2/authorization",
+        "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
+        "scope": "openid profile email w_member_social",
+        "client_id_env": "LINKEDIN_CLIENT_ID",
+        "client_secret_env": "LINKEDIN_CLIENT_SECRET",
+    },
+    "facebook": {
+        "auth_url": "https://www.facebook.com/v18.0/dialog/oauth",
+        "token_url": "https://graph.facebook.com/v18.0/oauth/access_token",
+        "scope": "pages_manage_posts,pages_read_engagement",
+        "client_id_env": "FACEBOOK_APP_ID",
+        "client_secret_env": "FACEBOOK_APP_SECRET",
+    },
+    "twitter": {
+        "auth_url": "https://twitter.com/i/oauth2/authorize",
+        "token_url": "https://api.twitter.com/2/oauth2/token",
+        "scope": "tweet.read tweet.write users.read offline.access",
+        "client_id_env": "TWITTER_CLIENT_ID",
+        "client_secret_env": "TWITTER_CLIENT_SECRET",
+    },
+}
+
+
+@api.get("/oauth/{provider}/start")
+async def oauth_start(provider: str, user=Depends(get_current_user)):
+    cfg = OAUTH_PROVIDERS.get(provider)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    client_id = os.environ.get(cfg["client_id_env"])
+    if not client_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{provider.title()} OAuth not configured. Set {cfg['client_id_env']} and {cfg['client_secret_env']} in backend env.",
+        )
+    state = secrets.token_urlsafe(16)
+    await db.oauth_states.insert_one({
+        "state": state, "user_id": user["id"], "workspace_id": ws(user),
+        "provider": provider, "created_at": now_utc().isoformat(),
+    })
+    redirect_uri = f"{os.environ.get('PUBLIC_APP_URL','').rstrip('/')}/api/oauth/{provider}/callback"
+    from urllib.parse import urlencode
+    params = {
+        "client_id": client_id, "redirect_uri": redirect_uri, "state": state,
+        "response_type": "code", "scope": cfg["scope"],
+    }
+    return {"auth_url": f"{cfg['auth_url']}?{urlencode(params)}"}
+
+
+@api.get("/oauth/{provider}/callback")
+async def oauth_callback(provider: str, code: str, state: str):
+    cfg = OAUTH_PROVIDERS.get(provider)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    rec = await db.oauth_states.find_one({"state": state, "provider": provider})
+    if not rec:
+        raise HTTPException(status_code=400, detail="Invalid state")
+    await db.oauth_states.delete_one({"state": state})
+
+    client_id = os.environ.get(cfg["client_id_env"])
+    client_secret = os.environ.get(cfg["client_secret_env"])
+    redirect_uri = f"{os.environ.get('PUBLIC_APP_URL','').rstrip('/')}/api/oauth/{provider}/callback"
+
+    def _exchange():
+        resp = _http.post(cfg["token_url"], data={
+            "grant_type": "authorization_code", "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": client_id, "client_secret": client_secret,
+        }, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    try:
+        token_data = await asyncio.get_event_loop().run_in_executor(None, _exchange)
+    except Exception as e:
+        logger.exception("OAuth token exchange failed")
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}")
+
+    access_token = token_data.get("access_token", "")
+    await db.integrations.update_one(
+        {"user_id": rec["workspace_id"]},
+        {"$set": {provider: {
+            "access_token": _enc(access_token),
+            "access_token__encrypted": True,
+            "expires_in": token_data.get("expires_in"),
+            "scope": token_data.get("scope"),
+            "connected": True,
+            "updated_at": now_utc().isoformat(),
+        }}, "$setOnInsert": {"user_id": rec["workspace_id"]}},
+        upsert=True,
+    )
+    redirect_url = f"{os.environ.get('PUBLIC_APP_URL','').rstrip('/')}/integrations?connected={provider}"
+    return Response(status_code=302, headers={"Location": redirect_url})
+
+
+# ---------- Briefing email preferences + cron ----------
+class BriefingPrefIn(BaseModel):
+    daily_email: bool = True
+    hour_utc: int = 8
+
+
+@api.post("/briefing/preferences")
+async def update_briefing_prefs(payload: BriefingPrefIn, user=Depends(get_current_user)):
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"briefing_daily_email": payload.daily_email, "briefing_hour_utc": payload.hour_utc}},
+    )
+    return {"success": True}
+
+
+@api.get("/briefing/preferences")
+async def get_briefing_prefs(user=Depends(get_current_user)):
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return {
+        "daily_email": fresh.get("briefing_daily_email", False),
+        "hour_utc": fresh.get("briefing_hour_utc", 8),
+    }
 
 
 # Register router
@@ -1727,19 +2043,148 @@ app.add_middleware(
 
 
 # ---------- Startup ----------
+scheduler = AsyncIOScheduler(timezone="UTC")
+
+
+async def _imap_poll_inbound_emails():
+    """Poll Gmail IMAP for new replies, match to leads by sender email, log as INBOUND."""
+    try:
+        sender = os.environ.get("GMAIL_SENDER_EMAIL")
+        pwd = os.environ.get("GMAIL_APP_PASSWORD")
+        if not sender or not pwd:
+            return
+
+        def _fetch():
+            mail = imaplib.IMAP4_SSL("imap.gmail.com")
+            mail.login(sender, pwd)
+            mail.select("INBOX")
+            # Search unread received in last 1 day
+            status, ids = mail.search(None, "UNSEEN")
+            if status != "OK":
+                mail.logout()
+                return []
+            results = []
+            for uid in (ids[0].split() or [])[:30]:
+                status, data = mail.fetch(uid, "(RFC822)")
+                if status != "OK":
+                    continue
+                msg = _email_lib.message_from_bytes(data[0][1])
+                from_addr = parseaddr(msg.get("From", ""))[1].lower()
+                subject_raw = msg.get("Subject", "")
+                subj_decoded = ""
+                for part, enc in decode_header(subject_raw):
+                    subj_decoded += part.decode(enc or "utf-8", errors="ignore") if isinstance(part, bytes) else part
+
+                # Get plain text body
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        ct = part.get_content_type()
+                        if ct == "text/plain" and not part.get("Content-Disposition", "").startswith("attachment"):
+                            try:
+                                body = part.get_payload(decode=True).decode(errors="ignore")
+                                break
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        body = msg.get_payload(decode=True).decode(errors="ignore")
+                    except Exception:
+                        body = msg.get_payload() or ""
+                results.append({"from": from_addr, "subject": subj_decoded, "body": body[:5000]})
+                # mark seen
+                mail.store(uid, "+FLAGS", "\\Seen")
+            mail.logout()
+            return results
+
+        replies = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+        for r in replies:
+            lead = await db.leads.find_one({"email": r["from"]})
+            if not lead:
+                continue
+            await db.communications.insert_one({
+                "id": str(uuid.uuid4()),
+                "user_id": lead.get("user_id"),
+                "lead_id": lead["id"],
+                "channel": "EMAIL",
+                "direction": "INBOUND",
+                "subject": r["subject"],
+                "content": r["body"],
+                "status": "RECEIVED",
+                "sent_at": now_utc().isoformat(),
+            })
+            if lead.get("status") in ("NEW", "CONTACTED"):
+                await db.leads.update_one({"id": lead["id"]}, {"$set": {"status": "INTERESTED"}})
+        if replies:
+            logger.info("IMAP poll: processed %d email replies", len(replies))
+    except Exception:
+        logger.exception("IMAP poll failed")
+
+
+async def _send_daily_briefings():
+    """For every user opted in, generate today's briefing and email it."""
+    current_hour = now_utc().hour
+    cursor = db.users.find({"briefing_daily_email": True, "briefing_hour_utc": current_hour}, {"_id": 0})
+    async for u in cursor:
+        try:
+            # Generate briefing inline (simulate the request)
+            from types import SimpleNamespace
+            user_with_ws = {**u, "workspace_id": u.get("workspace_id") or u["id"]}
+            uid = ws(user_with_ws)
+            profile = await db.business_profiles.find_one({"user_id": uid}, {"_id": 0}) or {}
+            period_start = now_utc() - timedelta(days=7)
+            new_leads = await db.leads.count_documents({"user_id": uid, "created_at": {"$gte": period_start.isoformat()}})
+            sent_campaigns = await db.campaigns.count_documents({"user_id": uid, "status": "SENT", "sent_at": {"$gte": period_start.isoformat()}})
+            pending = await db.approvals.count_documents({"user_id": uid, "status": "PENDING"})
+            metrics_text = f"Last 7 days: {new_leads} new leads, {sent_campaigns} campaigns, {pending} pending approvals."
+            prompt = (
+                f"Write a brief daily growth briefing for the founder of {profile.get('business_name','Unknown')}. "
+                f"Industry: {profile.get('industry','')}. METRICS: {metrics_text} "
+                f"Output STRICT JSON: {{headline, wins (3), risks (3), actions (3)}}."
+            )
+            raw = await asyncio.get_event_loop().run_in_executor(
+                None, _groq_chat, prompt, "You are a no-nonsense growth advisor. Output strict JSON.", True, 800, 0.5,
+            )
+            import json
+            briefing = json.loads(raw)
+            html = f"""
+            <h2>{profile.get('business_name', 'Your')} — Daily Growth Briefing</h2>
+            <p style="font-size:18px;font-weight:600">{briefing.get('headline','')}</p>
+            <h3>Wins</h3><ul>{''.join(f'<li>{w}</li>' for w in briefing.get('wins',[]))}</ul>
+            <h3>Risks</h3><ul>{''.join(f'<li>{r}</li>' for r in briefing.get('risks',[]))}</ul>
+            <h3>Actions Today</h3><ol>{''.join(f'<li>{a}</li>' for a in briefing.get('actions',[]))}</ol>
+            <hr/><p style="color:#71717A;font-size:12px">Sent by ZeroMark AI · {now_utc().strftime('%b %d, %Y')}</p>
+            """
+            await asyncio.get_event_loop().run_in_executor(
+                None, _send_email_sync, u["email"], "Your Daily Growth Briefing", html
+            )
+            await db.briefings.insert_one({
+                "id": str(uuid.uuid4()), "user_id": uid, "briefing": briefing,
+                "metrics": {"new_leads_7d": new_leads, "sent_campaigns_7d": sent_campaigns, "pending_approvals": pending},
+                "generated_at": now_utc().isoformat(), "delivered_via_email": True,
+            })
+            logger.info("Daily briefing emailed to %s", u["email"])
+        except Exception:
+            logger.exception("Daily briefing failed for %s", u.get("email"))
+
+
 @app.on_event("startup")
 async def on_startup():
     await db.users.create_index("email", unique=True)
     await db.leads.create_index([("user_id", 1), ("created_at", -1)])
     await db.campaigns.create_index([("user_id", 1), ("created_at", -1)])
     await db.approvals.create_index([("user_id", 1), ("status", 1)])
-    # TTL on login_attempts (auto-delete after 1 hour)
+    await db.ai_calls.create_index([("user_id", 1), ("ts", -1)])
+    await db.ai_calls.create_index("ts", expireAfterSeconds=7200)
     try:
         await db.login_attempts.create_index("last_attempt", expireAfterSeconds=3600)
     except Exception:
         pass
 
-    # Recovery sweep: any campaign stuck in SENDING for >5 min → mark FAILED
+    # Migration: backfill workspace_id = user_id on users
+    await db.users.update_many({"workspace_id": {"$exists": False}}, [{"$set": {"workspace_id": "$id"}}])
+
+    # Recovery sweep
     cutoff = (now_utc() - timedelta(minutes=5)).isoformat()
     stuck = await db.campaigns.update_many(
         {"status": "SENDING", "started_at": {"$lt": cutoff}},
@@ -1747,6 +2192,12 @@ async def on_startup():
     )
     if stuck.modified_count:
         logger.info("Recovery sweep marked %d stuck campaigns as FAILED", stuck.modified_count)
+
+    # Schedule cron jobs: hourly daily-briefing tick + IMAP poll every 3 min
+    scheduler.add_job(_send_daily_briefings, "cron", minute=0, id="daily_briefings", replace_existing=True)
+    scheduler.add_job(_imap_poll_inbound_emails, "interval", minutes=3, id="imap_poll", replace_existing=True)
+    scheduler.start()
+    logger.info("APScheduler started: daily_briefings + imap_poll")
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@zeromark.ai")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -1760,6 +2211,7 @@ async def on_startup():
             "first_name": "Admin",
             "last_name": "User",
             "role": "admin",
+            "workspace_id": uid,
             "created_at": now_utc().isoformat(),
         })
         await db.subscriptions.insert_one({
@@ -1781,4 +2233,8 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        pass
     client.close()

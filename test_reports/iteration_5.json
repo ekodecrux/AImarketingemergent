@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 5 backend testing — 17/17 PASS in 9.5s on /app/backend/tests/test_iter5_team_ratelimit.py. Verified ALL iter5 deliverables: (1) Team workspaces — GET /api/team/members returns members with admin shown is_owner=true; POST /api/team/invite creates teammate (workspace_id == owner.id confirmed in mongo), returns success+temp_password+user_id, teammate logs in successfully with temp_password; (2) Workspace data sharing — admin creates a lead, teammate's GET /api/leads sees the SAME lead by id (workspace-scoped via ws() helper); (3) Owner-only invite — non-owner POST /api/team/invite -> 403 'Only workspace owner can invite'; (4) Owner-only remove — teammate DELETE /api/team/members/{owner_id} -> 403, owner DELETE /api/team/members/{teammate_id} -> 200 success and user removed from db; (5) AI rate limit — seeded 60 ai_calls docs for a fresh invited user, 61st POST /api/seo/keywords returns 429 with 'AI rate limit reached' message; (6) SEO source field — POST /api/seo/keywords returns {source:'ai', keywords:[25 items]} when DataForSEO/SerpAPI not configured; (7) OAuth — GET /api/oauth/linkedin/start returns 400 with detail mentioning LINKEDIN_CLIENT_ID, GET /api/oauth/foo/start returns 404 'Unknown provider'; (8) Inbox $lookup — seeded lead+inbound comm, GET /api/communications/inbox returns the message with hydrated lead:{name,email,phone}; (9) Briefing prefs — POST /api/briefing/preferences {daily_email:true, hour_utc:8} -> {success:true}, GET returns same; flipped to {false, 13} -> persisted; (10) Regression — admin login admin/admin123 OK, dashboard/stats OK, leads CRUD (POST/GET/PUT/DELETE) OK, integrations GET OK, SSRF block on auto-fill (169.254.169.254) -> 400. Test data isolated with TEST_iter5_<run_id> prefix and cleaned up in teardown.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "PRE-EXISTING (not iter5 regression) — multiple AI endpoints (/api/market/analyze, /api/seo/backlinks, /api/seo/content-gaps, /api/pr/media-list, /api/growth-plan/generate, /api/briefing/generate, /api/leads/score-batch)",
+        "issue": "When Groq's upstream tokens-per-day quota is exhausted (saw 'Rate limit reached on tokens per day (TPD): Limit 100000, Used 99420' in backend.err.log), _groq_chat raises and the endpoints return 502 'AI provider returned invalid output. Please retry.' Same as iter3/iter4 502 fallback path — but the user-facing message says 'invalid output' which is misleading when the cause is upstream TPD/RPM rate limit. Suggest distinguishing groq.RateLimitError -> 429 with 'AI provider rate limit, retry later' from json_validate_failed -> 502 'invalid output'."
+      },
+      {
+        "endpoint": "POST /api/team/invite",
+        "issue": "Returns the temp_password in the JSON response body — convenient for testing but a minor secret-leak concern in prod (the password is also emailed). Consider gating temp_password in response behind a debug flag, or returning it only when SMTP fails."
+      },
+      {
+        "endpoint": "DELETE /api/team/members/{member_id}",
+        "issue": "Removes the user document but does NOT cascade or reassign their owned leads/campaigns/communications. Since data is workspace-scoped (user_id == workspace_id == owner.id), nothing is orphaned for owner-created data, but any leads/campaigns the teammate explicitly created with their own user.id (if such a path exists in future) would be orphaned. Currently safe because every write uses ws(user). Document this invariant or add an explicit assertion."
+      },
+      {
+        "endpoint": "GET /api/oauth/{provider}/callback",
+        "issue": "On token exchange failure, raises HTTPException(400) with raw exception string in detail — could leak provider error internals. Prefer a sanitized message + log the full error server-side."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter5_team_ratelimit.py",
+    "/app/test_reports/pytest/iter5_results.xml"
+  ],
+  "action_items": [
+    "Optional: distinguish groq.RateLimitError (TPD/RPM) -> 429 retry-later vs json_validate_failed -> 502 in _groq_chat error handling so users see the right message.",
+    "Optional: hide temp_password from /api/team/invite response body (only email it).",
+    "Optional: split server.py (now 2240 lines) into routers/{auth,leads,team,ai,oauth,growth_studio,webhooks,scheduler}.py — flagged in iter4, not addressed.",
+    "No retest required for iter5 features."
+  ],
+  "critical_code_review_comments": [
+    "ws(user) helper at server.py:83 cleanly returns user.workspace_id||user.id — every data query has been migrated (53 occurrences confirmed). Migration in startup backfills workspace_id=user_id for existing users so admin's existing data remains visible. Solid pattern.",
+    "check_ai_rate_limit() at server.py:1828 uses count_documents on db.ai_calls with ts > cutoff — correct sliding window. NOTE: the count is keyed on user_id (not workspace_id), so each teammate has their own 60/hr quota; the workspace_id field is logged but unused for limit enforcement. This is fine but worth documenting (per-user, not per-workspace).",
+    "Owner check at /api/team/invite and /api/team/members/{id} DELETE uses `user[\"id\"] != ws(user)` — correct because owner's id == workspace_id by construction. Verified end-to-end.",
+    "OAuth state is persisted with TTL-less collection oauth_states — consider TTL index (e.g. expireAfterSeconds=600) so stale/abandoned states self-clean, otherwise the collection grows unbounded.",
+    "_real_keyword_data() is well-structured (DataForSEO -> SerpAPI -> None fallback). _opp_score formula is naive ((volume/100) - difficulty + 60 clamped 0..100); it works as a heuristic but should be documented.",
+    "server.py is now 2240 lines (was 1785 in iter4) — long overdue for splitting into routers/. Recommend doing this in iter6 before adding more features.",
+    "APScheduler is started in @app.on_event('startup'). With multiple uvicorn workers this would run the briefing/IMAP jobs N times. Currently only 1 worker (supervisor) so OK, but a leader-election or 'run-only-on-worker-0' guard would be wise for production.",
+    "Inbox $lookup pipeline is correct (matches by id, projects only safe fields, excludes _id) — addresses the iter4 N+1 concern. Good fix."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter5_team_ratelimit.py (new — 17 tests)"
+  ],
+  "success_rate": {"backend": "100% (17/17 iter5 tests)", "frontend": "skipped per request"},
+  "test_credentials": "admin@zeromark.ai / admin123 (auto-seeded). Runtime test users TEST_iter5_mate_<run>, TEST_iter5_kick_<run>, TEST_iter5_rl_<run> created/cleaned per run.",
+  "seed_data_creation": "All test artefacts use TEST_iter5_<run_id> prefix and are removed in finally blocks / fixture teardown — verified mongo state clean post-run (only admin user + admin's pre-existing data remain).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "PUBLIC URL is https://instant-ship-2.preview.emergentagent.com (frontend/.env REACT_APP_BACKEND_URL). The .env in backend has a different PUBLIC_APP_URL pointing to eda3142b… — that one is wrong/stale and is used by OAuth redirect_uri + invite emails. Worth flagging to main agent if OAuth callbacks need to actually work. /app/backend/tests/test_iter5_team_ratelimit.py is the iter5 regression suite; keep it green. NOTE: iter4 regression suite (test_iter4_reliability.py) shows 9 failures when run today, all due to Groq UPSTREAM tokens-per-day quota exhaustion (99420/100000) — not a code regression. Wait for the daily reset or upgrade Groq plan; the code path is correct.",
+  "rca of the issue": "No new bugs in iter5. All 11 reviewer-listed items verified working. Minor pre-existing issue: when Groq returns 429 (TPD/RPM) instead of json_validate_failed, the user-facing 502 message says 'invalid output' — misleading but cosmetic. Workspace data-sharing root mechanism: ws(user) returns user.workspace_id (or user.id fallback for solo). All data writes/reads now use ws(user) instead of user[id], so all teammates with workspace_id == owner.id share the owner's data. Migration on startup ensures existing users (incl admin) have workspace_id=user_id, so no data is lost."
+}

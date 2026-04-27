@@ -15,7 +15,8 @@ const CHANNELS = [
     },
     {
         id: "linkedin", label: "LinkedIn", icon: LinkedinLogo, color: "#0A66C2",
-        status: "config", note: "Requires a LinkedIn Marketing Developer Platform app. Provide access token to enable posting.",
+        status: "config", note: "Click 'Connect' to start OAuth (requires LINKEDIN_CLIENT_ID env). Or paste tokens manually.",
+        oauth: true,
         fields: [
             { key: "access_token", label: "LinkedIn Access Token", type: "password" },
             { key: "company_urn", label: "Company URN (urn:li:organization:...)" },
@@ -23,7 +24,8 @@ const CHANNELS = [
     },
     {
         id: "facebook", label: "Facebook Pages", icon: FacebookLogo, color: "#1877F2",
-        status: "config", note: "Requires Facebook Page access token from Meta App.",
+        status: "config", note: "Click 'Connect' to OAuth (requires FACEBOOK_APP_ID env).",
+        oauth: true,
         fields: [
             { key: "page_id", label: "Page ID" },
             { key: "access_token", label: "Page Access Token", type: "password" },
@@ -31,7 +33,7 @@ const CHANNELS = [
     },
     {
         id: "instagram", label: "Instagram Business", icon: InstagramLogo, color: "#E4405F",
-        status: "config", note: "Requires Instagram Business Account linked to a Facebook Page.",
+        status: "config", note: "Use Facebook OAuth and link an IG Business account.",
         fields: [
             { key: "ig_user_id", label: "Instagram User ID" },
             { key: "access_token", label: "Long-lived Access Token", type: "password" },
@@ -39,7 +41,8 @@ const CHANNELS = [
     },
     {
         id: "twitter", label: "X (Twitter)", icon: TwitterLogo, color: "#000",
-        status: "config", note: "Requires X Developer App with v2 Tweet write scope.",
+        status: "config", note: "Click 'Connect' to OAuth (requires TWITTER_CLIENT_ID env).",
+        oauth: true,
         fields: [
             { key: "bearer_token", label: "Bearer Token", type: "password" },
         ],
@@ -145,15 +148,34 @@ export default function Integrations() {
                                         </p>
                                     </div>
                                 ) : (
-                                    <div className="flex gap-2">
-                                        <button onClick={() => { setEditing(c.id); setForm({}); }} className="zm-btn-dark flex-1 text-xs py-2" data-testid={`configure-${c.id}`}>
-                                            {isConnected ? "Reconfigure" : "Configure"}
-                                        </button>
-                                        {isConnected && (
-                                            <button onClick={() => disconnect(c.id)} className="zm-btn-destructive text-xs py-2" data-testid={`disconnect-${c.id}`}>
-                                                Disconnect
+                                    <div className="flex flex-col gap-2">
+                                        {c.oauth && (
+                                            <button
+                                                onClick={async () => {
+                                                    try {
+                                                        const r = await api.get(`/oauth/${c.id}/start`);
+                                                        window.location.href = r.data.auth_url;
+                                                    } catch (err) {
+                                                        toast.error(err.response?.data?.detail || "OAuth not configured");
+                                                    }
+                                                }}
+                                                className="zm-btn-primary text-xs py-2"
+                                                style={{ background: c.color }}
+                                                data-testid={`oauth-${c.id}`}
+                                            >
+                                                <c.icon size={14} weight="fill" /> Connect with {c.label.split(" ")[0]}
                                             </button>
                                         )}
+                                        <div className="flex gap-2">
+                                            <button onClick={() => { setEditing(c.id); setForm({}); }} className="zm-btn-secondary flex-1 text-xs py-2" data-testid={`configure-${c.id}`}>
+                                                {isConnected ? "Reconfigure manually" : "Manual config"}
+                                            </button>
+                                            {isConnected && (
+                                                <button onClick={() => disconnect(c.id)} className="zm-btn-destructive text-xs py-2" data-testid={`disconnect-${c.id}`}>
+                                                    Disconnect
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
                             </div>

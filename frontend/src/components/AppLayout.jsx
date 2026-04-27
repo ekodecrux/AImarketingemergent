@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import {
     SquaresFour, Users, Megaphone, CheckSquare, Buildings,
     ChartBar, Receipt, SignOut, Sparkle, Compass, Plugs,
-    Tray, ChartLineUp,
+    Tray, ChartLineUp, UsersThree,
 } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 
@@ -35,6 +35,7 @@ const sections = [
         items: [
             { to: "/business", label: "Business Profile", icon: Buildings, testid: "nav-business" },
             { to: "/integrations", label: "Integrations", icon: Plugs, testid: "nav-integrations" },
+            { to: "/team", label: "Team", icon: UsersThree, testid: "nav-team" },
             { to: "/billing", label: "Billing", icon: Receipt, testid: "nav-billing" },
         ],
     },

@@ -20,6 +20,7 @@ import Billing from "@/pages/Billing";
 import Scraping from "@/pages/Scraping";
 import Integrations from "@/pages/Integrations";
 import GrowthStudio from "@/pages/GrowthStudio";
+import Team from "@/pages/Team";
 
 function Protected({ children }) {
     const { user, loading } = useAuth();
@@ -64,6 +65,7 @@ function App() {
                         <Route path="/business" element={<Business />} />
                         <Route path="/reports" element={<Reports />} />
                         <Route path="/billing" element={<Billing />} />
+                        <Route path="/team" element={<Team />} />
                     </Route>
 
                     <Route path="*" element={<Navigate to="/" replace />} />
