@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import {
     SquaresFour, Users, Megaphone, CheckSquare, Buildings,
-    ChartBar, Receipt, SignOut, Sparkle, Compass,
+    ChartBar, Receipt, SignOut, Sparkle, Compass, Plugs,
 } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 
@@ -11,6 +11,7 @@ const navItems = [
     { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns" },
     { to: "/approvals", label: "Approvals", icon: CheckSquare, testid: "nav-approvals" },
     { to: "/scraping", label: "Scrape", icon: Compass, testid: "nav-scraping" },
+    { to: "/integrations", label: "Integrations", icon: Plugs, testid: "nav-integrations" },
     { to: "/business", label: "Business", icon: Buildings, testid: "nav-business" },
     { to: "/reports", label: "Reports", icon: ChartBar, testid: "nav-reports" },
     { to: "/billing", label: "Billing", icon: Receipt, testid: "nav-billing" },

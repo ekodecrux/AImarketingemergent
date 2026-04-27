@@ -24,7 +24,7 @@ from typing import List, Optional, Any, Dict
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
@@ -232,11 +232,36 @@ async def register(payload: RegisterIn, response: Response):
 
 
 @api.post("/auth/login")
-async def login(payload: LoginIn, response: Response):
+async def login(payload: LoginIn, request: Request, response: Response):
     email = payload.email.lower()
+    ip = request.client.host if request.client else "unknown"
+    identifier = f"{ip}:{email}"
+
+    # Brute-force lockout: 5 failed attempts -> 15min lock
+    attempts = await db.login_attempts.find_one({"identifier": identifier})
+    if attempts and attempts.get("locked_until"):
+        locked_until = datetime.fromisoformat(attempts["locked_until"])
+        if locked_until > now_utc():
+            mins = int((locked_until - now_utc()).total_seconds() / 60) + 1
+            raise HTTPException(status_code=429, detail=f"Too many failed attempts. Locked for {mins} more minute(s).")
+
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(payload.password, user["password_hash"]):
+        # Increment failed counter
+        count = (attempts or {}).get("count", 0) + 1
+        update: Dict[str, Any] = {"count": count, "last_attempt": now_utc().isoformat()}
+        if count >= 5:
+            update["locked_until"] = (now_utc() + timedelta(minutes=15)).isoformat()
+            update["count"] = 0
+        await db.login_attempts.update_one(
+            {"identifier": identifier},
+            {"$set": update, "$setOnInsert": {"identifier": identifier}},
+            upsert=True,
+        )
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Success — clear attempts
+    await db.login_attempts.delete_one({"identifier": identifier})
     token = create_access_token(user["id"], user["email"])
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7 * 24 * 3600, path="/")
     return {"user": serialize_user(user), "token": token}
@@ -392,56 +417,91 @@ async def delete_campaign(cid: str, user=Depends(get_current_user)):
 
 
 @api.post("/campaigns/{cid}/send")
-async def send_campaign(cid: str, user=Depends(get_current_user)):
+async def send_campaign(cid: str, background: BackgroundTasks, user=Depends(get_current_user)):
     campaign = await db.campaigns.find_one({"id": cid, "user_id": user["id"]}, {"_id": 0})
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     if campaign["status"] not in ("APPROVED", "MODIFIED"):
         raise HTTPException(status_code=400, detail="Campaign not approved")
-    # Get leads
-    leads = await db.leads.find({"user_id": user["id"]}, {"_id": 0}).to_list(500)
-    sent = 0
-    failed = 0
-    channel = campaign["channel"]
-    content = campaign["content"]
-    subject = campaign.get("subject") or campaign["name"]
-    for lead in leads:
-        try:
-            if channel == "EMAIL" and lead.get("email"):
-                ok = await asyncio.get_event_loop().run_in_executor(
-                    None, _send_email_sync, lead["email"], subject,
-                    _personalize(content, lead)
-                )
-                sent += 1 if ok else 0
-                failed += 0 if ok else 1
-            elif channel == "SMS" and lead.get("phone"):
-                ok = await asyncio.get_event_loop().run_in_executor(
-                    None, _send_sms_sync, lead["phone"], _personalize(content, lead)
-                )
-                sent += 1 if ok else 0
-                failed += 0 if ok else 1
-            else:
-                # WhatsApp / social channels are simulated for preview
-                sent += 1
-            # Log communication
-            await db.communications.insert_one({
-                "id": str(uuid.uuid4()),
-                "user_id": user["id"],
-                "campaign_id": cid,
-                "lead_id": lead["id"],
-                "channel": channel,
-                "status": "SENT",
+    # Mark as SENDING and dispatch background job
+    await db.campaigns.update_one({"id": cid}, {"$set": {"status": "SENDING", "started_at": now_utc().isoformat()}})
+    background.add_task(_run_campaign_send, cid, user["id"])
+    return {"success": True, "queued": True, "message": "Campaign queued for delivery — refresh to see status."}
+
+
+async def _run_campaign_send(cid: str, user_id: str):
+    """Background job: deliver a campaign to all matching leads."""
+    try:
+        campaign = await db.campaigns.find_one({"id": cid, "user_id": user_id}, {"_id": 0})
+        if not campaign:
+            return
+        channel = campaign["channel"]
+        content = campaign["content"]
+        subject = campaign.get("subject") or campaign["name"]
+
+        # Pull integration config (for WhatsApp/social via Twilio or stored token)
+        integ = await db.integrations.find_one({"user_id": user_id}, {"_id": 0}) or {}
+
+        leads = await db.leads.find({"user_id": user_id}, {"_id": 0}).to_list(2000)
+        sent = 0
+        failed = 0
+        for lead in leads:
+            try:
+                personal = _personalize(content, lead)
+                ok = False
+                if channel == "EMAIL" and lead.get("email"):
+                    ok = await asyncio.get_event_loop().run_in_executor(
+                        None, _send_email_sync, lead["email"], subject, personal
+                    )
+                elif channel == "SMS" and lead.get("phone"):
+                    ok = await asyncio.get_event_loop().run_in_executor(
+                        None, _send_sms_sync, lead["phone"], personal
+                    )
+                elif channel == "WHATSAPP" and lead.get("phone"):
+                    ok = await asyncio.get_event_loop().run_in_executor(
+                        None, _send_whatsapp_sync, lead["phone"], personal,
+                        integ.get("whatsapp", {}).get("from_number"),
+                    )
+                else:
+                    # FACEBOOK / INSTAGRAM / LINKEDIN — placeholder until OAuth flow is configured
+                    if integ.get(channel.lower(), {}).get("connected"):
+                        ok = True  # adapter would post here
+                    else:
+                        ok = False
+
+                if ok:
+                    sent += 1
+                else:
+                    failed += 1
+
+                await db.communications.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "campaign_id": cid,
+                    "lead_id": lead["id"],
+                    "channel": channel,
+                    "direction": "OUTBOUND",
+                    "content": personal[:500],
+                    "status": "SENT" if ok else "FAILED",
+                    "sent_at": now_utc().isoformat(),
+                })
+            except Exception as e:
+                logger.exception("Send failure: %s", e)
+                failed += 1
+
+        await db.campaigns.update_one(
+            {"id": cid},
+            {"$set": {
+                "status": "SENT" if sent > 0 else "FAILED",
+                "sent_count": sent,
+                "failed_count": failed,
                 "sent_at": now_utc().isoformat(),
-            })
-        except Exception as e:
-            logger.exception("Send failure: %s", e)
-            failed += 1
-    await db.campaigns.update_one(
-        {"id": cid},
-        {"$set": {"status": "SENT", "sent_count": sent, "failed_count": failed,
-                  "sent_at": now_utc().isoformat()}}
-    )
-    return {"success": True, "sent": sent, "failed": failed}
+            }}
+        )
+        logger.info("Campaign %s: sent=%d failed=%d", cid, sent, failed)
+    except Exception:
+        logger.exception("Campaign send job crashed")
+        await db.campaigns.update_one({"id": cid}, {"$set": {"status": "FAILED"}})
 
 
 def _personalize(text: str, lead: Dict[str, Any]) -> str:
@@ -476,6 +536,23 @@ def _send_sms_sync(to: str, body: str) -> bool:
         return True
     except Exception as e:
         logger.error("SMS send failed: %s", e)
+        return False
+
+
+def _send_whatsapp_sync(to: str, body: str, from_number: Optional[str] = None) -> bool:
+    """Send WhatsApp via Twilio. Requires recipient to have opted into the
+    Twilio Sandbox or a registered WA Business number."""
+    try:
+        twilio = TwilioClient(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
+        wa_from = from_number or os.environ.get("TWILIO_WHATSAPP_FROM", "+14155238886")  # Twilio sandbox
+        twilio.messages.create(
+            from_=f"whatsapp:{wa_from}",
+            to=f"whatsapp:{to}",
+            body=body,
+        )
+        return True
+    except Exception as e:
+        logger.error("WhatsApp send failed: %s", e)
         return False
 
 
@@ -918,6 +995,289 @@ async def root():
 @api.get("/health")
 async def health():
     return {"status": "healthy", "time": now_utc().isoformat()}
+
+
+# ---------- AI Lead Scoring & Prediction ----------
+class ScoreLeadIn(BaseModel):
+    lead_ids: Optional[List[str]] = None  # None = score all leads
+
+
+def _score_leads_sync(business_ctx: str, leads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Use Groq to score & rank leads against business profile."""
+    if not leads:
+        return []
+    payload = [{
+        "id": l["id"],
+        "name": l.get("name", ""),
+        "company": l.get("company", ""),
+        "email": l.get("email", ""),
+        "notes": l.get("notes", ""),
+        "source": l.get("source", ""),
+    } for l in leads]
+    prompt = (
+        f"You are a B2B lead-scoring engine.\n"
+        f"BUSINESS CONTEXT:\n{business_ctx or 'Not specified'}\n\n"
+        f"Score each of the following leads from 0-100 based on how well they fit the ICP. "
+        f"Higher = more likely to convert. Return ONLY a JSON object with key 'scores' which is "
+        f"an array of {{id, score, reason, status_recommendation}} where status_recommendation is "
+        f"one of NEW/CONTACTED/INTERESTED/CONVERTED/NOT_INTERESTED based on fit. "
+        f"reason must be ≤140 chars, plain English.\n\n"
+        f"LEADS: {payload}"
+    )
+    c = Groq(api_key=os.environ["GROQ_API_KEY"])
+    comp = c.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": "You are a precise B2B sales analyst. Output strict JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.3,
+        max_tokens=2000,
+        response_format={"type": "json_object"},
+    )
+    import json
+    try:
+        data = json.loads(comp.choices[0].message.content)
+        return data.get("scores", [])
+    except Exception:
+        return []
+
+
+@api.post("/leads/score-batch")
+async def score_leads_batch(payload: ScoreLeadIn, user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    business_ctx = ""
+    if profile:
+        business_ctx = (
+            f"Business: {profile.get('business_name', '')}\n"
+            f"Industry: {profile.get('industry', '')}\n"
+            f"Target Audience: {profile.get('target_audience', '')}\n"
+            f"Description: {profile.get('description', '')}\n"
+        )
+    q: Dict[str, Any] = {"user_id": user["id"]}
+    if payload.lead_ids:
+        q["id"] = {"$in": payload.lead_ids}
+    leads = await db.leads.find(q, {"_id": 0}).limit(50).to_list(50)
+    if not leads:
+        return {"scored": 0, "results": []}
+    scores = await asyncio.get_event_loop().run_in_executor(None, _score_leads_sync, business_ctx, leads)
+
+    # Apply updates
+    for s in scores:
+        try:
+            await db.leads.update_one(
+                {"id": s["id"], "user_id": user["id"]},
+                {"$set": {
+                    "score": int(s.get("score", 0)),
+                    "score_reason": s.get("reason", ""),
+                    "scored_at": now_utc().isoformat(),
+                }},
+            )
+        except Exception:
+            continue
+    return {"scored": len(scores), "results": scores}
+
+
+# ---------- Lead Detail / Mini-CRM ----------
+@api.get("/leads/{lead_id}")
+async def get_lead(lead_id: str, user=Depends(get_current_user)):
+    lead = await db.leads.find_one({"id": lead_id, "user_id": user["id"]}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    comms = await db.communications.find(
+        {"lead_id": lead_id, "user_id": user["id"]},
+        {"_id": 0},
+    ).sort("sent_at", -1).limit(50).to_list(50)
+    return {"lead": lead, "communications": comms}
+
+
+class CommIn(BaseModel):
+    channel: str
+    direction: str = "INBOUND"  # INBOUND | OUTBOUND
+    content: str
+
+
+@api.post("/leads/{lead_id}/communications")
+async def log_communication(lead_id: str, payload: CommIn, user=Depends(get_current_user)):
+    lead = await db.leads.find_one({"id": lead_id, "user_id": user["id"]})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    comm = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "lead_id": lead_id,
+        "channel": payload.channel,
+        "direction": payload.direction,
+        "content": payload.content,
+        "status": "LOGGED",
+        "sent_at": now_utc().isoformat(),
+    }
+    await db.communications.insert_one(comm)
+    comm.pop("_id", None)
+    return {"communication": comm}
+
+
+class AIReplyIn(BaseModel):
+    inbound_message: str
+    channel: str = "EMAIL"
+    tone: str = "professional"
+
+
+@api.post("/leads/{lead_id}/ai-reply")
+async def ai_draft_reply(lead_id: str, payload: AIReplyIn, user=Depends(get_current_user)):
+    lead = await db.leads.find_one({"id": lead_id, "user_id": user["id"]}, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+
+    prompt = (
+        f"You are an SDR replying to an inbound message from a lead.\n"
+        f"BUSINESS: {profile.get('business_name', '')} — {profile.get('description', '')}\n"
+        f"LEAD: {lead.get('name')} at {lead.get('company') or 'unknown company'}\n"
+        f"CHANNEL: {payload.channel}\n"
+        f"TONE: {payload.tone}\n"
+        f"INBOUND MESSAGE: \"{payload.inbound_message}\"\n\n"
+        f"Draft a {payload.channel.lower()} reply that addresses their question, advances the deal "
+        f"and ends with a clear next step. Keep it short (≤120 words for email, ≤30 words for SMS/WhatsApp). "
+        f"Return ONLY the message body, no commentary."
+    )
+
+    def _gen():
+        c = Groq(api_key=os.environ["GROQ_API_KEY"])
+        comp = c.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a senior B2B sales copywriter."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.6,
+            max_tokens=400,
+        )
+        return comp.choices[0].message.content
+
+    reply = await asyncio.get_event_loop().run_in_executor(None, _gen)
+    return {"reply": reply.strip()}
+
+
+# ---------- Channel Integrations ----------
+class IntegrationIn(BaseModel):
+    channel: str  # whatsapp | facebook | instagram | linkedin | twitter
+    config: Dict[str, Any]
+    connected: bool = True
+
+
+@api.get("/integrations")
+async def list_integrations(user=Depends(get_current_user)):
+    integ = await db.integrations.find_one({"user_id": user["id"]}, {"_id": 0}) or {"user_id": user["id"]}
+    # Strip secrets from response
+    safe = {"user_id": integ.get("user_id")}
+    for k, v in integ.items():
+        if isinstance(v, dict):
+            safe[k] = {"connected": v.get("connected", False), "label": v.get("label", "")}
+    return {"integrations": safe}
+
+
+@api.post("/integrations")
+async def upsert_integration(payload: IntegrationIn, user=Depends(get_current_user)):
+    field = payload.channel.lower()
+    update = {f"{field}": {**payload.config, "connected": payload.connected, "updated_at": now_utc().isoformat()}}
+    await db.integrations.update_one(
+        {"user_id": user["id"]},
+        {"$set": update, "$setOnInsert": {"user_id": user["id"]}},
+        upsert=True,
+    )
+    return {"success": True, "channel": field}
+
+
+@api.delete("/integrations/{channel}")
+async def disconnect_integration(channel: str, user=Depends(get_current_user)):
+    await db.integrations.update_one(
+        {"user_id": user["id"]},
+        {"$unset": {channel.lower(): ""}},
+    )
+    return {"success": True}
+
+
+# ---------- Daily AI Growth Briefing ----------
+@api.post("/briefing/generate")
+async def generate_briefing(user=Depends(get_current_user)):
+    uid = user["id"]
+    profile = await db.business_profiles.find_one({"user_id": uid}, {"_id": 0}) or {}
+
+    # Pull last 7 days metrics
+    period_start = now_utc() - timedelta(days=7)
+    new_leads = await db.leads.count_documents({"user_id": uid, "created_at": {"$gte": period_start.isoformat()}})
+    total_leads = await db.leads.count_documents({"user_id": uid})
+    sent_campaigns = await db.campaigns.count_documents({"user_id": uid, "status": "SENT", "sent_at": {"$gte": period_start.isoformat()}})
+    pending = await db.approvals.count_documents({"user_id": uid, "status": "PENDING"})
+    converted = await db.leads.count_documents({"user_id": uid, "status": "CONVERTED"})
+    interested = await db.leads.count_documents({"user_id": uid, "status": "INTERESTED"})
+
+    metrics_text = (
+        f"Last 7 days: {new_leads} new leads, {sent_campaigns} campaigns sent, "
+        f"{pending} pending approvals. All-time: {total_leads} leads, "
+        f"{interested} interested, {converted} converted."
+    )
+
+    prompt = (
+        f"You write a brief, punchy daily growth briefing for the founder.\n"
+        f"BUSINESS: {profile.get('business_name','Unknown')} — {profile.get('industry','')}\n"
+        f"TARGET: {profile.get('target_audience','')}\n"
+        f"METRICS: {metrics_text}\n\n"
+        f"Write a JSON object with keys: "
+        f"'headline' (one bold sentence), "
+        f"'wins' (array of 1-3 short wins), "
+        f"'risks' (array of 1-3 risks/issues to watch), "
+        f"'actions' (array of 3 concrete actions to take TODAY in priority order). "
+        f"Output STRICT JSON only."
+    )
+
+    def _gen():
+        c = Groq(api_key=os.environ["GROQ_API_KEY"])
+        comp = c.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a no-nonsense growth advisor. Output strict JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_tokens=800,
+            response_format={"type": "json_object"},
+        )
+        return comp.choices[0].message.content
+
+    raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
+    import json
+    try:
+        briefing = json.loads(raw)
+    except Exception:
+        briefing = {"headline": "Briefing unavailable", "wins": [], "risks": [], "actions": []}
+
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": uid,
+        "briefing": briefing,
+        "metrics": {
+            "new_leads_7d": new_leads,
+            "sent_campaigns_7d": sent_campaigns,
+            "pending_approvals": pending,
+            "total_leads": total_leads,
+            "interested": interested,
+            "converted": converted,
+        },
+        "generated_at": now_utc().isoformat(),
+    }
+    await db.briefings.insert_one(record)
+    record.pop("_id", None)
+    return {"briefing": record}
+
+
+@api.get("/briefing/latest")
+async def latest_briefing(user=Depends(get_current_user)):
+    rec = await db.briefings.find_one(
+        {"user_id": user["id"]}, {"_id": 0}, sort=[("generated_at", -1)]
+    )
+    return {"briefing": rec}
 
 
 # Register router

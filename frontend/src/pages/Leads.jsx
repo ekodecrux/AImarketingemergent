@@ -1,18 +1,21 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
-import { Plus, Trash, MagnifyingGlass, X } from "@phosphor-icons/react";
+import { Plus, Trash, MagnifyingGlass, X, Sparkle } from "@phosphor-icons/react";
 
 const STATUSES = ["NEW", "CONTACTED", "INTERESTED", "CONVERTED", "NOT_INTERESTED"];
 
 export default function Leads() {
+    const navigate = useNavigate();
     const [data, setData] = useState({ leads: [], pagination: { total: 0, page: 1, pages: 1 } });
     const [page, setPage] = useState(1);
     const [statusFilter, setStatusFilter] = useState("");
     const [showAdd, setShowAdd] = useState(false);
     const [showScrape, setShowScrape] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [scoring, setScoring] = useState(false);
 
     const load = () => {
         setLoading(true);
@@ -25,15 +28,29 @@ export default function Leads() {
 
     useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, statusFilter]);
 
-    const handleDelete = async (id) => {
+    const handleDelete = async (id, e) => {
+        e.stopPropagation();
         await api.delete(`/leads/${id}`);
         toast.success("Lead deleted");
         load();
     };
 
-    const handleStatusChange = async (id, status) => {
+    const handleStatusChange = async (id, status, e) => {
+        e.stopPropagation();
         await api.put(`/leads/${id}`, { status });
         load();
+    };
+
+    const scoreAll = async () => {
+        setScoring(true);
+        const t = toast.loading("AI is analysing leads…");
+        try {
+            const r = await api.post("/leads/score-batch", {});
+            toast.success(`Scored ${r.data.scored} leads`, { id: t });
+            load();
+        } catch (e) {
+            toast.error("Score failed", { id: t });
+        } finally { setScoring(false); }
     };
 
     return (
@@ -44,6 +61,9 @@ export default function Leads() {
                 subtitle={`${data.pagination.total} total · page ${data.pagination.page} of ${data.pagination.pages || 1}`}
                 action={
                     <div className="flex gap-3">
+                        <button data-testid="score-all-leads" onClick={scoreAll} disabled={scoring} className="zm-btn-dark">
+                            <Sparkle size={14} weight="fill" /> {scoring ? "Scoring…" : "AI Score All"}
+                        </button>
                         <button data-testid="open-scrape-modal" onClick={() => setShowScrape(true)} className="zm-btn-secondary">
                             <MagnifyingGlass size={14} weight="bold" /> Scrape
                         </button>
@@ -91,19 +111,21 @@ export default function Leads() {
                                 </td></tr>
                             )}
                             {data.leads.map((l) => (
-                                <tr key={l.id} className="border-b border-[#E4E4E7] last:border-b-0 hover:bg-[#F9F9FB]">
+                                <tr key={l.id} onClick={() => navigate(`/leads/${l.id}`)} className="border-b border-[#E4E4E7] last:border-b-0 hover:bg-[#F9F9FB] cursor-pointer" data-testid={`lead-row-${l.id}`}>
                                     <td className="px-4 py-3 font-semibold">{l.name}</td>
                                     <td className="px-4 py-3 text-[#71717A]">{l.email || "—"}</td>
                                     <td className="px-4 py-3 text-[#71717A]">{l.phone || "—"}</td>
                                     <td className="px-4 py-3"><span className="zm-badge bg-[#F4F4F5] text-[#09090B]">{l.source}</span></td>
-                                    <td className="px-4 py-3">
-                                        <select value={l.status} onChange={(e) => handleStatusChange(l.id, e.target.value)} className="text-xs border border-[#E4E4E7] px-2 py-1 bg-white">
+                                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                                        <select value={l.status} onChange={(e) => handleStatusChange(l.id, e.target.value, e)} className="text-xs border border-[#E4E4E7] px-2 py-1 bg-white">
                                             {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                                         </select>
                                     </td>
-                                    <td className="px-4 py-3 font-mono text-xs">{l.score}</td>
-                                    <td className="px-4 py-3 text-right">
-                                        <button data-testid={`delete-lead-${l.id}`} onClick={() => handleDelete(l.id)} className="text-[#71717A] hover:text-[#E32636]">
+                                    <td className="px-4 py-3">
+                                        <ScoreCell score={l.score || 0} />
+                                    </td>
+                                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                                        <button data-testid={`delete-lead-${l.id}`} onClick={(e) => handleDelete(l.id, e)} className="text-[#71717A] hover:text-[#E32636]">
                                             <Trash size={16} weight="bold" />
                                         </button>
                                     </td>
@@ -127,6 +149,18 @@ export default function Leads() {
 
             {showAdd && <AddLeadModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
             {showScrape && <ScrapeModal onClose={() => setShowScrape(false)} onDone={() => { setShowScrape(false); load(); }} />}
+        </div>
+    );
+}
+
+function ScoreCell({ score }) {
+    const color = score >= 75 ? "#10B981" : score >= 50 ? "#F59E0B" : score >= 25 ? "#71717A" : "#E32636";
+    return (
+        <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-bold" style={{ color }}>{score}</span>
+            <div className="w-16 h-1 bg-[#F4F4F5]">
+                <div className="h-full" style={{ width: `${score}%`, background: color }} />
+            </div>
         </div>
     );
 }

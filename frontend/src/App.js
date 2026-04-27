@@ -9,12 +9,14 @@ import Register from "@/pages/Register";
 import AppLayout from "@/components/AppLayout";
 import Dashboard from "@/pages/Dashboard";
 import Leads from "@/pages/Leads";
+import LeadDetail from "@/pages/LeadDetail";
 import Campaigns from "@/pages/Campaigns";
 import Approvals from "@/pages/Approvals";
 import Business from "@/pages/Business";
 import Reports from "@/pages/Reports";
 import Billing from "@/pages/Billing";
 import Scraping from "@/pages/Scraping";
+import Integrations from "@/pages/Integrations";
 
 function Protected({ children }) {
     const { user, loading } = useAuth();
@@ -47,9 +49,11 @@ function App() {
                     <Route element={<Protected><AppLayout /></Protected>}>
                         <Route path="/dashboard" element={<Dashboard />} />
                         <Route path="/leads" element={<Leads />} />
+                        <Route path="/leads/:id" element={<LeadDetail />} />
                         <Route path="/campaigns" element={<Campaigns />} />
                         <Route path="/approvals" element={<Approvals />} />
                         <Route path="/scraping" element={<Scraping />} />
+                        <Route path="/integrations" element={<Integrations />} />
                         <Route path="/business" element={<Business />} />
                         <Route path="/reports" element={<Reports />} />
                         <Route path="/billing" element={<Billing />} />

@@ -7,17 +7,20 @@ import {
 } from "recharts";
 import { Link } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
+import BriefingCard from "@/components/BriefingCard";
 
 const STATUS_COLORS = ["#002EB8", "#10B981", "#F59E0B", "#E32636", "#18181B"];
 
 export default function Dashboard() {
     const [data, setData] = useState(null);
+    const [briefing, setBriefing] = useState(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        api.get("/dashboard/stats")
-            .then((r) => setData(r.data))
-            .finally(() => setLoading(false));
+        Promise.all([
+            api.get("/dashboard/stats").then((r) => setData(r.data)),
+            api.get("/briefing/latest").then((r) => setBriefing(r.data.briefing)),
+        ]).finally(() => setLoading(false));
     }, []);
 
     if (loading) return <div className="p-12 text-sm text-[#71717A]">Loading…</div>;
@@ -38,6 +41,11 @@ export default function Dashboard() {
                 subtitle={`${data.stats.subscription_tier} plan${data.stats.trial_days_left ? ` · ${data.stats.trial_days_left} trial days left` : ""}`}
             />
             <div className="px-8 pb-12">
+                {/* AI Growth Briefing */}
+                <div className="mb-6">
+                    <BriefingCard initial={briefing} />
+                </div>
+
                 {/* Stat grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 zm-card mb-6" data-testid="dashboard-stats">
                     {stats.map((s, i) => (
