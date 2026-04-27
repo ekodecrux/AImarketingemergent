@@ -30,8 +30,13 @@ export default function Team() {
         setInviting(true);
         try {
             const r = await api.post("/team/invite", form);
-            setTempPassword(r.data.temp_password);
-            toast.success(`Invite sent to ${form.email}`);
+            if (r.data.email_delivered) {
+                setTempPassword(null);
+                toast.success(`Invite emailed to ${form.email}`);
+            } else {
+                setTempPassword(r.data.temp_password);
+                toast.success(`Invite created — share temp password with ${form.email} (email delivery failed)`);
+            }
             setForm({ email: "", first_name: "", last_name: "" });
             load();
         } catch (err) {

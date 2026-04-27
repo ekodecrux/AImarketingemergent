@@ -90,7 +90,7 @@ _GROQ = Groq(api_key=os.environ["GROQ_API_KEY"])
 def _groq_chat(prompt: str, system: str = "Output strict JSON only.", json_mode: bool = True,
                max_tokens: int = 2000, temperature: float = 0.5) -> str:
     """Robust Groq chat completion with retry on json_validate_failed.
-    Returns the raw string content. Raises HTTPException(502) on terminal failure."""
+    Distinguishes upstream rate limits (429) from bad-output (502)."""
     attempts = [
         {"temperature": temperature, "system": system},
         {"temperature": 0.0, "system": system + " Use ONLY ASCII double quotes; escape any inner quotes with \\\". Do not use smart quotes or apostrophes inside string values."},
@@ -111,6 +111,12 @@ def _groq_chat(prompt: str, system: str = "Output strict JSON only.", json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
             comp = _GROQ.chat.completions.create(**kwargs)
             return comp.choices[0].message.content
+        except _groq_pkg.RateLimitError as e:
+            logger.warning("Groq rate limit (TPD/RPM): %s", str(e)[:200])
+            raise HTTPException(
+                status_code=429,
+                detail="AI provider rate limit exceeded — please try again in a few minutes or reduce frequency.",
+            )
         except _groq_pkg.BadRequestError as e:
             last_err = e
             logger.warning("Groq json_validate_failed, retrying with stricter prompt: %s", str(e)[:200])
@@ -119,7 +125,7 @@ def _groq_chat(prompt: str, system: str = "Output strict JSON only.", json_mode:
             last_err = e
             logger.exception("Groq call failed")
             break
-    raise HTTPException(status_code=502, detail=f"AI provider returned invalid output. Please retry.")
+    raise HTTPException(status_code=502, detail="AI provider returned invalid output. Please retry.")
 
 
 def _is_safe_url(url: str) -> bool:
@@ -1789,6 +1795,7 @@ async def invite_teammate(payload: InviteIn, user=Depends(get_current_user)):
     })
 
     # Send invite email
+    email_delivered = False
     try:
         owner_name = f"{user.get('first_name','')} {user.get('last_name','')}".strip()
         backend_url = os.environ.get("PUBLIC_APP_URL", "")
@@ -1799,13 +1806,17 @@ async def invite_teammate(payload: InviteIn, user=Depends(get_current_user)):
         <p><b>Email:</b> {email}<br/><b>Temporary password:</b> <code>{temp_password}</code></p>
         <p>Please change your password after first login.</p>
         """
-        await asyncio.get_event_loop().run_in_executor(
+        email_delivered = await asyncio.get_event_loop().run_in_executor(
             None, _send_email_sync, email, "You've been invited to ZeroMark AI", html
         )
     except Exception:
         logger.exception("Invite email failed")
 
-    return {"success": True, "user_id": new_id, "temp_password": temp_password}
+    # Only return temp_password if email delivery failed (so owner can share manually)
+    response = {"success": True, "user_id": new_id, "email_delivered": email_delivered}
+    if not email_delivered:
+        response["temp_password"] = temp_password
+    return response
 
 
 @api.delete("/team/members/{member_id}")
@@ -1949,7 +1960,8 @@ async def oauth_start(provider: str, user=Depends(get_current_user)):
     state = secrets.token_urlsafe(16)
     await db.oauth_states.insert_one({
         "state": state, "user_id": user["id"], "workspace_id": ws(user),
-        "provider": provider, "created_at": now_utc().isoformat(),
+        "provider": provider,
+        "created_at": now_utc(),  # native datetime for TTL index
     })
     redirect_uri = f"{os.environ.get('PUBLIC_APP_URL','').rstrip('/')}/api/oauth/{provider}/callback"
     from urllib.parse import urlencode
@@ -1986,8 +1998,8 @@ async def oauth_callback(provider: str, code: str, state: str):
     try:
         token_data = await asyncio.get_event_loop().run_in_executor(None, _exchange)
     except Exception as e:
-        logger.exception("OAuth token exchange failed")
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}")
+        logger.exception("OAuth token exchange failed: %s", e)
+        raise HTTPException(status_code=400, detail="Token exchange failed — see server logs")
 
     access_token = token_data.get("access_token", "")
     await db.integrations.update_one(
@@ -2178,6 +2190,10 @@ async def on_startup():
     await db.ai_calls.create_index("ts", expireAfterSeconds=7200)
     try:
         await db.login_attempts.create_index("last_attempt", expireAfterSeconds=3600)
+    except Exception:
+        pass
+    try:
+        await db.oauth_states.create_index("created_at", expireAfterSeconds=600)
     except Exception:
         pass
 
