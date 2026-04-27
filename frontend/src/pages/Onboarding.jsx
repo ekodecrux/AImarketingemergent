@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { toast } from "sonner";
+import { setLocaleCache, formatCurrency } from "@/lib/locale";
 import { Sparkle, ArrowRight, Globe, CheckCircle, Target, Rocket, ChartLineUp, Users } from "@phosphor-icons/react";
 
 export default function Onboarding() {
@@ -9,9 +10,10 @@ export default function Onboarding() {
     const [step, setStep] = useState(1);
     const [url, setUrl] = useState("");
     const [analyzing, setAnalyzing] = useState(false);
+    const [countries, setCountries] = useState([]);
     const [form, setForm] = useState({
         business_name: "", industry: "", location: "", target_audience: "",
-        website_url: "", description: "",
+        website_url: "", description: "", country_code: "US",
     });
     const [saving, setSaving] = useState(false);
     const [goal, setGoal] = useState({
@@ -24,6 +26,13 @@ export default function Onboarding() {
     const [kickoffLoading, setKickoffLoading] = useState(false);
     const [kickoffStage, setKickoffStage] = useState("");
     const [kickoffResult, setKickoffResult] = useState(null);
+
+    useEffect(() => {
+        api.get("/locale/countries").then((r) => setCountries(r.data.countries || [])).catch(() => {});
+    }, []);
+
+    const selectedCountry = countries.find((c) => c.code === form.country_code) || { currency: "USD", symbol: "$", locale: "en-US" };
+    const localeInfo = { country_code: form.country_code, currency: selectedCountry.currency, symbol: selectedCountry.symbol, locale: selectedCountry.locale };
 
     const autoFill = async () => {
         if (!url) { toast.error("Enter a URL first"); return; }
@@ -39,6 +48,7 @@ export default function Onboarding() {
                 target_audience: p.target_audience || "",
                 website_url: p.website_url || url,
                 description: p.description || "",
+                country_code: p.country_code || form.country_code || "US",
             });
             toast.success("Auto-filled! Review and edit if needed.", { id: t });
             setStep(2);
@@ -58,7 +68,8 @@ export default function Onboarding() {
         e.preventDefault();
         setSaving(true);
         try {
-            await api.post("/business", form);
+            const r = await api.post("/business", form);
+            if (r.data.locale) setLocaleCache(r.data.locale);
             toast.success("Profile saved");
             setStep(3);
         } catch {
@@ -206,7 +217,7 @@ export default function Onboarding() {
                                         <p className="text-[11px] text-[#64748B] mt-1">How many qualified leads/month?</p>
                                     </div>
                                     <div>
-                                        <label className="zm-label flex items-center gap-1.5"><ChartLineUp size={12} weight="bold" /> Avg deal value (USD)</label>
+                                        <label className="zm-label flex items-center gap-1.5"><ChartLineUp size={12} weight="bold" /> Avg deal value ({selectedCountry.currency})</label>
                                         <input type="number" min="0" className="zm-input text-2xl font-bold" value={goal.avg_deal_value_usd}
                                             onChange={(e) => setGoal({ ...goal, avg_deal_value_usd: parseFloat(e.target.value) || 0 })}
                                             data-testid="onb-deal-value" />
@@ -215,9 +226,9 @@ export default function Onboarding() {
                                 </div>
 
                                 <div className="bg-[#F8FAFC] rounded-md p-4 border border-[#E2E8F0]">
-                                    <p className="zm-section-label mb-2">// Forecast</p>
+                                    <p className="zm-section-label mb-2">// Forecast (in {selectedCountry.currency})</p>
                                     <p className="font-display text-3xl font-black tracking-tight">
-                                        ${(goal.monthly_lead_target * goal.avg_deal_value_usd).toLocaleString()}
+                                        {formatCurrency(goal.monthly_lead_target * goal.avg_deal_value_usd, localeInfo)}
                                         <span className="text-sm font-semibold text-[#64748B] ml-2">/month revenue target</span>
                                     </p>
                                 </div>
@@ -261,7 +272,7 @@ export default function Onboarding() {
                             </p>
                             <div className="space-y-4" data-testid="onboarding-step4">
                                 <Summary label="Monthly lead target"
-                                    value={`${kickoffResult.lead_target.monthly_lead_target} leads · $${kickoffResult.lead_target.monthly_revenue_target_usd.toLocaleString()}/mo`} />
+                                    value={`${kickoffResult.lead_target.monthly_lead_target} leads · ${formatCurrency(kickoffResult.lead_target.monthly_revenue_target_usd, localeInfo)}/mo`} />
                                 {kickoffResult.icp?.persona?.title && (
                                     <Summary label="Ideal customer"
                                         value={`${kickoffResult.icp.persona.title}${kickoffResult.icp.firmographics?.company_size_range ? ` · ${kickoffResult.icp.firmographics.company_size_range}` : ""}`} />

@@ -13,6 +13,30 @@
 
 ## What's been implemented
 
+### Iteration 11 (Feb 2026) — Currency-agnostic + Content Studio + AI commentary stripped
+**Backend**
+- 49-country `COUNTRY_CURRENCY` map (ISO 3166 + 4217 + Intl locale strings) covering all major SaaS markets
+- `BusinessProfileIn` + DB now store `country_code` + `currency_code` (auto-derived from country)
+- New `GET /api/locale/countries`, `GET /api/locale/me` endpoints
+- All AI prompts (Market Analysis, ICP, 12-Month Plan, Corrective Actions, Content Kit) **inject country + currency context** so generated competitors, revenue bands, sample companies, CPL benchmarks reflect local market — not US averages
+- ICP prompt requires REAL companies operating in the user's country
+- Plan prompt names country-specific channels (Naver/KakaoTalk for KR, Baidu/WeChat for CN, JustDial/ShareChat for IN, Yahoo Japan/LINE for JP, etc.)
+- `analytics_realtime` and `setup_status` return `locale` block with `currency`, `symbol`, `locale` for frontend formatters
+- `_groq_json` hardened — strips Markdown code fences, AI preambles, trailing commentary; system prompt enforces "STRICT JSON ONLY, no AI disclaimers"
+
+**Content Studio (NEW page)**
+- `POST /api/content/generate` — country-aware daily kit: SEO-optimised blog post (700-1000 words MD), full meta tag set (title/desc/OG/Twitter/canonical/keywords with character counters), JSON-LD Article schema, 3 social posts (LinkedIn/Twitter/Instagram with hashtags + platform char limits), 5 SEO keywords (intent + difficulty + monthly searches), CTA recommendation linking back to user's funnel
+- `GET /api/content`, `GET /api/content/{id}`, `PUT /api/content/{id}/status`, `DELETE /api/content/{id}`
+- Frontend `/content` page — library sidebar + detail panel with copy-to-clipboard for body MD, meta HTML block, individual social posts, JSON-LD schema, status pill (DRAFT/PUBLISHED/SCHEDULED/ARCHIVED)
+- New "Content Studio" entry under Growth section in sidebar
+
+**Frontend currency**
+- `lib/locale.js` — `setLocaleCache`, `getCachedLocale`, `formatCurrency` (uses `Intl.NumberFormat`), `formatCurrencyCompact`, `currencySymbol`
+- Onboarding step 2 has country dropdown (49 options); auto-derives currency
+- Forecast preview in onboarding shows correct symbol (₹/€/£/$)
+- Analytics page reads `live.locale` and renders all amounts via `formatCurrency` (Indian admin shows ₹500.00, ₹10,500 etc.)
+- Dashboard caches locale on first load via `setLocaleCache` (used by all subsequent currency renders)
+
 ### Iteration 10 (Feb 2026) — Multi-method authentication: Email + Google + SMS
 **Backend**
 - `POST /api/auth/google/callback` — Emergent-managed Google OAuth: takes `session_id` (from Emergent return URL), calls `https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data`, creates or finds user by email, issues internal JWT, sets `auth_provider="google"` and `picture` URL

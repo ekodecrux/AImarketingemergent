@@ -247,6 +247,79 @@ class BusinessProfileIn(BaseModel):
     website_url: Optional[str] = None
     description: Optional[str] = None
     social_handles: Optional[Dict[str, str]] = None
+    country_code: Optional[str] = "US"  # ISO 3166-1 alpha-2
+    currency_code: Optional[str] = None  # Auto-derived from country if not provided
+
+
+# Country → currency mapping (ISO 3166-1 alpha-2 → ISO 4217)
+COUNTRY_CURRENCY: Dict[str, Dict[str, str]] = {
+    "US": {"name": "United States", "currency": "USD", "symbol": "$", "locale": "en-US"},
+    "GB": {"name": "United Kingdom", "currency": "GBP", "symbol": "£", "locale": "en-GB"},
+    "IN": {"name": "India", "currency": "INR", "symbol": "₹", "locale": "en-IN"},
+    "CA": {"name": "Canada", "currency": "CAD", "symbol": "C$", "locale": "en-CA"},
+    "AU": {"name": "Australia", "currency": "AUD", "symbol": "A$", "locale": "en-AU"},
+    "NZ": {"name": "New Zealand", "currency": "NZD", "symbol": "NZ$", "locale": "en-NZ"},
+    "SG": {"name": "Singapore", "currency": "SGD", "symbol": "S$", "locale": "en-SG"},
+    "HK": {"name": "Hong Kong", "currency": "HKD", "symbol": "HK$", "locale": "en-HK"},
+    "JP": {"name": "Japan", "currency": "JPY", "symbol": "¥", "locale": "ja-JP"},
+    "KR": {"name": "South Korea", "currency": "KRW", "symbol": "₩", "locale": "ko-KR"},
+    "CN": {"name": "China", "currency": "CNY", "symbol": "¥", "locale": "zh-CN"},
+    "DE": {"name": "Germany", "currency": "EUR", "symbol": "€", "locale": "de-DE"},
+    "FR": {"name": "France", "currency": "EUR", "symbol": "€", "locale": "fr-FR"},
+    "IT": {"name": "Italy", "currency": "EUR", "symbol": "€", "locale": "it-IT"},
+    "ES": {"name": "Spain", "currency": "EUR", "symbol": "€", "locale": "es-ES"},
+    "NL": {"name": "Netherlands", "currency": "EUR", "symbol": "€", "locale": "nl-NL"},
+    "BE": {"name": "Belgium", "currency": "EUR", "symbol": "€", "locale": "fr-BE"},
+    "IE": {"name": "Ireland", "currency": "EUR", "symbol": "€", "locale": "en-IE"},
+    "PT": {"name": "Portugal", "currency": "EUR", "symbol": "€", "locale": "pt-PT"},
+    "AT": {"name": "Austria", "currency": "EUR", "symbol": "€", "locale": "de-AT"},
+    "FI": {"name": "Finland", "currency": "EUR", "symbol": "€", "locale": "fi-FI"},
+    "GR": {"name": "Greece", "currency": "EUR", "symbol": "€", "locale": "el-GR"},
+    "CH": {"name": "Switzerland", "currency": "CHF", "symbol": "CHF", "locale": "de-CH"},
+    "SE": {"name": "Sweden", "currency": "SEK", "symbol": "kr", "locale": "sv-SE"},
+    "NO": {"name": "Norway", "currency": "NOK", "symbol": "kr", "locale": "nb-NO"},
+    "DK": {"name": "Denmark", "currency": "DKK", "symbol": "kr", "locale": "da-DK"},
+    "PL": {"name": "Poland", "currency": "PLN", "symbol": "zł", "locale": "pl-PL"},
+    "MX": {"name": "Mexico", "currency": "MXN", "symbol": "Mex$", "locale": "es-MX"},
+    "BR": {"name": "Brazil", "currency": "BRL", "symbol": "R$", "locale": "pt-BR"},
+    "AR": {"name": "Argentina", "currency": "ARS", "symbol": "AR$", "locale": "es-AR"},
+    "CL": {"name": "Chile", "currency": "CLP", "symbol": "CL$", "locale": "es-CL"},
+    "CO": {"name": "Colombia", "currency": "COP", "symbol": "Col$", "locale": "es-CO"},
+    "ZA": {"name": "South Africa", "currency": "ZAR", "symbol": "R", "locale": "en-ZA"},
+    "NG": {"name": "Nigeria", "currency": "NGN", "symbol": "₦", "locale": "en-NG"},
+    "EG": {"name": "Egypt", "currency": "EGP", "symbol": "E£", "locale": "ar-EG"},
+    "KE": {"name": "Kenya", "currency": "KES", "symbol": "KSh", "locale": "en-KE"},
+    "AE": {"name": "United Arab Emirates", "currency": "AED", "symbol": "AED", "locale": "en-AE"},
+    "SA": {"name": "Saudi Arabia", "currency": "SAR", "symbol": "SAR", "locale": "ar-SA"},
+    "IL": {"name": "Israel", "currency": "ILS", "symbol": "₪", "locale": "he-IL"},
+    "TR": {"name": "Turkey", "currency": "TRY", "symbol": "₺", "locale": "tr-TR"},
+    "RU": {"name": "Russia", "currency": "RUB", "symbol": "₽", "locale": "ru-RU"},
+    "ID": {"name": "Indonesia", "currency": "IDR", "symbol": "Rp", "locale": "id-ID"},
+    "TH": {"name": "Thailand", "currency": "THB", "symbol": "฿", "locale": "th-TH"},
+    "MY": {"name": "Malaysia", "currency": "MYR", "symbol": "RM", "locale": "ms-MY"},
+    "PH": {"name": "Philippines", "currency": "PHP", "symbol": "₱", "locale": "en-PH"},
+    "VN": {"name": "Vietnam", "currency": "VND", "symbol": "₫", "locale": "vi-VN"},
+    "PK": {"name": "Pakistan", "currency": "PKR", "symbol": "₨", "locale": "en-PK"},
+    "BD": {"name": "Bangladesh", "currency": "BDT", "symbol": "৳", "locale": "bn-BD"},
+    "LK": {"name": "Sri Lanka", "currency": "LKR", "symbol": "Rs", "locale": "en-LK"},
+}
+
+
+def _resolve_locale(country_code: Optional[str], currency_override: Optional[str] = None) -> Dict[str, str]:
+    cc = (country_code or "US").upper()
+    info = COUNTRY_CURRENCY.get(cc) or COUNTRY_CURRENCY["US"]
+    out = dict(info)
+    out["country_code"] = cc
+    if currency_override:
+        out["currency"] = currency_override.upper()
+    return out
+
+
+async def _user_locale(user: Dict[str, Any]) -> Dict[str, str]:
+    profile = await db.business_profiles.find_one(
+        {"user_id": ws(user)}, {"_id": 0, "country_code": 1, "currency_code": 1, "location": 1},
+    ) or {}
+    return _resolve_locale(profile.get("country_code"), profile.get("currency_code"))
 
 
 class LeadIn(BaseModel):
@@ -587,6 +660,10 @@ async def get_business(user=Depends(get_current_user)):
 @api.post("/business")
 async def upsert_business(payload: BusinessProfileIn, user=Depends(get_current_user)):
     data = payload.model_dump()
+    # Auto-derive currency from country if not explicitly set
+    locale = _resolve_locale(data.get("country_code"), data.get("currency_code"))
+    data["country_code"] = locale["country_code"]
+    data["currency_code"] = locale["currency"]
     data["user_id"] = user["id"]
     data["updated_at"] = now_utc().isoformat()
     existing = await db.business_profiles.find_one({"user_id": ws(user)})
@@ -597,7 +674,23 @@ async def upsert_business(payload: BusinessProfileIn, user=Depends(get_current_u
         data["created_at"] = now_utc().isoformat()
         await db.business_profiles.insert_one(data)
     profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0})
-    return {"profile": profile}
+    return {"profile": profile, "locale": locale}
+
+
+@api.get("/locale/countries")
+async def list_countries():
+    """Returns supported countries with currency info for UI dropdown."""
+    items = [
+        {"code": k, "name": v["name"], "currency": v["currency"], "symbol": v["symbol"], "locale": v["locale"]}
+        for k, v in COUNTRY_CURRENCY.items()
+    ]
+    items.sort(key=lambda x: x["name"])
+    return {"countries": items}
+
+
+@api.get("/locale/me")
+async def get_my_locale(user=Depends(get_current_user)):
+    return {"locale": await _user_locale(user)}
 
 
 # ---------- Leads ----------
@@ -1618,6 +1711,8 @@ async def market_analyze(payload: MarketAnalysisIn, user=Depends(get_current_use
     biz_ctx = (
         f"Business: {profile.get('business_name', 'Unknown')}\n"
         f"Industry: {profile.get('industry', '')}\n"
+        f"Country: {COUNTRY_CURRENCY.get((profile.get('country_code') or 'US').upper(), {}).get('name', 'United States')} ({(profile.get('country_code') or 'US').upper()})\n"
+        f"Currency: {(profile.get('currency_code') or 'USD').upper()}\n"
         f"Target audience: {profile.get('target_audience', '')}\n"
         f"Description: {profile.get('description', '')}\n"
         f"Website: {url}\n"
@@ -1625,12 +1720,14 @@ async def market_analyze(payload: MarketAnalysisIn, user=Depends(get_current_use
     )
 
     prompt = (
-        f"You are a senior B2B market strategist. Analyse this business and produce a comprehensive "
-        f"market analysis as STRICT JSON with these keys:\n"
-        f"  market_size (1-2 sentences with rough TAM/SAM/SOM if inferable),\n"
+        f"You are a senior B2B market strategist with deep knowledge of the LOCAL market in the country listed in BUSINESS. "
+        f"All money amounts MUST be in the user's currency ({(profile.get('currency_code') or 'USD').upper()}). "
+        f"Competitors MUST be relevant to the country listed (local players + relevant global players present there). "
+        f"Analyse this business and produce a comprehensive market analysis as STRICT JSON with these keys:\n"
+        f"  market_size (1-2 sentences with rough TAM/SAM/SOM in the user's currency if inferable),\n"
         f"  growth_rate (1 sentence),\n"
-        f"  trends (array of 4-6 short-term trends),\n"
-        f"  competitors (array of objects {{name, strengths, weaknesses, positioning}}, 4-6 items),\n"
+        f"  trends (array of 4-6 short-term trends specific to this country/region),\n"
+        f"  competitors (array of objects {{name, strengths, weaknesses, positioning}}, 4-6 items — prioritise local players in the country),\n"
         f"  swot (object with arrays strengths, weaknesses, opportunities, threats — 3 each),\n"
         f"  positioning_recommendation (2-3 sentences),\n"
         f"  unique_angles (array of 3-5 differentiator ideas),\n"
@@ -1801,26 +1898,33 @@ async def growth_plan_generate(user=Depends(get_current_user)):
     total_leads = await db.leads.count_documents({"user_id": ws(user)})
     total_campaigns = await db.campaigns.count_documents({"user_id": ws(user)})
 
+    cc = (profile.get('country_code') or 'US').upper()
+    cur = (profile.get('currency_code') or 'USD').upper()
+    country_name = COUNTRY_CURRENCY.get(cc, {}).get("name", "United States")
+
     biz_ctx = (
         f"Business: {profile.get('business_name','')} | Industry: {profile.get('industry','')}\n"
+        f"Country: {country_name} ({cc}) | Currency: {cur}\n"
         f"Target: {profile.get('target_audience','')} | Location: {profile.get('location','')}\n"
         f"Description: {profile.get('description','')}\n"
         f"Current state: {total_leads} leads, {total_campaigns} campaigns shipped."
     )
 
     prompt = (
-        f"You are a growth strategist. Build a comprehensive 12-MONTH GROWTH PLAN for the business below. "
+        f"You are a growth strategist for the {country_name} market. "
+        f"Build a comprehensive 12-MONTH GROWTH PLAN. ALL money values MUST be in {cur} (the user's local currency). "
+        f"Channel benchmarks (CPL, monthly budget) MUST reflect real {country_name} market rates — not US averages. "
         f"Return STRICT JSON with the following keys:\n"
         f"  vision (1-2 sentences),\n"
         f"  north_star_metric (single metric we should obsess over),\n"
-        f"  monthly_lead_target (integer — realistic given budget; assume small business unless told otherwise),\n"
-        f"  monthly_budget_usd (integer; reasonable working budget across all channels),\n"
-        f"  avg_deal_value_usd (integer; estimated based on industry),\n"
+        f"  monthly_lead_target (integer — realistic given budget),\n"
+        f"  monthly_budget_usd (integer in {cur} — keep field name 'monthly_budget_usd' for compatibility but value is in {cur}),\n"
+        f"  avg_deal_value_usd (integer in {cur} — estimated based on {country_name} industry rates; field name kept as '_usd' for backward-compat),\n"
         f"  channel_distribution (array of 6-9 channel objects, MUST include both PAID and ORGANIC types; "
-        f"     each: {{name (e.g. 'Google Ads', 'SEO', 'Cold Email', 'LinkedIn Organic', 'Meta Ads', 'Content Marketing', "
-        f"     'Twitter/X', 'YouTube Ads', 'Affiliate', 'PR'), type ('paid'|'organic'), "
-        f"     monthly_budget_usd (integer; sum of paid budgets ≤ monthly_budget_usd; organic = 0 or small ops cost), "
-        f"     expected_leads_per_month (integer), expected_cpl_usd (integer; cost per lead), "
+        f"     each: {{name (channels available in {country_name}: e.g. 'Google Ads', 'Meta Ads', 'LinkedIn', 'SEO', 'Cold Email', "
+        f"     'Local SEO', plus {country_name}-specific options like {('Naver, KakaoTalk' if cc == 'KR' else 'Baidu, WeChat' if cc == 'CN' else 'Yandex, VK' if cc == 'RU' else 'Yahoo Japan, LINE' if cc == 'JP' else 'JustDial, ShareChat, Moj' if cc == 'IN' else 'Mercado Libre Ads' if cc in ('BR','MX','AR','CL','CO') else 'Local directories')}), "
+        f"     type ('paid'|'organic'), monthly_budget_usd (integer in {cur}), expected_leads_per_month (integer), "
+        f"     expected_cpl_usd (integer cost-per-lead in {cur} based on {country_name} rates), "
         f"     priority ('high'|'medium'|'low'), rationale (1 sentence)}}),\n"
         f"  quarterly_themes (array of 4 quarter objects: {{quarter (Q1..Q4), theme, primary_goal, "
         f"     key_targets (array of 3 measurable targets), top_3_initiatives, channels (array), "
@@ -1859,23 +1963,31 @@ async def icp_generate(user=Depends(get_current_user)):
     profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     target_doc = await db.lead_targets.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
 
+    cc = (profile.get('country_code') or 'US').upper()
+    cur = (profile.get('currency_code') or 'USD').upper()
+    country_name = COUNTRY_CURRENCY.get(cc, {}).get("name", "United States")
+
     biz_ctx = (
         f"Business: {profile.get('business_name','')}\n"
         f"Industry: {profile.get('industry','')}\n"
+        f"Country: {country_name} ({cc}) | Currency: {cur}\n"
         f"Location: {profile.get('location','')}\n"
         f"Target audience hint: {profile.get('target_audience','')}\n"
         f"Description: {profile.get('description','')}\n"
         f"Monthly lead target: {target_doc.get('monthly_lead_target','not set')}\n"
-        f"Avg deal value (USD): {target_doc.get('avg_deal_value_usd','not set')}\n"
+        f"Avg deal value ({cur}): {target_doc.get('avg_deal_value_usd','not set')}\n"
     )
 
     prompt = (
-        f"Build a sharp ICP for the business below. Return STRICT JSON with keys:\n"
+        f"Build a sharp ICP for the business below. The ICP MUST be relevant to the {country_name} market. "
+        f"Sample companies MUST be REAL companies that operate in {country_name} (mix of local champions + global players present there). "
+        f"Revenue bands MUST be in {cur} (the user's local currency). "
+        f"Return STRICT JSON with keys:\n"
         f"  persona (object: title, seniority, role_summary, daily_pains (array of 3), buying_triggers (array of 3), "
-        f"     objections (array of 3), preferred_channels (array of 3, e.g. 'LinkedIn','Email','Cold call')),\n"
-        f"  firmographics (object: company_size_range, industry, revenue_band_usd, geography, tech_stack_signals (array of 5)),\n"
+        f"     objections (array of 3), preferred_channels (array of 3, e.g. 'LinkedIn','Email','Cold call' — channels relevant to {country_name})),\n"
+        f"  firmographics (object: company_size_range, industry, revenue_band_usd (in {cur}), geography (default to {country_name} unless user implies otherwise), tech_stack_signals (array of 5)),\n"
         f"  buying_signals (array of 5 — observable triggers like 'just raised Series A','hiring for X role','posted on LinkedIn about Y'),\n"
-        f"  sample_companies (array of 10 plausible target company names matching the firmographics),\n"
+        f"  sample_companies (array of 10 REAL company names operating in {country_name} matching the firmographics),\n"
         f"  recommended_outreach_channels (array of 4 channels with rationale, "
         f"     each: {{channel, type ('paid'|'organic'), why_this_works, opening_message_hook}}),\n"
         f"  qualification_questions (array of 5 questions reps should ask early to qualify a lead),\n"
@@ -1898,6 +2010,109 @@ async def icp_generate(user=Depends(get_current_user)):
 async def icp_latest(user=Depends(get_current_user)):
     rec = await db.icps.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)])
     return {"icp": rec}
+
+
+# ---------- Content Studio (daily SEO + blog + meta + social) ----------
+class ContentGenerateIn(BaseModel):
+    topic: Optional[str] = None  # If absent, AI picks a topic from business + ICP
+
+
+@api.post("/content/generate")
+async def content_generate(payload: ContentGenerateIn = ContentGenerateIn(), user=Depends(get_current_user)):
+    """Generates a daily content kit: 1 blog post draft, meta-tag set,
+    3 social posts (LinkedIn/X/Instagram), 5 SEO keyword targets.
+    Strict JSON only — no AI commentary in the output.
+    """
+    await check_ai_rate_limit(user)
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    icp = await db.icps.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)])
+    icp_data = (icp or {}).get("icp") or {}
+
+    cc = (profile.get('country_code') or 'US').upper()
+    cur = (profile.get('currency_code') or 'USD').upper()
+    country_name = COUNTRY_CURRENCY.get(cc, {}).get("name", "United States")
+
+    biz_ctx = (
+        f"Business: {profile.get('business_name','')}\n"
+        f"Industry: {profile.get('industry','')}\n"
+        f"Country: {country_name} ({cc}) | Currency: {cur}\n"
+        f"Target audience: {profile.get('target_audience','')}\n"
+        f"Description: {profile.get('description','')}\n"
+        f"ICP persona title: {(icp_data.get('persona') or {}).get('title','')}\n"
+        f"ICP pains: {', '.join((icp_data.get('persona') or {}).get('daily_pains', [])[:3])}\n"
+        f"Topic seed (optional): {payload.topic or 'pick the most relevant for today'}\n"
+    )
+
+    prompt = (
+        f"You are a senior content marketer. Generate a complete CONTENT KIT for ONE day, optimised for {country_name} search and social. "
+        f"OUTPUT STRICT JSON ONLY — no preamble, no commentary, no markdown wrapping. Output JSON with these EXACT keys:\n"
+        f"  topic (1 sentence — the angle for today's content),\n"
+        f"  blog_post (object: title (60 chars max, SEO-optimised), slug (kebab-case), "
+        f"     excerpt (160 chars meta-description quality), body_md (700-1000 word markdown article with H2/H3 headers, "
+        f"     internal CTA links denoted [CTA: text]; do NOT add ‘As an AI’ disclaimers), "
+        f"     reading_time_min (integer)),\n"
+        f"  meta_tags (object: title (max 60 chars), description (max 158 chars), "
+        f"     og_title, og_description, twitter_title, twitter_description, "
+        f"     keywords (array of 8 short-tail + long-tail keywords), canonical_path),\n"
+        f"  schema_jsonld (string — full JSON-LD Article schema as escaped JSON string),\n"
+        f"  social_posts (array of 3 — one each for 'linkedin', 'twitter', 'instagram'; "
+        f"     each: {{platform, body (within platform limits — LI ≤ 3000, X ≤ 280, IG ≤ 2200), hashtags (array of 3-7)}}),\n"
+        f"  seo_keywords (array of 5 — each: {{keyword, intent ('informational'|'commercial'|'navigational'), "
+        f"     difficulty ('low'|'medium'|'high'), monthly_searches_estimate (integer)}}),\n"
+        f"  cta_recommendation (1 sentence on which existing landing page or campaign this content should funnel into).\n\n"
+        f"BUSINESS:\n{biz_ctx}"
+    )
+    kit = await _groq_json(prompt, max_tokens=4500)
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "kit": kit,
+        "topic": (kit or {}).get("topic") or payload.topic,
+        "status": "DRAFT",
+        "country_code": cc,
+        "currency_code": cur,
+        "generated_at": now_utc().isoformat(),
+    }
+    await db.content_kits.insert_one(record)
+    record.pop("_id", None)
+    return {"content": record}
+
+
+@api.get("/content")
+async def list_content(user=Depends(get_current_user)):
+    items = await db.content_kits.find({"user_id": ws(user)}, {"_id": 0}).sort("generated_at", -1).limit(50).to_list(50)
+    return {"content": items}
+
+
+@api.get("/content/{cid}")
+async def get_content(cid: str, user=Depends(get_current_user)):
+    rec = await db.content_kits.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Content not found")
+    return {"content": rec}
+
+
+class ContentStatusIn(BaseModel):
+    status: str  # DRAFT | PUBLISHED | SCHEDULED | ARCHIVED
+
+
+@api.put("/content/{cid}/status")
+async def update_content_status(cid: str, payload: ContentStatusIn, user=Depends(get_current_user)):
+    if payload.status not in ("DRAFT", "PUBLISHED", "SCHEDULED", "ARCHIVED"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    upd = {"status": payload.status, "updated_at": now_utc().isoformat()}
+    if payload.status == "PUBLISHED":
+        upd["published_at"] = now_utc().isoformat()
+    res = await db.content_kits.update_one({"id": cid, "user_id": ws(user)}, {"$set": upd})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Content not found")
+    return {"success": True}
+
+
+@api.delete("/content/{cid}")
+async def delete_content(cid: str, user=Depends(get_current_user)):
+    await db.content_kits.delete_one({"id": cid, "user_id": ws(user)})
+    return {"success": True}
 
 
 # ---------- Setup status (drives the onboarding checklist) ----------
@@ -1930,6 +2145,7 @@ async def setup_status(user=Depends(get_current_user)):
         {"id": "sent", "label": "Send your first campaign", "done": has_sent, "cta": "/approvals", "cta_label": "Approve & send"},
     ]
     completed = sum(1 for s in steps if s["done"])
+    locale = _resolve_locale((profile or {}).get("country_code"), (profile or {}).get("currency_code"))
     return {
         "completed": completed,
         "total": len(steps),
@@ -1937,6 +2153,7 @@ async def setup_status(user=Depends(get_current_user)):
         "next_step": next((s for s in steps if not s["done"]), None),
         "steps": steps,
         "has_profile": has_profile,
+        "locale": locale,
     }
 
 
@@ -2151,6 +2368,8 @@ async def analytics_realtime(user=Depends(get_current_user)):
     revenue_progress_pct = round((revenue_this_month / revenue_target * 100), 1) if revenue_target else 0
     on_track = forecast_leads >= monthly_target if monthly_target else None
 
+    locale = await _user_locale(user)
+
     return {
         "live": {
             "leads_last_hour": leads_last_hour,
@@ -2176,6 +2395,7 @@ async def analytics_realtime(user=Depends(get_current_user)):
             "hourly_leads_24h": hourly,
             "sources_this_month": sources,
         },
+        "locale": locale,
         "generated_at": now.isoformat(),
     }
 
@@ -2234,15 +2454,37 @@ async def analytics_revenue(months: int = 6, user=Depends(get_current_user)):
 # Helper: Groq JSON-mode call returning either a single object or an array under given key
 async def _groq_json(prompt: str, key: Optional[str] = None, max_tokens: int = 2000) -> Any:
     raw = await asyncio.get_event_loop().run_in_executor(
-        None, _groq_chat, prompt, "Output strict JSON only with no markdown code fences.", True, max_tokens, 0.5
+        None, _groq_chat, prompt,
+        "You return STRICT JSON ONLY. No preamble, no commentary, no apologies, no AI disclaimers, no markdown code fences. Begin with { and end with }.",
+        True, max_tokens, 0.5,
     )
-    import json
+    import json, re
+    if not raw:
+        return [] if key else {}
+    text = raw.strip()
+    # Strip code fences if model wrapped JSON in ```json ... ```
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+    # Drop common AI preambles before the first {
+    first_brace = text.find("{")
+    first_bracket = text.find("[")
+    starts = [p for p in (first_brace, first_bracket) if p >= 0]
+    if starts:
+        text = text[min(starts):]
+    # Drop trailing commentary after the last } or ]
+    last_brace = text.rfind("}")
+    last_bracket = text.rfind("]")
+    end = max(last_brace, last_bracket)
+    if end >= 0:
+        text = text[:end + 1]
     try:
-        data = json.loads(raw)
+        data = json.loads(text)
         if key and isinstance(data, dict) and key in data:
             return data[key]
         return data
     except Exception:
+        logger.warning("Groq JSON parse failed; first 200 chars: %s", (raw or "")[:200])
         return [] if key else {}
 
 

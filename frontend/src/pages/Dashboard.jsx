@@ -9,6 +9,7 @@ import { Link, useNavigate } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
 import BriefingCard from "@/components/BriefingCard";
 import SetupChecklist from "@/components/SetupChecklist";
+import { setLocaleCache } from "@/lib/locale";
 
 const STATUS_COLORS = ["#2563EB", "#10B981", "#F59E0B", "#0F172A", "#A855F7"];
 
@@ -25,6 +26,7 @@ export default function Dashboard() {
             api.get("/briefing/latest").then((r) => setBriefing(r.data.briefing)).catch(() => {}),
             api.get("/setup/status").then((r) => {
                 setSetup(r.data);
+                if (r.data.locale) setLocaleCache(r.data.locale);
                 // If business profile not set, force to onboarding
                 if (!r.data.has_profile) navigate("/onboarding");
             }).catch(() => {}),

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
+import { formatCurrency, setLocaleCache } from "@/lib/locale";
 import {
     Pulse, CurrencyDollar, Users, Target, TrendUp, ChartLineUp,
     Sparkle, FloppyDisk, ShieldCheck, ArrowsClockwise,
@@ -29,6 +30,7 @@ export default function Analytics() {
     const load = () => {
         api.get("/analytics/realtime").then((r) => {
             setLive(r.data);
+            if (r.data.locale) setLocaleCache(r.data.locale);
             const t = r.data.target;
             setForm({
                 monthly_lead_target: t.monthly_lead_target || 50,
@@ -62,7 +64,8 @@ export default function Analytics() {
 
     if (!live) return <div className="p-12 text-sm text-[#71717A]">Loading…</div>;
 
-    const fmt = (n) => `$${Math.round(n).toLocaleString()}`;
+    const localeInfo = live.locale;
+    const fmt = (n) => formatCurrency(n, localeInfo);
 
     return (
         <div data-testid="analytics-page">
@@ -116,7 +119,7 @@ export default function Analytics() {
                                         data-testid="input-monthly-lead-target" />
                                 </div>
                                 <div>
-                                    <label className="zm-label">Avg deal value (USD)</label>
+                                    <label className="zm-label">Avg deal value ({localeInfo?.currency || "USD"})</label>
                                     <input type="number" min="0" className="zm-input" value={form.avg_deal_value_usd}
                                         onChange={(e) => setForm({ ...form, avg_deal_value_usd: parseFloat(e.target.value) || 0 })}
                                         data-testid="input-avg-deal-value" />
@@ -160,6 +163,7 @@ export default function Analytics() {
                                     forecast={live.target.forecast_leads}
                                     pct={live.target.leads_progress_pct}
                                     suffix="leads"
+                                    localeInfo={localeInfo}
                                 />
                                 <ProgressBar
                                     label="Revenue"
@@ -168,6 +172,7 @@ export default function Analytics() {
                                     forecast={live.target.forecast_revenue}
                                     pct={live.target.revenue_progress_pct}
                                     isCurrency
+                                    localeInfo={localeInfo}
                                 />
                                 {live.target.guarantee_enabled && live.target.guarantee_terms && (
                                     <div className="mt-4 bg-[#DBEAFE] rounded-2xl p-4 flex gap-3">
@@ -307,8 +312,10 @@ function Counter({ icon: Icon, label, value, sub, color, highlight }) {
     );
 }
 
-function ProgressBar({ label, current, target, forecast, pct, suffix, isCurrency }) {
-    const fmtv = (n) => isCurrency ? `$${Math.round(n).toLocaleString()}` : `${Math.round(n).toLocaleString()}${suffix ? ` ${suffix}` : ""}`;
+function ProgressBar({ label, current, target, forecast, pct, suffix, isCurrency, localeInfo }) {
+    const fmtv = (n) => isCurrency
+        ? formatCurrency(n, localeInfo)
+        : `${Math.round(n).toLocaleString()}${suffix ? ` ${suffix}` : ""}`;
     const clampedPct = Math.min(100, pct || 0);
     const forecastPct = target ? Math.min(120, (forecast / target) * 100) : 0;
     const onTrack = forecast >= target && target > 0;
