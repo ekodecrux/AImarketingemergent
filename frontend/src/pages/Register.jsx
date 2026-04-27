@@ -27,11 +27,11 @@ export default function Register() {
     };
     return (
         <div className="min-h-screen grid lg:grid-cols-2 bg-white">
-            <div className="hidden lg:flex flex-col justify-between p-12 bg-[#002EB8] text-white relative overflow-hidden">
+            <div className="hidden lg:flex flex-col justify-between p-12 bg-[#FF562D] text-white relative overflow-hidden">
                 <div className="relative z-10">
                     <div className="flex items-center gap-2">
                         <div className="w-8 h-8 bg-white flex items-center justify-center">
-                            <Sparkle size={18} weight="fill" className="text-[#002EB8]" />
+                            <Sparkle size={18} weight="fill" className="text-[#FF562D]" />
                         </div>
                         <span className="font-display text-2xl font-black tracking-tighter">ZEROMARK</span>
                     </div>
@@ -57,7 +57,7 @@ export default function Register() {
                     <h1 className="font-display text-4xl font-black tracking-tighter mb-2">Start your trial.</h1>
                     <p className="text-sm text-[#71717A] mb-8">
                         Already have an account?{" "}
-                        <Link to="/login" className="text-[#002EB8] font-semibold underline underline-offset-2" data-testid="link-login">
+                        <Link to="/login" className="text-[#FF562D] font-semibold underline underline-offset-2" data-testid="link-login">
                             Sign in
                         </Link>
                     </p>

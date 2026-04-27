@@ -31,7 +31,7 @@ export default function PublicLandingPage() {
     };
 
     if (error) return (
-        <div className="min-h-screen flex items-center justify-center bg-[#F4F4F5]">
+        <div className="min-h-screen flex items-center justify-center bg-[#FAF7F2]">
             <div className="text-center">
                 <p className="zm-section-label mb-2">// {error.toLowerCase()}</p>
                 <h1 className="font-display text-4xl font-black tracking-tighter">{error}</h1>
@@ -43,7 +43,7 @@ export default function PublicLandingPage() {
     return (
         <div className="min-h-screen bg-white">
             <LandingPagePreview page={page} isPublic={true} onSubmit={submit} />
-            <footer className="px-8 py-6 text-center bg-[#09090B] text-white/60 text-xs uppercase tracking-[0.2em] font-semibold">
+            <footer className="px-8 py-6 text-center bg-[#0E0F11] text-white/60 text-xs uppercase tracking-[0.2em] font-semibold">
                 Built with ZeroMark AI
             </footer>
         </div>

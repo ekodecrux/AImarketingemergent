@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
@@ -31,8 +31,8 @@ export default function GrowthStudio() {
                             key={t.id}
                             onClick={() => setTab(t.id)}
                             data-testid={`tab-${t.id}`}
-                            className={`flex items-center gap-2 px-6 py-4 text-xs uppercase tracking-[0.15em] font-bold whitespace-nowrap border-r border-[#E4E4E7] last:border-r-0 transition-colors ${
-                                tab === t.id ? "bg-[#09090B] text-white" : "bg-white text-[#71717A] hover:bg-[#F4F4F5] hover:text-[#09090B]"
+                            className={`flex items-center gap-2 px-6 py-4 text-xs uppercase tracking-[0.15em] font-bold whitespace-nowrap border-r border-[#EDE5D4] last:border-r-0 transition-colors ${
+                                tab === t.id ? "bg-[#0E0F11] text-white" : "bg-white text-[#71717A] hover:bg-[#FAF7F2] hover:text-[#0E0F11]"
                             }`}
                         >
                             <t.icon size={14} weight="bold" /> {t.label}
@@ -84,7 +84,7 @@ function MarketTab() {
                     <Section title="Trends to ride">
                         <ul className="grid md:grid-cols-2 gap-2">
                             {(data.trends || []).map((t, i) => (
-                                <li key={i} className="flex gap-2 text-sm bg-[#F4F4F5] p-3 border-l-2 border-[#002EB8]">
+                                <li key={i} className="flex gap-2 text-sm bg-[#FAF7F2] p-3 border-l-2 border-[#FF562D]">
                                     <span className="text-[#71717A] font-mono text-xs">{String(i + 1).padStart(2, "0")}</span>
                                     {t}
                                 </li>
@@ -96,7 +96,7 @@ function MarketTab() {
                         <div className="zm-card overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
-                                    <tr className="border-b border-[#E4E4E7]">
+                                    <tr className="border-b border-[#EDE5D4]">
                                         {["Name", "Strengths", "Weaknesses", "Positioning"].map((h) => (
                                             <th key={h} className="text-left px-4 py-3 zm-section-label">{h}</th>
                                         ))}
@@ -104,7 +104,7 @@ function MarketTab() {
                                 </thead>
                                 <tbody>
                                     {(data.competitors || []).map((c, i) => (
-                                        <tr key={i} className="border-b border-[#E4E4E7] last:border-b-0 align-top">
+                                        <tr key={i} className="border-b border-[#EDE5D4] last:border-b-0 align-top">
                                             <td className="px-4 py-3 font-semibold">{c.name}</td>
                                             <td className="px-4 py-3 text-[#71717A]">{c.strengths}</td>
                                             <td className="px-4 py-3 text-[#71717A]">{c.weaknesses}</td>
@@ -118,24 +118,24 @@ function MarketTab() {
 
                     <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-0 zm-card">
                         {["strengths", "weaknesses", "opportunities", "threats"].map((k, i) => (
-                            <div key={k} className={`p-6 ${i < 3 ? "lg:border-r" : ""} ${i % 2 !== 1 ? "md:border-r" : ""} ${i < 2 ? "md:border-b lg:border-b-0" : ""} border-[#E4E4E7]`}>
+                            <div key={k} className={`p-6 ${i < 3 ? "lg:border-r" : ""} ${i % 2 !== 1 ? "md:border-r" : ""} ${i < 2 ? "md:border-b lg:border-b-0" : ""} border-[#EDE5D4]`}>
                                 <p className="zm-section-label mb-3">// {k}</p>
                                 <ul className="space-y-2 text-sm">
-                                    {(data.swot?.[k] || []).map((it, j) => <li key={j} className="text-[#09090B]">• {it}</li>)}
+                                    {(data.swot?.[k] || []).map((it, j) => <li key={j} className="text-[#0E0F11]">• {it}</li>)}
                                 </ul>
                             </div>
                         ))}
                     </div>
 
                     <Section title="Positioning recommendation">
-                        <p className="text-sm leading-relaxed bg-[#09090B] text-white p-6 zm-card border-0">{data.positioning_recommendation}</p>
+                        <p className="text-sm leading-relaxed bg-[#0E0F11] text-white p-6 zm-card border-0">{data.positioning_recommendation}</p>
                     </Section>
 
                     <Section title="Differentiator angles">
                         <ul className="space-y-2">
                             {(data.unique_angles || []).map((a, i) => (
                                 <li key={i} className="text-sm flex gap-3">
-                                    <span className="zm-badge bg-[#002EB8] text-white">{String(i + 1).padStart(2, "0")}</span>
+                                    <span className="zm-badge bg-[#FF562D] text-white">{String(i + 1).padStart(2, "0")}</span>
                                     {a}
                                 </li>
                             ))}
@@ -143,7 +143,7 @@ function MarketTab() {
                     </Section>
 
                     <Section title="Immediate actions">
-                        <div className="zm-card divide-y divide-[#E4E4E7]">
+                        <div className="zm-card divide-y divide-[#EDE5D4]">
                             {(data.immediate_actions || []).map((a, i) => {
                                 const text = typeof a === "string" ? a : (a.action || a.step || "");
                                 const priority = typeof a === "object" ? a.priority : null;
@@ -151,7 +151,7 @@ function MarketTab() {
                                     <div key={i} className="px-6 py-4 flex items-center gap-3">
                                         <span className="text-xs text-[#71717A] font-mono">{String(i + 1).padStart(2, "0")}</span>
                                         <span className="flex-1 text-sm">{text}</span>
-                                        {priority && <span className={`zm-badge ${priority === "high" ? "bg-[#E32636] text-white" : priority === "med" ? "bg-[#F59E0B] text-white" : "bg-[#F4F4F5] text-[#09090B]"}`}>{priority}</span>}
+                                        {priority && <span className={`zm-badge ${priority === "high" ? "bg-[#E32636] text-white" : priority === "med" ? "bg-[#F59E0B] text-white" : "bg-[#FAF7F2] text-[#0E0F11]"}`}>{priority}</span>}
                                     </div>
                                 );
                             })}
@@ -175,7 +175,7 @@ function SEOTab() {
                         onClick={() => setSub(id)}
                         data-testid={`seo-sub-${id}`}
                         className={`px-4 py-2 text-xs uppercase tracking-[0.15em] font-bold border ${
-                            sub === id ? "bg-[#002EB8] border-[#002EB8] text-white" : "bg-white border-[#E4E4E7] text-[#71717A] hover:border-[#002EB8]"
+                            sub === id ? "bg-[#FF562D] border-[#FF562D] text-white" : "bg-white border-[#EDE5D4] text-[#71717A] hover:border-[#FF562D]"
                         }`}
                     >{label}</button>
                 ))}
@@ -213,7 +213,7 @@ function KeywordList() {
                 <div className="zm-card overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="border-b border-[#E4E4E7]">
+                            <tr className="border-b border-[#EDE5D4]">
                                 {["Keyword", "Intent", "Difficulty", "Volume", "Opportunity", "Category"].map((h) => (
                                     <th key={h} className="text-left px-4 py-3 zm-section-label">{h}</th>
                                 ))}
@@ -221,9 +221,9 @@ function KeywordList() {
                         </thead>
                         <tbody>
                             {items.map((k, i) => (
-                                <tr key={i} className="border-b border-[#E4E4E7] last:border-b-0">
+                                <tr key={i} className="border-b border-[#EDE5D4] last:border-b-0">
                                     <td className="px-4 py-3 font-semibold">{k.keyword}</td>
-                                    <td className="px-4 py-3"><span className="zm-badge bg-[#F4F4F5] text-[#09090B]">{k.intent}</span></td>
+                                    <td className="px-4 py-3"><span className="zm-badge bg-[#FAF7F2] text-[#0E0F11]">{k.intent}</span></td>
                                     <td className="px-4 py-3 font-mono text-xs">{k.difficulty}</td>
                                     <td className="px-4 py-3 font-mono text-xs">{k.volume_band}</td>
                                     <td className="px-4 py-3">
@@ -265,14 +265,14 @@ function BacklinkList() {
                                     <h4 className="font-semibold text-sm">{o.name}</h4>
                                     <p className="text-xs text-[#71717A] truncate">{o.url}</p>
                                 </div>
-                                <span className={`zm-badge ${o.priority === "high" ? "bg-[#E32636] text-white" : o.priority === "med" ? "bg-[#F59E0B] text-white" : "bg-[#F4F4F5] text-[#09090B]"}`}>{o.priority}</span>
+                                <span className={`zm-badge ${o.priority === "high" ? "bg-[#E32636] text-white" : o.priority === "med" ? "bg-[#F59E0B] text-white" : "bg-[#FAF7F2] text-[#0E0F11]"}`}>{o.priority}</span>
                             </div>
                             <div className="flex gap-2 my-3 text-[10px] uppercase tracking-[0.15em] font-bold text-[#71717A]">
                                 <span>DA {o.domain_authority}</span><span>·</span>
                                 <span>{o.type}</span><span>·</span>
                                 <span>{o.effort} effort</span>
                             </div>
-                            <p className="text-xs text-[#71717A] leading-relaxed border-l-2 border-[#002EB8] pl-3">{o.angle}</p>
+                            <p className="text-xs text-[#71717A] leading-relaxed border-l-2 border-[#FF562D] pl-3">{o.angle}</p>
                         </div>
                     ))}
                 </div>
@@ -303,14 +303,14 @@ function ContentGapList() {
                         <div key={i} className="zm-card p-5">
                             <div className="flex items-start justify-between gap-2 mb-2">
                                 <h4 className="font-display text-base font-bold tracking-tight">{c.title}</h4>
-                                <span className="zm-badge bg-[#09090B] text-white">{c.funnel_stage}</span>
+                                <span className="zm-badge bg-[#0E0F11] text-white">{c.funnel_stage}</span>
                             </div>
                             <div className="flex gap-2 mb-3 text-[10px] uppercase tracking-[0.15em] font-bold text-[#71717A]">
                                 <span>{c.format}</span><span>·</span><span>{c.word_count_estimate} words</span>
                             </div>
-                            <p className="text-xs text-[#71717A] mb-3"><span className="font-bold text-[#09090B]">Target keyword:</span> {c.target_keyword}</p>
+                            <p className="text-xs text-[#71717A] mb-3"><span className="font-bold text-[#0E0F11]">Target keyword:</span> {c.target_keyword}</p>
                             <details className="text-xs">
-                                <summary className="cursor-pointer text-[#002EB8] font-bold uppercase tracking-[0.15em]">View outline</summary>
+                                <summary className="cursor-pointer text-[#FF562D] font-bold uppercase tracking-[0.15em]">View outline</summary>
                                 <ul className="mt-2 space-y-1 text-[#71717A] list-disc list-inside">
                                     {(c.content_outline || []).map((s, j) => <li key={j}>{s}</li>)}
                                 </ul>
@@ -335,7 +335,7 @@ function PRTab() {
                         key={id} onClick={() => setSub(id)}
                         data-testid={`pr-sub-${id}`}
                         className={`px-4 py-2 text-xs uppercase tracking-[0.15em] font-bold border ${
-                            sub === id ? "bg-[#002EB8] border-[#002EB8] text-white" : "bg-white border-[#E4E4E7] text-[#71717A] hover:border-[#002EB8]"
+                            sub === id ? "bg-[#FF562D] border-[#FF562D] text-white" : "bg-white border-[#EDE5D4] text-[#71717A] hover:border-[#FF562D]"
                         }`}
                     >{label}</button>
                 ))}
@@ -371,9 +371,9 @@ function PressRelease() {
                     <p className="zm-section-label">{out.dateline}</p>
                     <h2 className="font-display text-3xl font-black tracking-tighter">{out.headline}</h2>
                     {out.subhead && <p className="text-base text-[#71717A] italic">{out.subhead}</p>}
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap text-[#09090B]">{out.body}</div>
-                    {out.quote && <blockquote className="border-l-4 border-[#002EB8] pl-4 italic text-sm text-[#71717A]">"{out.quote}"</blockquote>}
-                    <hr className="border-[#E4E4E7]" />
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap text-[#0E0F11]">{out.body}</div>
+                    {out.quote && <blockquote className="border-l-4 border-[#FF562D] pl-4 italic text-sm text-[#71717A]">"{out.quote}"</blockquote>}
+                    <hr className="border-[#EDE5D4]" />
                     <p className="text-xs text-[#71717A] font-bold uppercase tracking-[0.15em]">About</p>
                     <p className="text-xs text-[#71717A]">{out.boilerplate}</p>
                     <p className="text-xs text-[#A1A1AA]">{out.media_contact}</p>
@@ -403,18 +403,18 @@ function MediaList() {
                 <div className="zm-card overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="border-b border-[#E4E4E7]">
+                            <tr className="border-b border-[#EDE5D4]">
                                 {["Publication", "Beat", "Contact", "Email", "Reach", "Angle"].map((h) => <th key={h} className="text-left px-4 py-3 zm-section-label">{h}</th>)}
                             </tr>
                         </thead>
                         <tbody>
                             {items.map((o, i) => (
-                                <tr key={i} className="border-b border-[#E4E4E7] last:border-b-0 align-top">
+                                <tr key={i} className="border-b border-[#EDE5D4] last:border-b-0 align-top">
                                     <td className="px-4 py-3 font-semibold">{o.publication}</td>
                                     <td className="px-4 py-3 text-[#71717A] text-xs">{o.beat}</td>
                                     <td className="px-4 py-3">{o.contact_name}</td>
                                     <td className="px-4 py-3 font-mono text-xs text-[#71717A]">{o.email_pattern}</td>
-                                    <td className="px-4 py-3"><span className="zm-badge bg-[#F4F4F5] text-[#09090B]">{o.reach}</span></td>
+                                    <td className="px-4 py-3"><span className="zm-badge bg-[#FAF7F2] text-[#0E0F11]">{o.reach}</span></td>
                                     <td className="px-4 py-3 text-[#71717A] text-xs max-w-md">{o.angle}</td>
                                 </tr>
                             ))}
@@ -474,6 +474,15 @@ function OutreachComposer() {
 function PlanTab() {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [savingChannels, setSavingChannels] = useState(false);
+
+    // Load latest plan if exists
+    useEffect(() => {
+        api.get("/growth-plan/latest").then((r) => {
+            if (r.data.plan) setData(r.data.plan.plan);
+        }).catch(() => {});
+    }, []);
+
     const generate = async () => {
         setLoading(true);
         const t = toast.loading("Building 12-month plan…");
@@ -484,36 +493,188 @@ function PlanTab() {
         } catch { toast.error("Failed", { id: t }); }
         finally { setLoading(false); }
     };
+
+    const updateChannel = (idx, patch) => {
+        const channels = [...(data.channel_distribution || [])];
+        channels[idx] = { ...channels[idx], ...patch };
+        setData({ ...data, channel_distribution: channels });
+    };
+
+    const removeChannel = (idx) => {
+        const channels = data.channel_distribution.filter((_, i) => i !== idx);
+        setData({ ...data, channel_distribution: channels });
+    };
+
+    const addChannel = () => {
+        const channels = [
+            ...(data.channel_distribution || []),
+            { name: "New channel", type: "organic", monthly_budget_usd: 0, expected_leads_per_month: 0, expected_cpl_usd: 0, priority: "medium", rationale: "" },
+        ];
+        setData({ ...data, channel_distribution: channels });
+    };
+
+    const saveChannels = async () => {
+        setSavingChannels(true);
+        try {
+            await api.post("/growth-plan/channels", {
+                channel_distribution: data.channel_distribution,
+                monthly_lead_target: data.monthly_lead_target,
+                monthly_budget_usd: data.monthly_budget_usd,
+                avg_deal_value_usd: data.avg_deal_value_usd,
+            });
+            toast.success("Plan overrides saved");
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Save failed");
+        } finally { setSavingChannels(false); }
+    };
+
+    const channels = data?.channel_distribution || [];
+    const totalBudget = channels.reduce((s, c) => s + (Number(c.monthly_budget_usd) || 0), 0);
+    const totalLeads = channels.reduce((s, c) => s + (Number(c.expected_leads_per_month) || 0), 0);
+    const paidBudget = channels.filter((c) => c.type === "paid").reduce((s, c) => s + (Number(c.monthly_budget_usd) || 0), 0);
+    const organicBudget = totalBudget - paidBudget;
+
     return (
         <div className="space-y-6" data-testid="plan-tab">
-            <ActionBar title="Generate a comprehensive 12-month growth plan" desc="Vision, north-star metric, quarterly themes, monthly milestones, hiring plan, marketing mix." onClick={generate} loading={loading} cta={data ? "Regenerate plan" : "Generate plan"} />
+            <ActionBar title="Generate a comprehensive 12-month growth plan" desc="Vision, north-star metric, paid + organic channel mix, monthly milestones, hiring plan." onClick={generate} loading={loading} cta={data ? "Regenerate plan" : "Generate plan"} />
             {data && (
                 <div className="space-y-6">
-                    <div className="zm-card bg-[#09090B] text-white border-0 p-8">
+                    <div className="zm-card bg-[#0E0F11] text-white border-0 p-8 rounded-2xl">
                         <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold mb-2">// Vision</p>
                         <p className="font-display text-2xl font-bold tracking-tight leading-snug">{data.vision}</p>
-                        <div className="mt-6 pt-6 border-t border-white/10">
-                            <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold mb-1">North-star metric</p>
-                            <p className="font-display text-3xl font-black tracking-tighter">{data.north_star_metric}</p>
+                        <div className="mt-6 pt-6 border-t border-white/10 grid sm:grid-cols-2 gap-6">
+                            <div>
+                                <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold mb-1">North-star metric</p>
+                                <p className="font-display text-2xl font-black tracking-tighter text-[#FF562D]">{data.north_star_metric}</p>
+                            </div>
+                            <div className="grid grid-cols-3 gap-3">
+                                <KpiBlock label="Lead target" value={data.monthly_lead_target || "—"} />
+                                <KpiBlock label="Monthly budget" value={data.monthly_budget_usd ? `$${data.monthly_budget_usd}` : "—"} />
+                                <KpiBlock label="Avg deal" value={data.avg_deal_value_usd ? `$${data.avg_deal_value_usd}` : "—"} />
+                            </div>
                         </div>
                     </div>
 
+                    {/* CHANNEL DISTRIBUTION (paid vs organic, editable) */}
+                    {channels.length > 0 && (
+                        <Section title="Channel distribution (paid + organic)">
+                            <div className="zm-card overflow-hidden" data-testid="channel-distribution">
+                                <div className="p-5 border-b border-[#EDE5D4] bg-[#FAF7F2] flex flex-wrap items-center justify-between gap-3">
+                                    <div className="flex flex-wrap gap-4">
+                                        <div>
+                                            <p className="zm-section-label">Total budget</p>
+                                            <p className="font-display text-xl font-black tracking-tighter">${totalBudget.toLocaleString()}</p>
+                                        </div>
+                                        <div className="border-l border-[#EDE5D4] pl-4">
+                                            <p className="zm-section-label">Paid</p>
+                                            <p className="font-display text-xl font-black tracking-tighter text-[#FF562D]">${paidBudget.toLocaleString()}</p>
+                                        </div>
+                                        <div className="border-l border-[#EDE5D4] pl-4">
+                                            <p className="zm-section-label">Organic</p>
+                                            <p className="font-display text-xl font-black tracking-tighter text-[#0FB39A]">${organicBudget.toLocaleString()}</p>
+                                        </div>
+                                        <div className="border-l border-[#EDE5D4] pl-4">
+                                            <p className="zm-section-label">Expected leads</p>
+                                            <p className="font-display text-xl font-black tracking-tighter">{totalLeads}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={addChannel} className="zm-btn-secondary text-xs" data-testid="add-channel">
+                                            <Sparkle size={12} weight="bold" /> Add channel
+                                        </button>
+                                        <button onClick={saveChannels} disabled={savingChannels} className="zm-btn-primary text-xs" data-testid="save-channels">
+                                            {savingChannels ? "Saving…" : "Save overrides"}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Stacked paid vs organic bar */}
+                                {totalBudget > 0 && (
+                                    <div className="px-5 pt-4">
+                                        <div className="flex h-3 rounded-full overflow-hidden border border-[#EDE5D4]">
+                                            <div className="bg-[#FF562D]" style={{ width: `${(paidBudget / totalBudget) * 100}%` }}></div>
+                                            <div className="bg-[#0FB39A]" style={{ width: `${(organicBudget / totalBudget) * 100}%` }}></div>
+                                        </div>
+                                        <div className="flex justify-between text-[10px] uppercase tracking-[0.12em] font-bold text-[#71717A] mt-1.5">
+                                            <span>Paid {totalBudget ? Math.round(paidBudget / totalBudget * 100) : 0}%</span>
+                                            <span>Organic {totalBudget ? Math.round(organicBudget / totalBudget * 100) : 0}%</span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="border-b border-[#EDE5D4] bg-[#FAF7F2]">
+                                                <th className="text-left px-5 py-3 zm-section-label">Channel</th>
+                                                <th className="text-left px-3 py-3 zm-section-label">Type</th>
+                                                <th className="text-right px-3 py-3 zm-section-label">Budget /mo</th>
+                                                <th className="text-right px-3 py-3 zm-section-label">Leads /mo</th>
+                                                <th className="text-right px-3 py-3 zm-section-label">CPL</th>
+                                                <th className="text-left px-3 py-3 zm-section-label">Priority</th>
+                                                <th className="text-left px-3 py-3 zm-section-label">Why</th>
+                                                <th className="px-3 py-3"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {channels.map((c, i) => (
+                                                <tr key={i} className="border-b border-[#EDE5D4] last:border-b-0 align-top hover:bg-[#FAF7F2]" data-testid={`channel-row-${i}`}>
+                                                    <td className="px-5 py-2.5">
+                                                        <input className="zm-input text-sm py-1.5 font-semibold" value={c.name || ""} onChange={(e) => updateChannel(i, { name: e.target.value })} data-testid={`channel-name-${i}`} />
+                                                    </td>
+                                                    <td className="px-3 py-2.5">
+                                                        <select className="zm-input text-xs py-1.5" value={c.type || "organic"} onChange={(e) => updateChannel(i, { type: e.target.value })} data-testid={`channel-type-${i}`}>
+                                                            <option value="paid">Paid</option>
+                                                            <option value="organic">Organic</option>
+                                                        </select>
+                                                    </td>
+                                                    <td className="px-3 py-2.5 w-28">
+                                                        <input type="number" min="0" className="zm-input text-sm py-1.5 text-right" value={c.monthly_budget_usd || 0} onChange={(e) => updateChannel(i, { monthly_budget_usd: Number(e.target.value) })} data-testid={`channel-budget-${i}`} />
+                                                    </td>
+                                                    <td className="px-3 py-2.5 w-24">
+                                                        <input type="number" min="0" className="zm-input text-sm py-1.5 text-right" value={c.expected_leads_per_month || 0} onChange={(e) => updateChannel(i, { expected_leads_per_month: Number(e.target.value) })} data-testid={`channel-leads-${i}`} />
+                                                    </td>
+                                                    <td className="px-3 py-2.5 w-20">
+                                                        <input type="number" min="0" className="zm-input text-sm py-1.5 text-right" value={c.expected_cpl_usd || 0} onChange={(e) => updateChannel(i, { expected_cpl_usd: Number(e.target.value) })} />
+                                                    </td>
+                                                    <td className="px-3 py-2.5 w-28">
+                                                        <select className="zm-input text-xs py-1.5" value={c.priority || "medium"} onChange={(e) => updateChannel(i, { priority: e.target.value })}>
+                                                            <option value="high">High</option>
+                                                            <option value="medium">Medium</option>
+                                                            <option value="low">Low</option>
+                                                        </select>
+                                                    </td>
+                                                    <td className="px-3 py-2.5 min-w-[200px] max-w-[300px] text-xs text-[#52525B]">{c.rationale}</td>
+                                                    <td className="px-3 py-2.5">
+                                                        <button onClick={() => removeChannel(i)} className="text-[#A1A1AA] hover:text-[#FF562D]" data-testid={`channel-remove-${i}`}>
+                                                            <ArrowsClockwise size={12} weight="bold" style={{ transform: "rotate(45deg)" }} />×
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </Section>
+                    )}
+
                     <Section title="Quarterly themes">
-                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-0 zm-card">
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
                             {(data.quarterly_themes || []).map((q, i) => (
-                                <div key={i} className={`p-6 ${i < 3 ? "lg:border-r" : ""} ${i % 2 !== 1 ? "md:border-r" : ""} ${i < 2 ? "md:border-b lg:border-b-0" : ""} border-[#E4E4E7]`}>
+                                <div key={i} className="zm-card p-5">
                                     <p className="zm-section-label mb-1">{q.quarter}</p>
                                     <h4 className="font-display text-lg font-bold tracking-tight mb-3">{q.theme}</h4>
                                     <p className="text-xs text-[#71717A] mb-3 italic">{q.primary_goal}</p>
                                     <p className="zm-section-label mt-3 mb-1">Targets</p>
-                                    <ul className="text-xs space-y-1 mb-3 text-[#09090B]">
+                                    <ul className="text-xs space-y-1 mb-3 text-[#0E0F11]">
                                         {(q.key_targets || []).map((t, j) => <li key={j}>• {t}</li>)}
                                     </ul>
                                     <p className="zm-section-label mt-3 mb-1">Initiatives</p>
-                                    <ul className="text-xs space-y-1 text-[#09090B]">
+                                    <ul className="text-xs space-y-1 text-[#0E0F11]">
                                         {(q.top_3_initiatives || []).map((t, j) => <li key={j}>{j + 1}. {t}</li>)}
                                     </ul>
-                                    <div className="mt-4 pt-3 border-t border-[#E4E4E7] text-[10px] uppercase tracking-[0.15em] text-[#71717A] font-bold">
+                                    <div className="mt-4 pt-3 border-t border-[#EDE5D4] text-[10px] uppercase tracking-[0.15em] text-[#71717A] font-bold">
                                         Budget: {q.estimated_budget_band}
                                     </div>
                                 </div>
@@ -522,10 +683,10 @@ function PlanTab() {
                     </Section>
 
                     <Section title="Monthly milestones">
-                        <div className="zm-card divide-y divide-[#E4E4E7]">
+                        <div className="zm-card divide-y divide-[#EDE5D4]">
                             {(data.monthly_milestones || []).map((m, i) => (
                                 <div key={i} className="px-6 py-4 flex items-center gap-4">
-                                    <span className="font-display text-2xl font-black tracking-tighter w-8 text-[#002EB8]">{i + 1}</span>
+                                    <span className="font-display text-2xl font-black tracking-tighter w-8 text-[#FF562D]">{i + 1}</span>
                                     <span className="text-sm">{m}</span>
                                 </div>
                             ))}
@@ -534,14 +695,14 @@ function PlanTab() {
 
                     <div className="grid md:grid-cols-2 gap-6">
                         <Section title="Hiring plan">
-                            <div className="zm-card divide-y divide-[#E4E4E7]">
+                            <div className="zm-card divide-y divide-[#EDE5D4]">
                                 {(data.hiring_plan || []).map((h, i) => {
                                     const role = typeof h === "string" ? h : h.role || h.position || "";
                                     const month = typeof h === "object" ? (h.month || h.quarter || "") : "";
                                     return (
                                         <div key={i} className="px-5 py-3 flex items-center justify-between">
                                             <span className="text-sm">{role}</span>
-                                            <span className="zm-badge bg-[#F4F4F5] text-[#09090B]">{month}</span>
+                                            <span className="zm-badge bg-[#FAF7F2] text-[#0E0F11]">{month}</span>
                                         </div>
                                     );
                                 })}
@@ -549,15 +710,15 @@ function PlanTab() {
                         </Section>
 
                         <Section title="Marketing mix">
-                            <div className="zm-card p-6 space-y-2">
+                            <div className="zm-card p-6 space-y-2.5">
                                 {Object.entries(data.marketing_mix || {}).map(([ch, pct]) => (
                                     <div key={ch}>
                                         <div className="flex justify-between text-xs mb-1">
-                                            <span className="uppercase tracking-[0.15em] font-bold text-[#71717A]">{ch.replace(/_/g, " ")}</span>
-                                            <span className="font-mono">{pct}%</span>
+                                            <span className="uppercase tracking-[0.12em] font-bold text-[#71717A]">{ch.replace(/_/g, " ")}</span>
+                                            <span className="font-mono font-bold">{pct}%</span>
                                         </div>
-                                        <div className="h-1.5 bg-[#F4F4F5]">
-                                            <div className="h-full bg-[#002EB8]" style={{ width: `${pct}%` }} />
+                                        <div className="h-2 bg-[#FAF7F2] rounded-full overflow-hidden">
+                                            <div className="h-full bg-[#FF562D] rounded-full" style={{ width: `${pct}%` }} />
                                         </div>
                                     </div>
                                 ))}
@@ -567,18 +728,27 @@ function PlanTab() {
 
                     <div className="grid md:grid-cols-2 gap-6">
                         <Section title="Key assumptions">
-                            <ul className="zm-card p-6 space-y-2 text-sm text-[#71717A]">
+                            <ul className="zm-card p-6 space-y-2 text-sm text-[#52525B]">
                                 {(data.key_assumptions || []).map((a, i) => <li key={i}>• {a}</li>)}
                             </ul>
                         </Section>
                         <Section title="Success KPIs (Month 12)">
                             <ul className="zm-card p-6 space-y-2 text-sm">
-                                {(data.success_kpis || []).map((k, i) => <li key={i} className="flex gap-2"><ArrowRight size={14} weight="bold" className="text-[#002EB8] mt-0.5" /> <span>{k}</span></li>)}
+                                {(data.success_kpis || []).map((k, i) => <li key={i} className="flex gap-2"><ArrowRight size={14} weight="bold" className="text-[#FF562D] mt-0.5 shrink-0" /> <span>{k}</span></li>)}
                             </ul>
                         </Section>
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function KpiBlock({ label, value }) {
+    return (
+        <div>
+            <p className="text-[9px] uppercase tracking-[0.2em] text-white/50 font-bold mb-1">{label}</p>
+            <p className="font-display text-base font-black tracking-tighter">{value}</p>
         </div>
     );
 }
@@ -610,7 +780,7 @@ function Section({ title, children }) {
 
 function Block({ title, children, right }) {
     return (
-        <div className={`p-6 ${right ? "" : "border-r border-[#E4E4E7]"}`}>
+        <div className={`p-6 ${right ? "" : "border-r border-[#EDE5D4]"}`}>
             <p className="zm-section-label mb-2">{title}</p>
             <p className="text-sm leading-relaxed">{children}</p>
         </div>
@@ -623,7 +793,7 @@ function ScoreBar({ value }) {
     return (
         <div className="flex items-center gap-2">
             <span className="font-mono text-xs font-bold" style={{ color }}>{v}</span>
-            <div className="w-12 h-1 bg-[#F4F4F5]"><div className="h-full" style={{ width: `${v}%`, background: color }} /></div>
+            <div className="w-12 h-1 bg-[#FAF7F2]"><div className="h-full" style={{ width: `${v}%`, background: color }} /></div>
         </div>
     );
 }

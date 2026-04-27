@@ -87,10 +87,10 @@ export default function Integrations() {
                 subtitle="Connect your social, email and messaging accounts to run real campaigns."
             />
             <div className="px-8 py-6">
-                <div className="bg-white border border-[#E4E4E7] border-l-2 border-l-[#F59E0B] p-6 mb-6">
+                <div className="bg-white border border-[#EDE5D4] border-l-2 border-l-[#F59E0B] p-6 mb-6">
                     <p className="zm-section-label mb-2">// Heads up</p>
                     <p className="text-sm text-[#71717A] leading-relaxed">
-                        Email and SMS are <span className="font-bold text-[#09090B]">live out of the box</span>.
+                        Email and SMS are <span className="font-bold text-[#0E0F11]">live out of the box</span>.
                         WhatsApp uses the Twilio sandbox (your recipients have to opt in once via a join code).
                         Social platforms (LinkedIn / Facebook / Instagram / X) require their own developer apps —
                         when you have credentials, paste them below and ZeroMark will start posting through them.
@@ -115,7 +115,7 @@ export default function Integrations() {
                                             </p>
                                         </div>
                                     </div>
-                                    <span className={`zm-badge ${isConnected ? "bg-[#10B981] text-white" : "bg-[#F4F4F5] text-[#71717A]"}`}>
+                                    <span className={`zm-badge ${isConnected ? "bg-[#10B981] text-white" : "bg-[#FAF7F2] text-[#71717A]"}`}>
                                         {isConnected ? <PlugsConnected size={10} weight="bold" /> : <Plug size={10} weight="bold" />}
                                         {isConnected ? "ON" : "OFF"}
                                     </span>

@@ -255,12 +255,15 @@ class LeadIn(BaseModel):
     status: str = "NEW"
     notes: Optional[str] = None
     score: int = 0
+    estimated_value: float = 0.0  # expected deal value
 
 
 class LeadUpdateIn(BaseModel):
     status: Optional[str] = None
     score: Optional[int] = None
     notes: Optional[str] = None
+    estimated_value: Optional[float] = None
+    actual_value: Optional[float] = None
 
 
 class CampaignIn(BaseModel):
@@ -457,6 +460,12 @@ async def update_lead(lead_id: str, payload: LeadUpdateIn, user=Depends(get_curr
     if not update:
         raise HTTPException(status_code=400, detail="Nothing to update")
     update["updated_at"] = now_utc().isoformat()
+    # Auto-populate actual_value from estimated_value when transitioning to CONVERTED
+    if update.get("status") == "CONVERTED" and "actual_value" not in update:
+        existing = await db.leads.find_one({"id": lead_id, "user_id": ws(user)}, {"_id": 0})
+        if existing and not existing.get("actual_value"):
+            update["actual_value"] = float(existing.get("estimated_value") or 0)
+            update["converted_at"] = update["updated_at"]
     res = await db.leads.update_one({"id": lead_id, "user_id": ws(user)}, {"$set": update})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -1624,6 +1633,15 @@ async def growth_plan_generate(user=Depends(get_current_user)):
         f"Return STRICT JSON with the following keys:\n"
         f"  vision (1-2 sentences),\n"
         f"  north_star_metric (single metric we should obsess over),\n"
+        f"  monthly_lead_target (integer — realistic given budget; assume small business unless told otherwise),\n"
+        f"  monthly_budget_usd (integer; reasonable working budget across all channels),\n"
+        f"  avg_deal_value_usd (integer; estimated based on industry),\n"
+        f"  channel_distribution (array of 6-9 channel objects, MUST include both PAID and ORGANIC types; "
+        f"     each: {{name (e.g. 'Google Ads', 'SEO', 'Cold Email', 'LinkedIn Organic', 'Meta Ads', 'Content Marketing', "
+        f"     'Twitter/X', 'YouTube Ads', 'Affiliate', 'PR'), type ('paid'|'organic'), "
+        f"     monthly_budget_usd (integer; sum of paid budgets ≤ monthly_budget_usd; organic = 0 or small ops cost), "
+        f"     expected_leads_per_month (integer), expected_cpl_usd (integer; cost per lead), "
+        f"     priority ('high'|'medium'|'low'), rationale (1 sentence)}}),\n"
         f"  quarterly_themes (array of 4 quarter objects: {{quarter (Q1..Q4), theme, primary_goal, "
         f"     key_targets (array of 3 measurable targets), top_3_initiatives, channels (array), "
         f"     estimated_budget_band (low/mid/high), risks (array of 2)}}),\n"
@@ -1651,6 +1669,223 @@ async def growth_plan_generate(user=Depends(get_current_user)):
 async def growth_plan_latest(user=Depends(get_current_user)):
     rec = await db.growth_plans.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)])
     return {"plan": rec}
+
+
+# ---------- Editable channel distribution + Guaranteed Leads target ----------
+class ChannelOverrideIn(BaseModel):
+    channel_distribution: List[Dict[str, Any]]
+    monthly_lead_target: Optional[int] = None
+    monthly_budget_usd: Optional[int] = None
+    avg_deal_value_usd: Optional[int] = None
+
+
+@api.post("/growth-plan/channels")
+async def save_channel_override(payload: ChannelOverrideIn, user=Depends(get_current_user)):
+    """User-overrides for the AI plan's channel distribution + targets. Persists per workspace."""
+    rec = await db.growth_plans.find_one({"user_id": ws(user)}, sort=[("generated_at", -1)])
+    if not rec:
+        raise HTTPException(status_code=400, detail="Generate a plan first")
+    plan = rec.get("plan") or {}
+    plan["channel_distribution"] = payload.channel_distribution
+    if payload.monthly_lead_target is not None:
+        plan["monthly_lead_target"] = payload.monthly_lead_target
+    if payload.monthly_budget_usd is not None:
+        plan["monthly_budget_usd"] = payload.monthly_budget_usd
+    if payload.avg_deal_value_usd is not None:
+        plan["avg_deal_value_usd"] = payload.avg_deal_value_usd
+    plan["user_modified_at"] = now_utc().isoformat()
+    await db.growth_plans.update_one({"id": rec["id"]}, {"$set": {"plan": plan}})
+    rec["plan"] = plan
+    rec.pop("_id", None)
+    return {"plan": rec}
+
+
+class LeadTargetIn(BaseModel):
+    monthly_lead_target: int
+    avg_deal_value_usd: float = 0.0
+    monthly_revenue_target_usd: Optional[float] = None
+    guarantee_enabled: bool = False
+    guarantee_terms: Optional[str] = None  # e.g. "Refund 25% if missed by >20%"
+
+
+@api.get("/lead-targets")
+async def get_lead_target(user=Depends(get_current_user)):
+    rec = await db.lead_targets.find_one({"user_id": ws(user)}, {"_id": 0})
+    return {"target": rec}
+
+
+@api.post("/lead-targets")
+async def upsert_lead_target(payload: LeadTargetIn, user=Depends(get_current_user)):
+    revenue_target = payload.monthly_revenue_target_usd
+    if revenue_target is None:
+        revenue_target = float(payload.monthly_lead_target) * float(payload.avg_deal_value_usd)
+    doc = {
+        "user_id": ws(user),
+        "monthly_lead_target": payload.monthly_lead_target,
+        "avg_deal_value_usd": payload.avg_deal_value_usd,
+        "monthly_revenue_target_usd": revenue_target,
+        "guarantee_enabled": payload.guarantee_enabled,
+        "guarantee_terms": payload.guarantee_terms,
+        "updated_at": now_utc().isoformat(),
+    }
+    await db.lead_targets.update_one(
+        {"user_id": ws(user)}, {"$set": doc, "$setOnInsert": {"created_at": now_utc().isoformat()}}, upsert=True,
+    )
+    rec = await db.lead_targets.find_one({"user_id": ws(user)}, {"_id": 0})
+    return {"target": rec}
+
+
+# ---------- Real-time Analytics ----------
+@api.get("/analytics/realtime")
+async def analytics_realtime(user=Depends(get_current_user)):
+    """Live dashboard counters: leads today, last hour, conversions, revenue this month, target progress."""
+    wid = ws(user)
+    now = now_utc()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    hour_ago = now - timedelta(hours=1)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    leads_today = await db.leads.count_documents({"user_id": wid, "created_at": {"$gte": today_start.isoformat()}})
+    leads_last_hour = await db.leads.count_documents({"user_id": wid, "created_at": {"$gte": hour_ago.isoformat()}})
+    leads_this_month = await db.leads.count_documents({"user_id": wid, "created_at": {"$gte": month_start.isoformat()}})
+
+    converted_this_month = await db.leads.count_documents({
+        "user_id": wid, "status": "CONVERTED",
+        "created_at": {"$gte": month_start.isoformat()},
+    })
+
+    # Revenue: sum actual_value of CONVERTED leads this month
+    revenue_pipeline = [
+        {"$match": {"user_id": wid, "status": "CONVERTED", "created_at": {"$gte": month_start.isoformat()}}},
+        {"$group": {"_id": None, "revenue": {"$sum": {"$ifNull": ["$actual_value", 0]}}}},
+    ]
+    rev_doc = await db.leads.aggregate(revenue_pipeline).to_list(1)
+    revenue_this_month = float(rev_doc[0]["revenue"]) if rev_doc else 0.0
+
+    # Pipeline value: sum estimated_value for non-rejected leads
+    pipeline_pipe = [
+        {"$match": {"user_id": wid, "status": {"$in": ["NEW", "CONTACTED", "INTERESTED"]}}},
+        {"$group": {"_id": None, "value": {"$sum": {"$ifNull": ["$estimated_value", 0]}}}},
+    ]
+    pipe_doc = await db.leads.aggregate(pipeline_pipe).to_list(1)
+    pipeline_value = float(pipe_doc[0]["value"]) if pipe_doc else 0.0
+
+    # Last 24h hourly leads
+    hourly = []
+    for i in range(23, -1, -1):
+        h_start = (now - timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
+        h_end = h_start + timedelta(hours=1)
+        c = await db.leads.count_documents({
+            "user_id": wid,
+            "created_at": {"$gte": h_start.isoformat(), "$lt": h_end.isoformat()},
+        })
+        hourly.append({"hour": h_start.strftime("%H:00"), "count": c})
+
+    # Source breakdown for current month
+    source_pipe = [
+        {"$match": {"user_id": wid, "created_at": {"$gte": month_start.isoformat()}}},
+        {"$group": {"_id": {"$ifNull": ["$source", "MANUAL"]}, "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    source_data = await db.leads.aggregate(source_pipe).to_list(20)
+    sources = [{"name": s["_id"], "value": s["count"]} for s in source_data]
+
+    # Target progress
+    target_doc = await db.lead_targets.find_one({"user_id": wid}, {"_id": 0})
+    monthly_target = (target_doc or {}).get("monthly_lead_target") or 0
+    revenue_target = (target_doc or {}).get("monthly_revenue_target_usd") or 0.0
+    avg_deal = (target_doc or {}).get("avg_deal_value_usd") or 0.0
+
+    # Forecast: linear projection based on days elapsed
+    import calendar
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    day_of_month = now.day
+    pace_factor = days_in_month / max(1, day_of_month)
+    forecast_leads = int(round(leads_this_month * pace_factor)) if leads_this_month else 0
+    forecast_revenue = revenue_this_month * pace_factor if revenue_this_month else (forecast_leads * avg_deal)
+
+    target_progress_pct = round((leads_this_month / monthly_target * 100), 1) if monthly_target else 0
+    revenue_progress_pct = round((revenue_this_month / revenue_target * 100), 1) if revenue_target else 0
+    on_track = forecast_leads >= monthly_target if monthly_target else None
+
+    return {
+        "live": {
+            "leads_last_hour": leads_last_hour,
+            "leads_today": leads_today,
+            "leads_this_month": leads_this_month,
+            "converted_this_month": converted_this_month,
+            "revenue_this_month": round(revenue_this_month, 2),
+            "pipeline_value": round(pipeline_value, 2),
+        },
+        "target": {
+            "monthly_lead_target": monthly_target,
+            "monthly_revenue_target_usd": round(revenue_target, 2),
+            "avg_deal_value_usd": avg_deal,
+            "leads_progress_pct": target_progress_pct,
+            "revenue_progress_pct": revenue_progress_pct,
+            "forecast_leads": forecast_leads,
+            "forecast_revenue": round(forecast_revenue, 2),
+            "on_track": on_track,
+            "guarantee_enabled": (target_doc or {}).get("guarantee_enabled", False),
+            "guarantee_terms": (target_doc or {}).get("guarantee_terms"),
+        },
+        "charts": {
+            "hourly_leads_24h": hourly,
+            "sources_this_month": sources,
+        },
+        "generated_at": now.isoformat(),
+    }
+
+
+@api.get("/analytics/revenue")
+async def analytics_revenue(months: int = 6, user=Depends(get_current_user)):
+    """Monthly revenue + lead trend for the last N months."""
+    wid = ws(user)
+    now = now_utc()
+    # Build month start list going back N months from current month
+    starts = []
+    cur = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    for _ in range(months):
+        starts.append(cur)
+        # step back one month
+        if cur.month == 1:
+            cur = cur.replace(year=cur.year - 1, month=12)
+        else:
+            cur = cur.replace(month=cur.month - 1)
+    starts.reverse()
+
+    months_data = []
+    for m_start in starts:
+        if m_start.month == 12:
+            m_end = m_start.replace(year=m_start.year + 1, month=1)
+        else:
+            m_end = m_start.replace(month=m_start.month + 1)
+
+        leads = await db.leads.count_documents({
+            "user_id": wid,
+            "created_at": {"$gte": m_start.isoformat(), "$lt": m_end.isoformat()},
+        })
+        converted = await db.leads.count_documents({
+            "user_id": wid, "status": "CONVERTED",
+            "created_at": {"$gte": m_start.isoformat(), "$lt": m_end.isoformat()},
+        })
+        rev_pipe = [
+            {"$match": {
+                "user_id": wid, "status": "CONVERTED",
+                "created_at": {"$gte": m_start.isoformat(), "$lt": m_end.isoformat()},
+            }},
+            {"$group": {"_id": None, "revenue": {"$sum": {"$ifNull": ["$actual_value", 0]}}}},
+        ]
+        r = await db.leads.aggregate(rev_pipe).to_list(1)
+        revenue = float(r[0]["revenue"]) if r else 0.0
+        months_data.append({
+            "month": m_start.strftime("%b %Y"),
+            "leads": leads,
+            "converted": converted,
+            "revenue": round(revenue, 2),
+            "conversion_rate": round((converted / leads * 100), 1) if leads else 0,
+        })
+    return {"months": months_data}
 
 
 # Helper: Groq JSON-mode call returning either a single object or an array under given key

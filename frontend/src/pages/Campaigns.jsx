@@ -16,11 +16,11 @@ const CHANNELS = [
 
 const STATUS_STYLES = {
     PENDING_APPROVAL: "bg-[#F59E0B] text-white",
-    APPROVED: "bg-[#002EB8] text-white",
+    APPROVED: "bg-[#FF562D] text-white",
     REJECTED: "bg-[#E32636] text-white",
     SENT: "bg-[#10B981] text-white",
-    FAILED: "bg-[#18181B] text-white",
-    MODIFIED: "bg-[#002EB8] text-white",
+    FAILED: "bg-[#27272A] text-white",
+    MODIFIED: "bg-[#FF562D] text-white",
 };
 
 export default function Campaigns() {
@@ -80,13 +80,13 @@ export default function Campaigns() {
                             <div
                                 key={c.id}
                                 data-testid={`campaign-card-${c.id}`}
-                                className={`p-6 border-[#E4E4E7] ${i % 3 !== 2 ? "lg:border-r" : ""} ${i % 2 !== 1 ? "md:border-r" : ""} border-b`}
+                                className={`p-6 border-[#EDE5D4] ${i % 3 !== 2 ? "lg:border-r" : ""} ${i % 2 !== 1 ? "md:border-r" : ""} border-b`}
                             >
                                 <div className="flex items-start justify-between mb-4">
-                                    <div className="w-10 h-10 bg-[#F4F4F5] flex items-center justify-center">
+                                    <div className="w-10 h-10 bg-[#FAF7F2] flex items-center justify-center">
                                         <ch.icon size={18} weight="bold" />
                                     </div>
-                                    <span className={`zm-badge ${STATUS_STYLES[c.status] || "bg-[#F4F4F5] text-[#09090B]"}`}>
+                                    <span className={`zm-badge ${STATUS_STYLES[c.status] || "bg-[#FAF7F2] text-[#0E0F11]"}`}>
                                         {c.status}
                                     </span>
                                 </div>
@@ -174,7 +174,7 @@ function CreateCampaignModal({ onClose, onCreated }) {
                                 onClick={() => setForm({ ...form, channel: c.v })}
                                 data-testid={`channel-${c.v}`}
                                 className={`flex flex-col items-center gap-1 px-2 py-3 border text-xs uppercase tracking-[0.1em] font-bold ${
-                                    form.channel === c.v ? "bg-[#09090B] text-white border-[#09090B]" : "bg-white text-[#71717A] border-[#E4E4E7] hover:border-[#09090B]"
+                                    form.channel === c.v ? "bg-[#0E0F11] text-white border-[#0E0F11]" : "bg-white text-[#71717A] border-[#EDE5D4] hover:border-[#0E0F11]"
                                 }`}
                             >
                                 <c.icon size={18} weight="bold" />
@@ -194,12 +194,12 @@ function CreateCampaignModal({ onClose, onCreated }) {
                 <div>
                     <div className="flex items-center justify-between mb-2">
                         <label className="zm-label mb-0">Content</label>
-                        <button type="button" onClick={() => setAiOpen(!aiOpen)} className="text-xs uppercase tracking-[0.15em] font-bold text-[#002EB8] hover:underline flex items-center gap-1" data-testid="toggle-ai-panel">
+                        <button type="button" onClick={() => setAiOpen(!aiOpen)} className="text-xs uppercase tracking-[0.15em] font-bold text-[#FF562D] hover:underline flex items-center gap-1" data-testid="toggle-ai-panel">
                             <Sparkle size={12} weight="fill" /> AI Generate
                         </button>
                     </div>
                     {aiOpen && (
-                        <div className="bg-[#F4F4F5] border-l-2 border-[#002EB8] p-4 mb-3 space-y-3">
+                        <div className="bg-[#FAF7F2] border-l-2 border-[#FF562D] p-4 mb-3 space-y-3">
                             <div>
                                 <label className="zm-label">Goal</label>
                                 <input className="zm-input" placeholder="e.g., Book a free demo" value={aiData.goal} onChange={(e) => setAiData({ ...aiData, goal: e.target.value })} data-testid="ai-goal" />
@@ -224,7 +224,7 @@ function CreateCampaignModal({ onClose, onCreated }) {
                     <textarea required rows={8} className="zm-input font-mono text-xs" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder="Write or generate content. Use {{name}} {{email}} {{company}} for personalisation." data-testid="campaign-content" />
                 </div>
 
-                <p className="text-xs text-[#71717A] bg-[#F4F4F5] p-3 border-l-2 border-[#F59E0B]">
+                <p className="text-xs text-[#71717A] bg-[#FAF7F2] p-3 border-l-2 border-[#F59E0B]">
                     Campaigns require approval before sending. They land in the Approvals queue.
                 </p>
 

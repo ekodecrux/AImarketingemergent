@@ -76,7 +76,7 @@ export default function Business() {
                     <div>
                         <label className="zm-label">Website URL</label>
                         <div className="flex gap-2">
-                            <span className="inline-flex items-center px-3 bg-[#F4F4F5] border border-r-0 border-[#D4D4D8] text-[#71717A] rounded-sm">
+                            <span className="inline-flex items-center px-3 bg-[#FAF7F2] border border-r-0 border-[#D4D4D8] text-[#71717A] rounded-sm">
                                 <Globe size={16} weight="bold" />
                             </span>
                             <input className="zm-input flex-1" value={form.website_url || ""} onChange={(e) => setForm({ ...form, website_url: e.target.value })} placeholder="https://yourcompany.com" data-testid="business-website" />

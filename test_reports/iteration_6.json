@@ -1,0 +1,46 @@
+{
+  "summary": "Iter6 backend + frontend smoke testing for Sprints 1-4 (paid/organic AI plan, guaranteed-leads target + analytics, Unbounce theme, landing pages routes). Backend: 12/12 tests PASS in 2.88s in /app/backend/tests/test_iter6_analytics_targets.py. Verified: (1) /api/lead-targets POST/GET upserts monthly_lead_target/avg_deal_value/guarantee_enabled/guarantee_terms; revenue target auto-computed when omitted; explicit value respected when provided. (2) /api/analytics/realtime returns full live + target + charts shape; hourly_leads_24h length=24; sources_this_month list; response <2s. (3) /api/analytics/revenue?months=6 returns 6 strictly consecutive months parsed via 'Mon YYYY'. (4) PUT /api/leads/{id} status=CONVERTED auto-fills actual_value from estimated_value; explicit actual_value respected when provided. (5) POST /api/growth-plan/channels persists channel_distribution with monthly_lead_target/budget/avg_deal updates and user_modified_at; subsequent GET /api/growth-plan/latest returns same overrides. (6) Smoke OK on /api/dashboard/stats, /api/landing-pages, /api/growth-plan/latest, /api/leads, /api/public/p/{slug}. (7) Direct curl confirmed existing growth plan has channel_distribution with both PAID and ORGANIC types, monthly_lead_target=50, avg_deal_value_usd=300. Frontend (admin@zeromark.ai/admin123 → /dashboard): Live Analytics page (/analytics) renders 6 counters (Last Hour 1, Today 13, This Month 37, Converted 0, Revenue $0, Pipeline $0), Guaranteed Leads card with leads progress (37/100 → after edit 37/50 = 74%), revenue progress, Forecast end-of-month (41 leads, $4,100/$10,250 projected), Last 24 hours line chart (recharts), Source Mix bars (google_maps_leads 97%, landing_page 3%). Edit target modal: opens, accepts target=50/avg_deal=250, toggles guarantee, accepts terms textarea, Save target shows 'Target saved' toast and reload renders 'LEAD GUARANTEE ACTIVE' panel with the entered terms. Sidebar shows new 'Live Analytics' (with orange 'LIVE' badge) + 'Landing Pages' nav items. Growth Studio /growth → '12-Month Plan' tab → existing plan has 'Channel distribution (paid + organic)' editor with editable Channel/Type(Paid|Organic dropdown)/Budget/Leads/CPL/Priority fields, 'Add channel'/'Save overrides' buttons; Total budget $1,500, Paid $0, Organic $1,500 split summary visible. Landing Pages /landing-pages lists 'Demo' page (/p/demo, LIVE) with Edit/View/Delete; 'New page' button visible. Theme: body bg = rgb(250, 247, 242) = cream #FAF7F2 ✓, headings use Fraunces, primary buttons use 9999px (full pill) radius, no legacy blue (#002EB8) anywhere on rendered tree. Public /p/demo renders (the iter6 reviewer mention of /p/instant-ship-2 is the deployment hostname slug — that specific slug 404s, the actual seeded slug is 'demo' which IS public).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/leads (create_lead)", "issue": "Inserts user_id=user['id'] but read/update/delete uses ws(user)=user.workspace_id. For solo admin (workspace_id==id) this is fine, but for invited teammates created leads would NOT be visible to the workspace owner, breaking the workspace data-sharing invariant introduced in iter5. Same pattern in /api/leads/import and /api/campaigns POST. Should switch to ws(user) on all writes."},
+      {"endpoint": "POST /api/lead-targets", "issue": "No validation that monthly_lead_target > 0 or avg_deal_value_usd >= 0. Negative or zero values are accepted and used to compute revenue_target = 0 silently."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Edit Target modal — guarantee toggle", "issue": "The 'Enable lead guarantee terms' control renders both an unstyled native checkbox AND a styled orange checkbox side-by-side, looks like a duplicate. Visually confusing though functionally works.", "selector": "input[type='checkbox'] near label 'Enable lead guarantee terms'", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All authed pages", "issues": ["Theme is consistent and on-brand: cream #FAF7F2 background, coral #FF562D primary, full-pill rounded buttons, Fraunces serif headings — matches the Unbounce-inspired direction. No leftover blue or sharp 0px primary buttons detected."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_analytics_targets.py",
+    "/app/test_reports/pytest/iter6_results.xml"
+  ],
+  "action_items": [
+    "[LOW] Standardise create_lead/import_leads/create_campaign to write user_id=ws(user) instead of user['id'] so teammate-created records remain visible to the workspace owner (iter5 invariant).",
+    "[LOW] Validate non-negative monthly_lead_target and avg_deal_value_usd in LeadTargetIn.",
+    "[LOW] Fix duplicate checkbox rendering in Edit Target modal (guarantee toggle): native input visible alongside the styled control.",
+    "No retest required — all reviewer-listed iter6 features verified working."
+  ],
+  "critical_code_review_comments": [
+    "analytics_realtime() does 24 sequential count_documents calls for hourly chart (lines 1774-1782). For workspaces with many leads this is N=24 round-trips; consider a single $bucket aggregation by hour for a 24x speedup.",
+    "save_channel_override mutates plan dict and updates only by id — good. But there is no validation that channel_distribution items contain required fields (name, type, monthly_budget_usd, expected_leads). User could send malformed array and break frontend rendering downstream.",
+    "growth_plan_generate prompt now includes 'MUST include both PAID and ORGANIC types' — verified to work in production data, but if Groq returns a plan missing one of the two, no server-side enforcement exists. Consider validating channel_distribution post-parse and re-prompting.",
+    "Auto-fill of actual_value on CONVERTED at lines 463-468 reads existing only when status=='CONVERTED'; this is correct. But it only checks `not existing.get('actual_value')` — if a user previously set actual_value=0 explicitly, it would be overwritten. Edge case.",
+    "/p/instant-ship-2 returns 404 because no landing page with that slug exists; only /p/demo is seeded. Reviewer's slug expectation may be incorrect — flagged for clarification.",
+    "server.py is now 2776 lines (was 2240 in iter5) — splitting into routers/{auth,leads,team,ai,oauth,growth_studio,landing_pages,analytics}.py is overdue (flagged in iter4 + iter5)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter6_analytics_targets.py (new — 12 tests)"
+  ],
+  "success_rate": {"backend": "100% (12/12 iter6 tests, plus smoke on prior endpoints)", "frontend": "100% on iter6 reviewer features (Analytics page, Edit Target, sidebar, Growth Plan editor, Landing Pages list, theme)"},
+  "test_credentials": "admin@zeromark.ai / admin123 (auto-seeded). No new test users created (all writes scoped to admin workspace; lead targets persisted as TEST_iter6_<run_id> in guarantee_terms field; lead test data cleaned up in finally blocks).",
+  "seed_data_creation": "None other than the lead-targets row for admin (intentional — leaves the page in a usable demo state with target=100/$99,999 from the explicit-revenue test or 50/$250 from the manual frontend Save). Test leads were created and deleted within the test cases.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter6 regression suite is /app/backend/tests/test_iter6_analytics_targets.py — keep green. Public landing page slug currently seeded is 'demo' (/p/demo); /p/instant-ship-2 returns 404 — that 'instant-ship-2' string is the preview hostname, not a slug. PUBLIC URL = REACT_APP_BACKEND_URL = https://instant-ship-2.preview.emergentagent.com (from /app/frontend/.env). The Edit-Target modal has a minor duplicate-checkbox visual glitch worth flagging when iterating on the modal next time."
+}

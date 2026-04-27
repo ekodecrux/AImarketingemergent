@@ -21,6 +21,10 @@ import Scraping from "@/pages/Scraping";
 import Integrations from "@/pages/Integrations";
 import GrowthStudio from "@/pages/GrowthStudio";
 import Team from "@/pages/Team";
+import LandingPages from "@/pages/LandingPages";
+import LandingPageEditor from "@/pages/LandingPageEditor";
+import PublicLandingPage from "@/pages/PublicLandingPage";
+import Analytics from "@/pages/Analytics";
 
 function Protected({ children }) {
     const { user, loading } = useAuth();
@@ -43,22 +47,28 @@ function App() {
         <BrowserRouter>
             <AuthProvider>
                 <Toaster position="top-right" toastOptions={{
-                    style: { background: "#09090B", color: "#fff", border: "none", borderRadius: 0, fontFamily: "Manrope" },
+                    style: { background: "#0E0F11", color: "#fff", border: "none", borderRadius: 12, fontFamily: "Source Sans 3" },
                 }} />
                 <Routes>
                     <Route path="/" element={<Landing />} />
                     <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
                     <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
 
+                    {/* Public landing page (built by users) */}
+                    <Route path="/p/:slug" element={<PublicLandingPage />} />
+
                     <Route path="/onboarding" element={<Protected><Onboarding /></Protected>} />
 
                     <Route element={<Protected><AppLayout /></Protected>}>
                         <Route path="/dashboard" element={<Dashboard />} />
+                        <Route path="/analytics" element={<Analytics />} />
                         <Route path="/leads" element={<Leads />} />
                         <Route path="/leads/:id" element={<LeadDetail />} />
                         <Route path="/campaigns" element={<Campaigns />} />
                         <Route path="/approvals" element={<Approvals />} />
                         <Route path="/inbox" element={<Inbox />} />
+                        <Route path="/landing-pages" element={<LandingPages />} />
+                        <Route path="/landing-pages/:id" element={<LandingPageEditor />} />
                         <Route path="/growth" element={<GrowthStudio />} />
                         <Route path="/scraping" element={<Scraping />} />
                         <Route path="/integrations" element={<Integrations />} />

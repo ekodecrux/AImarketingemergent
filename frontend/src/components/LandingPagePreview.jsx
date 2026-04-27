@@ -6,13 +6,13 @@ import {
 const ICONS = { lightning: Lightning, shield: Shield, sparkle: Sparkle, target: Target, rocket: Rocket, chart: ChartBar };
 
 export default function LandingPagePreview({ page, activeIdx, onActivate, isPublic = false, onSubmit }) {
-    const primary = page.theme?.primary_color || "#002EB8";
+    const primary = page.theme?.primary_color || "#FF562D";
     return (
         <div style={{ "--brand": primary }}>
             {page.sections.map((s, i) => {
                 const interactive = !isPublic && onActivate;
                 const wrapClass = interactive
-                    ? `cursor-pointer transition-all ${activeIdx === i ? "ring-2 ring-[#002EB8] ring-inset" : "hover:ring-1 hover:ring-[#A1A1AA] hover:ring-inset"}`
+                    ? `cursor-pointer transition-all ${activeIdx === i ? "ring-2 ring-[#FF562D] ring-inset" : "hover:ring-1 hover:ring-[#A1A1AA] hover:ring-inset"}`
                     : "";
                 return (
                     <div key={i} onClick={interactive ? () => onActivate(i) : undefined} className={wrapClass}>
@@ -28,7 +28,7 @@ function SectionRender({ section, primary, onSubmit, isPublic }) {
     switch (section.type) {
         case "hero":
             return (
-                <section className="px-8 py-20 md:py-28 text-center relative overflow-hidden" style={{ background: section.background_image ? "" : "#F4F4F5" }}>
+                <section className="px-8 py-20 md:py-28 text-center relative overflow-hidden" style={{ background: section.background_image ? "" : "#FAF7F2" }}>
                     {section.background_image && (
                         <div className="absolute inset-0 opacity-30 z-0" style={{ backgroundImage: `url(${section.background_image})`, backgroundSize: "cover", backgroundPosition: "center" }} />
                     )}
@@ -53,7 +53,7 @@ function SectionRender({ section, primary, onSubmit, isPublic }) {
                             {(section.items || []).map((it, i) => {
                                 const Ic = ICONS[it.icon] || Sparkle;
                                 return (
-                                    <div key={i} className="text-center p-6 border border-[#E4E4E7] rounded-sm">
+                                    <div key={i} className="text-center p-6 border border-[#EDE5D4] rounded-sm">
                                         <div className="w-10 h-10 mx-auto mb-3 flex items-center justify-center rounded-sm" style={{ background: primary }}>
                                             <Ic size={20} weight="fill" className="text-white" />
                                         </div>
@@ -70,13 +70,13 @@ function SectionRender({ section, primary, onSubmit, isPublic }) {
 
         case "image_text":
             return (
-                <section className="px-8 py-16 md:py-20 bg-[#F4F4F5]">
+                <section className="px-8 py-16 md:py-20 bg-[#FAF7F2]">
                     <div className={`max-w-5xl mx-auto grid md:grid-cols-2 gap-10 items-center ${section.position === "left" ? "md:[direction:rtl]" : ""}`}>
                         <div className="md:[direction:ltr]">
                             <h2 className="font-display text-3xl md:text-4xl font-black tracking-tight mb-4">{section.heading}</h2>
                             <p className="text-base text-[#52525B] leading-relaxed whitespace-pre-wrap">{section.body}</p>
                         </div>
-                        <div className="md:[direction:ltr] aspect-[4/3] bg-white border border-[#E4E4E7] rounded-sm overflow-hidden">
+                        <div className="md:[direction:ltr] aspect-[4/3] bg-white border border-[#EDE5D4] rounded-sm overflow-hidden">
                             {section.image ? (
                                 <img src={section.image} alt="" className="w-full h-full object-cover" />
                             ) : (
@@ -89,7 +89,7 @@ function SectionRender({ section, primary, onSubmit, isPublic }) {
 
         case "testimonial":
             return (
-                <section className="px-8 py-16 md:py-20 text-white" style={{ background: "#09090B" }}>
+                <section className="px-8 py-16 md:py-20 text-white" style={{ background: "#0E0F11" }}>
                     <div className="max-w-3xl mx-auto text-center">
                         <Quotes size={32} weight="fill" className="mx-auto mb-6" style={{ color: primary }} />
                         <p className="font-display text-2xl md:text-3xl font-bold tracking-tight leading-snug mb-8">"{section.quote}"</p>
@@ -105,7 +105,7 @@ function SectionRender({ section, primary, onSubmit, isPublic }) {
                     <h2 className="font-display text-3xl md:text-5xl font-black tracking-tighter mb-4 max-w-3xl mx-auto leading-tight">{section.heading}</h2>
                     <p className="text-base md:text-lg text-white/80 mb-8 max-w-xl mx-auto">{section.subheading}</p>
                     {section.cta_text && (
-                        <a href={section.cta_link || "#form"} className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold bg-white text-[#09090B] rounded-sm hover:bg-[#F4F4F5]">
+                        <a href={section.cta_link || "#form"} className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold bg-white text-[#0E0F11] rounded-sm hover:bg-[#FAF7F2]">
                             {section.cta_text} <ArrowRight size={14} weight="bold" />
                         </a>
                     )}
@@ -117,7 +117,7 @@ function SectionRender({ section, primary, onSubmit, isPublic }) {
                 <section className="px-8 py-16 md:py-20 bg-white">
                     <div className="max-w-3xl mx-auto">
                         <h2 className="font-display text-3xl md:text-4xl font-black tracking-tight text-center mb-10">{section.heading}</h2>
-                        <div className="divide-y divide-[#E4E4E7] border border-[#E4E4E7] rounded-sm">
+                        <div className="divide-y divide-[#EDE5D4] border border-[#EDE5D4] rounded-sm">
                             {(section.items || []).map((it, i) => (
                                 <details key={i} className="p-5">
                                     <summary className="cursor-pointer font-semibold text-base">{it.q}</summary>
@@ -133,7 +133,7 @@ function SectionRender({ section, primary, onSubmit, isPublic }) {
             return <FormSection section={section} primary={primary} onSubmit={onSubmit} isPublic={isPublic} />;
 
         default:
-            return <div className="p-8 bg-[#F4F4F5] text-xs text-[#71717A]">Unknown section: {section.type}</div>;
+            return <div className="p-8 bg-[#FAF7F2] text-xs text-[#71717A]">Unknown section: {section.type}</div>;
     }
 }
 
@@ -155,8 +155,8 @@ function FormSection({ section, primary, onSubmit, isPublic }) {
     };
 
     return (
-        <section id="form" className="px-8 py-16 md:py-20 bg-[#F4F4F5]">
-            <div className="max-w-md mx-auto bg-white border border-[#E4E4E7] p-8 rounded-sm">
+        <section id="form" className="px-8 py-16 md:py-20 bg-[#FAF7F2]">
+            <div className="max-w-md mx-auto bg-white border border-[#EDE5D4] p-8 rounded-sm">
                 <h2 className="font-display text-2xl md:text-3xl font-black tracking-tight mb-2">{section.heading}</h2>
                 {section.subheading && <p className="text-sm text-[#71717A] mb-6">{section.subheading}</p>}
 

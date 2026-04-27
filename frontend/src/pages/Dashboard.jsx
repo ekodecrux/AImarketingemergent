@@ -9,7 +9,7 @@ import { Link } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
 import BriefingCard from "@/components/BriefingCard";
 
-const STATUS_COLORS = ["#002EB8", "#10B981", "#F59E0B", "#E32636", "#18181B"];
+const STATUS_COLORS = ["#FF562D", "#0FB39A", "#FFD300", "#0E0F11", "#A855F7"];
 
 export default function Dashboard() {
     const [data, setData] = useState(null);
@@ -51,7 +51,7 @@ export default function Dashboard() {
                     {stats.map((s, i) => (
                         <div
                             key={s.label}
-                            className={`p-6 ${i < 3 ? "border-b lg:border-b-0 lg:border-r border-[#E4E4E7]" : ""} ${i < 2 ? "sm:border-b-0 sm:border-r" : ""}`}
+                            className={`p-6 ${i < 3 ? "border-b lg:border-b-0 lg:border-r border-[#EDE5D4]" : ""} ${i < 2 ? "sm:border-b-0 sm:border-r" : ""}`}
                         >
                             <div className="flex items-start justify-between mb-4">
                                 <s.icon size={20} weight="bold" className="text-[#71717A]" />
@@ -79,17 +79,17 @@ export default function Dashboard() {
                         </div>
                         <ResponsiveContainer width="100%" height={240}>
                             <LineChart data={data.charts.leads_over_time}>
-                                <CartesianGrid stroke="#E4E4E7" strokeDasharray="3 3" vertical={false} />
-                                <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#71717A" }} stroke="#E4E4E7" />
-                                <YAxis tick={{ fontSize: 11, fill: "#71717A" }} stroke="#E4E4E7" />
+                                <CartesianGrid stroke="#EDE5D4" strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#71717A" }} stroke="#EDE5D4" />
+                                <YAxis tick={{ fontSize: 11, fill: "#71717A" }} stroke="#EDE5D4" />
                                 <Tooltip
                                     contentStyle={{
-                                        background: "#09090B", border: "none", borderRadius: 0,
+                                        background: "#0E0F11", border: "none", borderRadius: 12,
                                         fontSize: 12, color: "#fff",
                                     }}
-                                    cursor={{ fill: "rgba(0,46,184,0.05)" }}
+                                    cursor={{ fill: "rgba(255,86,45,0.05)" }}
                                 />
-                                <Line type="monotone" dataKey="count" stroke="#002EB8" strokeWidth={2} dot={{ r: 3, fill: "#002EB8" }} />
+                                <Line type="monotone" dataKey="count" stroke="#FF562D" strokeWidth={2.5} dot={{ r: 3, fill: "#FF562D" }} />
                             </LineChart>
                         </ResponsiveContainer>
                     </div>
@@ -103,8 +103,8 @@ export default function Dashboard() {
                             <ResponsiveContainer width="100%" height={200}>
                                 <BarChart data={data.charts.leads_by_status} layout="vertical">
                                     <XAxis type="number" hide />
-                                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: "#71717A" }} width={90} stroke="#E4E4E7" />
-                                    <Tooltip cursor={{ fill: "rgba(0,46,184,0.05)" }} contentStyle={{ background: "#09090B", border: "none", color: "#fff", fontSize: 12 }} />
+                                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: "#71717A" }} width={90} stroke="#EDE5D4" />
+                                    <Tooltip cursor={{ fill: "rgba(255,86,45,0.05)" }} contentStyle={{ background: "#0E0F11", border: "none", borderRadius: 12, color: "#fff", fontSize: 12 }} />
                                     <Bar dataKey="value">
                                         {data.charts.leads_by_status.map((_, i) => (
                                             <Cell key={i} fill={STATUS_COLORS[i % STATUS_COLORS.length]} />
@@ -128,7 +128,7 @@ export default function Dashboard() {
                                     <p className="text-sm font-semibold">{l.name}</p>
                                     <p className="text-xs text-[#71717A]">{l.email || l.phone || "—"}</p>
                                 </div>
-                                <span className="zm-badge bg-[#F4F4F5] text-[#09090B]">{l.status}</span>
+                                <span className="zm-badge bg-[#FAF7F2] text-[#0E0F11]">{l.status}</span>
                             </>
                         )}
                     />
@@ -144,7 +144,7 @@ export default function Dashboard() {
                                 </div>
                                 <span className={`zm-badge ${
                                     c.status === "SENT" ? "bg-[#10B981] text-white" :
-                                    c.status === "APPROVED" ? "bg-[#002EB8] text-white" :
+                                    c.status === "APPROVED" ? "bg-[#FF562D] text-white" :
                                     c.status === "REJECTED" ? "bg-[#E32636] text-white" :
                                     "bg-[#F59E0B] text-white"
                                 }`}>{c.status}</span>
@@ -160,12 +160,12 @@ export default function Dashboard() {
 function RecentList({ title, link, items, renderItem }) {
     return (
         <div className="zm-card">
-            <div className="flex items-center justify-between p-6 border-b border-[#E4E4E7]">
+            <div className="flex items-center justify-between p-6 border-b border-[#EDE5D4]">
                 <div>
                     <p className="zm-section-label">// Activity</p>
                     <h3 className="font-display text-xl font-bold tracking-tight mt-1">{title}</h3>
                 </div>
-                <Link to={link} className="text-xs uppercase tracking-[0.15em] font-bold text-[#002EB8] hover:underline flex items-center gap-1">
+                <Link to={link} className="text-xs uppercase tracking-[0.15em] font-bold text-[#FF562D] hover:underline flex items-center gap-1">
                     View all <ArrowRight size={12} weight="bold" />
                 </Link>
             </div>
@@ -173,7 +173,7 @@ function RecentList({ title, link, items, renderItem }) {
                 {items.length === 0 ? (
                     <p className="text-sm text-[#A1A1AA] py-12 text-center">Nothing yet</p>
                 ) : items.map((it, i) => (
-                    <div key={it.id || i} className="flex items-center justify-between px-6 py-4 border-b border-[#E4E4E7] last:border-b-0">
+                    <div key={it.id || i} className="flex items-center justify-between px-6 py-4 border-b border-[#EDE5D4] last:border-b-0">
                         {renderItem(it)}
                     </div>
                 ))}

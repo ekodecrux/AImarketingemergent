@@ -57,10 +57,10 @@ export default function Onboarding() {
     };
 
     return (
-        <div className="min-h-screen bg-[#F4F4F5] flex items-center justify-center p-6">
+        <div className="min-h-screen bg-[#FAF7F2] flex items-center justify-center p-6">
             <div className="w-full max-w-2xl">
                 <div className="flex items-center gap-2 mb-8">
-                    <div className="w-8 h-8 bg-[#002EB8] flex items-center justify-center">
+                    <div className="w-8 h-8 bg-[#FF562D] flex items-center justify-center">
                         <Sparkle size={18} weight="fill" className="text-white" />
                     </div>
                     <span className="font-display text-xl font-black tracking-tighter">ZEROMARK</span>
@@ -81,7 +81,7 @@ export default function Onboarding() {
                         <div className="space-y-4" data-testid="onboarding-step1">
                             <label className="zm-label">Your website URL</label>
                             <div className="flex gap-2">
-                                <span className="inline-flex items-center px-3 bg-[#F4F4F5] border border-r-0 border-[#E4E4E7] text-[#71717A]"><Globe size={16} weight="bold" /></span>
+                                <span className="inline-flex items-center px-3 bg-[#FAF7F2] border border-r-0 border-[#EDE5D4] text-[#71717A]"><Globe size={16} weight="bold" /></span>
                                 <input
                                     type="text"
                                     value={url}
@@ -96,7 +96,7 @@ export default function Onboarding() {
                                 <Sparkle size={14} weight="fill" /> {analyzing ? "AI analysing your website…" : "Auto-fill from website"}
                                 {!analyzing && <ArrowRight size={14} weight="bold" />}
                             </button>
-                            <button onClick={skip} className="text-xs uppercase tracking-[0.15em] font-bold text-[#71717A] hover:text-[#09090B] w-full pt-3" data-testid="onboarding-skip">
+                            <button onClick={skip} className="text-xs uppercase tracking-[0.15em] font-bold text-[#71717A] hover:text-[#0E0F11] w-full pt-3" data-testid="onboarding-skip">
                                 Skip — I'll fill manually
                             </button>
                         </div>

@@ -21,10 +21,10 @@ export default function Scraping() {
                 action={<button className="zm-btn-secondary" onClick={load} data-testid="refresh-jobs"><ArrowsClockwise size={14} weight="bold"/> Refresh</button>}
             />
             <div className="px-8 py-6">
-                <div className="bg-white border border-[#E4E4E7] p-6 mb-6 border-l-2 border-l-[#002EB8]">
+                <div className="bg-white border border-[#EDE5D4] p-6 mb-6 border-l-2 border-l-[#FF562D]">
                     <p className="zm-section-label mb-2">// How it works</p>
                     <p className="text-sm text-[#71717A] leading-relaxed">
-                        Trigger scrape jobs from <span className="font-bold text-[#09090B]">Leads → Scrape</span>. Discovered leads
+                        Trigger scrape jobs from <span className="font-bold text-[#0E0F11]">Leads → Scrape</span>. Discovered leads
                         are auto-imported into your pipeline tagged with their source. Powered by Groq AI to generate research-grade lead data.
                     </p>
                 </div>
@@ -32,7 +32,7 @@ export default function Scraping() {
                 <div className="zm-card overflow-x-auto" data-testid="scraping-jobs-table">
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="border-b border-[#E4E4E7]">
+                            <tr className="border-b border-[#EDE5D4]">
                                 <th className="text-left px-4 py-3 zm-section-label">Type</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Params</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Status</th>
@@ -44,7 +44,7 @@ export default function Scraping() {
                             {loading && <tr><td colSpan={5} className="px-4 py-12 text-center text-[#A1A1AA]">Loading…</td></tr>}
                             {!loading && jobs.length === 0 && <tr><td colSpan={5} className="px-4 py-12 text-center text-[#A1A1AA]">No jobs yet</td></tr>}
                             {jobs.map((j) => (
-                                <tr key={j.id} className="border-b border-[#E4E4E7] last:border-b-0">
+                                <tr key={j.id} className="border-b border-[#EDE5D4] last:border-b-0">
                                     <td className="px-4 py-3 font-mono text-xs">{j.type}</td>
                                     <td className="px-4 py-3 text-[#71717A] text-xs">
                                         {j.params?.keyword || j.params?.website} {j.params?.location && `· ${j.params.location}`}
