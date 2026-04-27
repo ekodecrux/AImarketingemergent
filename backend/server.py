@@ -2560,6 +2560,306 @@ async def public_submit_form(slug: str, payload: PublicSubmissionIn, request: Re
     return {"success": True, "message": page.get("sections", [{}])[-1].get("success_message", "Thanks!")}
 
 
+# ====================================================================
+# ---------- Forecast Alerts (daily + weekly + on-demand) ----------
+# ====================================================================
+
+class AlertPreferencesIn(BaseModel):
+    email_enabled: bool = True
+    slack_enabled: bool = False
+    inapp_enabled: bool = True
+    slack_webhook_url: Optional[str] = None
+    weekly_digest: bool = True
+    daily_check: bool = True
+    hour_utc: int = 9  # When to deliver daily/weekly alerts
+    at_risk_threshold_pct: int = 80  # forecast/target * 100 < this → alert
+
+
+@api.get("/alerts/preferences")
+async def get_alert_preferences(user=Depends(get_current_user)):
+    rec = await db.alert_preferences.find_one({"user_id": ws(user)}, {"_id": 0})
+    if not rec:
+        rec = AlertPreferencesIn().model_dump()
+        rec["user_id"] = ws(user)
+    return {"preferences": rec}
+
+
+@api.post("/alerts/preferences")
+async def save_alert_preferences(payload: AlertPreferencesIn, user=Depends(get_current_user)):
+    if not (0 <= payload.hour_utc <= 23):
+        raise HTTPException(status_code=400, detail="hour_utc must be 0-23")
+    if not (1 <= payload.at_risk_threshold_pct <= 100):
+        raise HTTPException(status_code=400, detail="at_risk_threshold_pct must be 1-100")
+    if payload.slack_enabled and not payload.slack_webhook_url:
+        raise HTTPException(status_code=400, detail="Slack webhook URL is required when Slack is enabled")
+    if payload.slack_webhook_url and not payload.slack_webhook_url.startswith("https://hooks.slack.com/"):
+        raise HTTPException(status_code=400, detail="Slack webhook must start with https://hooks.slack.com/")
+    doc = payload.model_dump()
+    doc["user_id"] = ws(user)
+    doc["updated_at"] = now_utc().isoformat()
+    await db.alert_preferences.update_one(
+        {"user_id": ws(user)}, {"$set": doc, "$setOnInsert": {"created_at": now_utc().isoformat()}}, upsert=True,
+    )
+    rec = await db.alert_preferences.find_one({"user_id": ws(user)}, {"_id": 0})
+    return {"preferences": rec}
+
+
+async def _compute_forecast_payload(workspace_id: str) -> Dict[str, Any]:
+    """Returns dict: leads_this_month, target, forecast, pct, at_risk, top_paid, top_organic, channel_distribution."""
+    now = now_utc()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    import calendar
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    day_of_month = now.day
+
+    leads_this_month = await db.leads.count_documents({
+        "user_id": workspace_id,
+        "created_at": {"$gte": month_start.isoformat()},
+    })
+    rev_pipe = [
+        {"$match": {"user_id": workspace_id, "status": "CONVERTED", "created_at": {"$gte": month_start.isoformat()}}},
+        {"$group": {"_id": None, "rev": {"$sum": {"$ifNull": ["$actual_value", 0]}}}},
+    ]
+    r = await db.leads.aggregate(rev_pipe).to_list(1)
+    revenue_this_month = float(r[0]["rev"]) if r else 0.0
+
+    pace_factor = days_in_month / max(1, day_of_month)
+    forecast_leads = int(round(leads_this_month * pace_factor)) if leads_this_month else 0
+    forecast_revenue = revenue_this_month * pace_factor if revenue_this_month else 0.0
+
+    target_doc = await db.lead_targets.find_one({"user_id": workspace_id}, {"_id": 0}) or {}
+    monthly_target = int(target_doc.get("monthly_lead_target") or 0)
+    revenue_target = float(target_doc.get("monthly_revenue_target_usd") or 0.0)
+    pct = round(forecast_leads / monthly_target * 100, 1) if monthly_target else 0.0
+
+    plan_rec = await db.growth_plans.find_one({"user_id": workspace_id}, {"_id": 0}, sort=[("generated_at", -1)]) or {}
+    plan = plan_rec.get("plan") or {}
+    channels = plan.get("channel_distribution") or []
+
+    return {
+        "month": month_start.strftime("%B %Y"),
+        "leads_this_month": leads_this_month,
+        "revenue_this_month": round(revenue_this_month, 2),
+        "monthly_target": monthly_target,
+        "revenue_target": revenue_target,
+        "forecast_leads": forecast_leads,
+        "forecast_revenue": round(forecast_revenue, 2),
+        "forecast_pct_of_target": pct,
+        "day_of_month": day_of_month,
+        "days_in_month": days_in_month,
+        "channels": channels,
+    }
+
+
+async def _ai_corrective_action(payload: Dict[str, Any], business: Dict[str, Any]) -> str:
+    """Use Groq to suggest one concrete corrective action. Falls back gracefully."""
+    if not payload.get("monthly_target"):
+        return "Set a monthly lead target in /analytics to enable forecast tracking."
+    gap = payload["monthly_target"] - payload["forecast_leads"]
+    if gap <= 0:
+        return f"You're on pace to hit {payload['forecast_leads']} of {payload['monthly_target']} leads — keep it up. Consider doubling down on your highest-CPL channel."
+    channels_brief = "\n".join(
+        f"- {c.get('name')} ({c.get('type')}): ${c.get('monthly_budget_usd', 0)}/mo, expected {c.get('expected_leads_per_month', 0)} leads, CPL ${c.get('expected_cpl_usd', 0)}"
+        for c in (payload.get("channels") or [])[:8]
+    ) or "(no channel plan saved yet)"
+
+    prompt = (
+        f"You are a paid-marketing operator for {business.get('business_name', 'a SaaS company')} "
+        f"({business.get('industry', '')}). It is day {payload['day_of_month']}/{payload['days_in_month']} of {payload['month']}. "
+        f"They have {payload['leads_this_month']} leads, forecasting {payload['forecast_leads']} vs target of {payload['monthly_target']} "
+        f"(gap of {gap} leads, {payload['forecast_pct_of_target']}% of target). "
+        f"Current channel mix:\n{channels_brief}\n\n"
+        f"Recommend ONE specific, actionable budget shift to close the gap THIS month. "
+        f"Be concrete: name the channel, the dollar amount to add, and the expected lead lift. "
+        f"Keep it under 35 words. Output plain text only — no JSON, no markdown."
+    )
+    try:
+        text = await asyncio.get_event_loop().run_in_executor(
+            None, _groq_chat, prompt, "You are a senior performance-marketing operator. Be brutally concise.", False, 220, 0.4,
+        )
+        return (text or "").strip().strip('"').strip()[:400]
+    except Exception:
+        return f"Forecast is {payload['forecast_pct_of_target']}% of target — increase your highest-CPL paid channel budget by ~25% to recover the {gap}-lead gap."
+
+
+def _build_alert_email_html(payload: Dict[str, Any], suggestion: str, app_url: str, kind: str) -> str:
+    pct = payload["forecast_pct_of_target"] or 0
+    bar_color = "#0FB39A" if pct >= 100 else "#FF562D" if pct >= 80 else "#E32636"
+    bar_pct = max(0, min(100, pct))
+    title = "Weekly forecast digest" if kind == "weekly" else ("On-demand check" if kind == "test" else "Forecast alert: at risk")
+    return f"""
+    <div style="font-family:'Source Sans 3',-apple-system,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:32px;background:#FAF7F2;color:#0E0F11">
+      <p style="font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#71717A;margin:0 0 8px">// ZeroMark AI · {title}</p>
+      <h1 style="font-family:Fraunces,Georgia,serif;font-size:36px;font-weight:900;letter-spacing:-0.02em;line-height:1.05;margin:0 0 8px">
+        {payload['forecast_leads']} forecasted vs <span style="color:{bar_color}">{payload['monthly_target']}</span> target
+      </h1>
+      <p style="font-size:15px;color:#3F3F46;margin:0 0 20px">{payload['month']} · day {payload['day_of_month']} of {payload['days_in_month']}</p>
+
+      <div style="background:#fff;border:1px solid #EDE5D4;border-radius:16px;padding:20px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;color:#52525B;margin-bottom:8px">
+          <span>{payload['leads_this_month']} leads so far</span>
+          <span style="color:{bar_color}">{pct}% of target</span>
+        </div>
+        <div style="height:10px;background:#FAF7F2;border-radius:10px;overflow:hidden;border:1px solid #EDE5D4">
+          <div style="height:100%;width:{bar_pct}%;background:{bar_color};border-radius:10px"></div>
+        </div>
+        <p style="font-size:12px;color:#71717A;margin:8px 0 0">Pipeline value forecast: <b style="color:#0E0F11">${int(payload['forecast_revenue']):,}</b></p>
+      </div>
+
+      <div style="background:#0E0F11;color:#fff;border-radius:16px;padding:20px;margin-bottom:20px">
+        <p style="font-size:11px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#FF562D;margin:0 0 8px">// AI suggested action</p>
+        <p style="font-size:16px;line-height:1.5;margin:0">{suggestion}</p>
+      </div>
+
+      <a href="{app_url}/analytics" style="display:inline-block;background:#FF562D;color:#fff;font-weight:700;font-size:14px;padding:12px 24px;border-radius:999px;text-decoration:none">Open Live Analytics →</a>
+
+      <p style="font-size:11px;color:#A1A1AA;margin:32px 0 0;letter-spacing:0.1em;text-transform:uppercase;font-weight:700">
+        Manage alerts in your Team settings · ZeroMark AI
+      </p>
+    </div>
+    """
+
+
+def _send_slack_webhook_sync(webhook_url: str, payload: Dict[str, Any], suggestion: str, app_url: str, kind: str) -> bool:
+    try:
+        import requests
+        pct = payload["forecast_pct_of_target"]
+        emoji = "🟢" if pct >= 100 else ("🟠" if pct >= 80 else "🔴")
+        title_kind = "Weekly digest" if kind == "weekly" else ("On-demand check" if kind == "test" else "Forecast alert")
+        body = {
+            "blocks": [
+                {"type": "header", "text": {"type": "plain_text", "text": f"{emoji} ZeroMark · {title_kind}"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text":
+                    f"*{payload['forecast_leads']}* forecasted vs *{payload['monthly_target']}* target  ·  *{pct}%* of target\n"
+                    f"_{payload['month']} · day {payload['day_of_month']} of {payload['days_in_month']}_"
+                }},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f":sparkles: *AI suggestion:* {suggestion}"}},
+                {"type": "actions", "elements": [
+                    {"type": "button", "text": {"type": "plain_text", "text": "Open Live Analytics"}, "url": f"{app_url}/analytics", "style": "primary"},
+                ]},
+            ]
+        }
+        r = requests.post(webhook_url, json=body, timeout=10)
+        return r.status_code in (200, 204)
+    except Exception as e:
+        logger.error("Slack webhook failed: %s", e)
+        return False
+
+
+async def _send_forecast_alert(user_doc: Dict[str, Any], kind: str = "daily", force: bool = False) -> Dict[str, Any]:
+    """Sends a forecast alert to the user via their preferred channels.
+    `kind` ∈ {'daily', 'weekly', 'test'}.
+    `force=True` skips the threshold check (used for test + weekly)."""
+    workspace_id = user_doc.get("workspace_id") or user_doc["id"]
+    prefs = await db.alert_preferences.find_one({"user_id": workspace_id}, {"_id": 0}) or {}
+    payload = await _compute_forecast_payload(workspace_id)
+
+    threshold = int(prefs.get("at_risk_threshold_pct", 80))
+    pct = payload["forecast_pct_of_target"] or 0
+    at_risk = bool(payload["monthly_target"]) and pct < threshold
+    payload["at_risk"] = at_risk
+    payload["threshold_pct"] = threshold
+
+    # Daily alerts only fire when at risk; weekly + test always fire.
+    if kind == "daily" and not (at_risk or force):
+        return {"sent": False, "reason": "not at risk", "payload": payload}
+    if not payload["monthly_target"] and not force:
+        return {"sent": False, "reason": "no target set", "payload": payload}
+
+    profile = await db.business_profiles.find_one({"user_id": workspace_id}, {"_id": 0}) or {}
+    suggestion = await _ai_corrective_action(payload, profile)
+    payload["suggestion"] = suggestion
+
+    app_url = os.environ.get("PUBLIC_APP_URL", "https://app.zeromark.ai").rstrip("/")
+    delivered = {"email": False, "slack": False, "inapp": False}
+
+    # In-app notification
+    if prefs.get("inapp_enabled", True) or kind == "test":
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": workspace_id,
+            "type": "forecast_alert",
+            "kind": kind,
+            "severity": "high" if at_risk else "info",
+            "title": (
+                f"At risk: {pct}% of monthly target" if at_risk
+                else (f"Weekly digest: on track ({pct}%)" if kind == "weekly" else f"On track ({pct}%)")
+            ),
+            "body": suggestion,
+            "link": "/analytics",
+            "payload": payload,
+            "read": False,
+            "created_at": now_utc().isoformat(),
+        })
+        delivered["inapp"] = True
+
+    # Email
+    if prefs.get("email_enabled", True) and user_doc.get("email"):
+        title = (
+            "[ZeroMark] Forecast at risk — action needed" if at_risk
+            else ("[ZeroMark] Weekly forecast digest" if kind == "weekly" else "[ZeroMark] On-demand forecast check")
+        )
+        html = _build_alert_email_html(payload, suggestion, app_url, kind)
+        delivered["email"] = await asyncio.get_event_loop().run_in_executor(
+            None, _send_email_sync, user_doc["email"], title, html,
+        )
+
+    # Slack
+    if prefs.get("slack_enabled") and prefs.get("slack_webhook_url"):
+        delivered["slack"] = await asyncio.get_event_loop().run_in_executor(
+            None, _send_slack_webhook_sync, prefs["slack_webhook_url"], payload, suggestion, app_url, kind,
+        )
+
+    await db.alert_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": workspace_id,
+        "kind": kind,
+        "delivered": delivered,
+        "payload": payload,
+        "sent_at": now_utc().isoformat(),
+    })
+
+    return {"sent": True, "delivered": delivered, "payload": payload}
+
+
+@api.post("/alerts/test")
+async def send_alert_test(user=Depends(get_current_user)):
+    """On-demand: send a forecast alert NOW via configured channels."""
+    res = await _send_forecast_alert(user, kind="test", force=True)
+    return res
+
+
+@api.get("/alerts/history")
+async def get_alert_history(user=Depends(get_current_user)):
+    items = await db.alert_history.find({"user_id": ws(user)}, {"_id": 0}).sort("sent_at", -1).limit(50).to_list(50)
+    return {"history": items}
+
+
+# ---------- In-app Notifications (bell) ----------
+@api.get("/notifications")
+async def list_notifications(unread_only: bool = False, user=Depends(get_current_user)):
+    q: Dict[str, Any] = {"user_id": ws(user)}
+    if unread_only:
+        q["read"] = False
+    items = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    unread = await db.notifications.count_documents({"user_id": ws(user), "read": False})
+    return {"notifications": items, "unread_count": unread}
+
+
+@api.post("/notifications/{nid}/read")
+async def mark_notification_read(nid: str, user=Depends(get_current_user)):
+    res = await db.notifications.update_one({"id": nid, "user_id": ws(user)}, {"$set": {"read": True}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"success": True}
+
+
+@api.post("/notifications/mark-all-read")
+async def mark_all_notifications_read(user=Depends(get_current_user)):
+    res = await db.notifications.update_many({"user_id": ws(user), "read": False}, {"$set": {"read": True}})
+    return {"success": True, "updated": res.modified_count}
+
+
 # Register router
 app.include_router(api)
 
@@ -2651,6 +2951,28 @@ async def _imap_poll_inbound_emails():
         logger.exception("IMAP poll failed")
 
 
+async def _send_forecast_alerts_tick():
+    """Hourly tick: for each workspace, check if it's their preferred hour AND
+    they have daily_check or weekly_digest enabled. Fire alerts accordingly."""
+    now = now_utc()
+    current_hour = now.hour
+    is_monday = now.weekday() == 0
+    cursor = db.alert_preferences.find({"hour_utc": current_hour}, {"_id": 0})
+    async for prefs in cursor:
+        try:
+            user = await db.users.find_one({"workspace_id": prefs["user_id"]}, {"_id": 0}) \
+                or await db.users.find_one({"id": prefs["user_id"]}, {"_id": 0})
+            if not user:
+                continue
+            if prefs.get("weekly_digest") and is_monday:
+                await _send_forecast_alert(user, kind="weekly", force=True)
+            elif prefs.get("daily_check"):
+                await _send_forecast_alert(user, kind="daily", force=False)
+        except Exception:
+            logger.exception("Forecast alert tick failed for user_id=%s", prefs.get("user_id"))
+
+
+
 async def _send_daily_briefings():
     """For every user opted in, generate today's briefing and email it."""
     current_hour = now_utc().hour
@@ -2729,11 +3051,12 @@ async def on_startup():
     if stuck.modified_count:
         logger.info("Recovery sweep marked %d stuck campaigns as FAILED", stuck.modified_count)
 
-    # Schedule cron jobs: hourly daily-briefing tick + IMAP poll every 3 min
+    # Schedule cron jobs: hourly daily-briefing tick + IMAP poll every 3 min + hourly forecast alerts tick
     scheduler.add_job(_send_daily_briefings, "cron", minute=0, id="daily_briefings", replace_existing=True)
     scheduler.add_job(_imap_poll_inbound_emails, "interval", minutes=3, id="imap_poll", replace_existing=True)
+    scheduler.add_job(_send_forecast_alerts_tick, "cron", minute=5, id="forecast_alerts", replace_existing=True)
     scheduler.start()
-    logger.info("APScheduler started: daily_briefings + imap_poll")
+    logger.info("APScheduler started: daily_briefings + imap_poll + forecast_alerts")
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@zeromark.ai")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
