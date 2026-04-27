@@ -1,75 +1,70 @@
 # ZeroMark AI — Product Requirements Document
 
 ## Original problem statement
-> "build platform using below code... code is available, just build and deploy in preview"
-> User selected: Emergent stack (FastAPI + React + MongoDB), full feature scope (option B). 
-> Follow-up request: Implement P1 backlog items + add AI lead prediction, auto-reply, mini-CRM, integrations hub, daily AI briefing, real WhatsApp.
+> "Build platform using below code... build and deploy in preview"
+> Tech: Emergent stack (FastAPI + React + MongoDB), full feature scope.
+> Iterations 2-4: P1 backlog + AI lead prediction, mini-CRM, integrations hub, daily briefing, real WhatsApp, market analysis, SEO toolkit, PR & outreach, 12-month growth plan, inbound webhooks, encrypted secrets, Twilio signature validation, SSRF protection, retry-on-Groq-json-failed.
 
 ## Architecture
-- **Backend**: FastAPI + Motor (async MongoDB)
-- **Frontend**: React 19 + React Router 7 + Tailwind + Recharts + Phosphor Icons + Sonner
-- **Database**: MongoDB (`zeromark_ai`)
-- **Auth**: JWT (Bearer + httpOnly cookie fallback), bcrypt, brute-force lockout (5 fail → 15min)
-- **Integrations**: Groq AI (`llama-3.3-70b-versatile`), Twilio (SMS+WhatsApp), Gmail SMTP, Razorpay (test mode)
-
-## User personas
-1. **B2B founder / marketer** – needs leads, AI scoring, multi-channel campaigns
-2. **Marketing operator** – uses approval queue + AI auto-reply for inbound
-3. **Admin** – seeded `admin@zeromark.ai / admin123` with PRO plan
-
-## Core requirements (static)
-- Auth, Business profile, Lead CRUD + AI scraping, Campaign CRUD + AI generation
-- Approval queue (approve/reject/modify)
-- Dashboard with stats + AI Daily Growth Briefing
-- AI Lead Scoring & Prediction (Groq scores 0-100 + reasoning + status recommendation)
-- Mini-CRM: per-lead detail page + communication history (inbound/outbound)
-- AI auto-reply drafting for inbound messages
-- Channel Integrations Hub (WhatsApp ready; LinkedIn/Facebook/Instagram/X configurable)
-- Reports: Lead/Campaign Performance, Gap Analysis
-- Razorpay subscription with 14-day trial → upgrade
+- Backend: FastAPI + Motor (MongoDB), JWT auth + brute-force lockout, Fernet-encrypted secrets at rest
+- Frontend: React 19 + Tailwind + Source Sans 3 (LinkedIn-style typography)
+- Integrations: Groq (`llama-3.3-70b-versatile` with retry), Twilio SMS+WhatsApp+inbound webhooks, Gmail SMTP, Razorpay test mode
 
 ## What's been implemented (2026-04-26 → 2026-04-27)
 
 ### Iteration 1 — MVP (37/37 backend tests pass)
-- ✅ Full FastAPI backend, JWT auth, business profile, leads, campaigns, approvals
-- ✅ Groq AI campaign content generation (per-channel)
-- ✅ AI-powered lead scraping (Google Maps/LinkedIn/Competitor)
-- ✅ Real Twilio SMS, Gmail SMTP, Razorpay test-mode billing
-- ✅ Swiss/high-contrast frontend with Cabinet Grotesk + IKB blue
-- ✅ Landing, Login, Register, Dashboard, Leads, Campaigns, Approvals, Scraping, Business, Reports, Billing pages
+- Full FastAPI backend, JWT auth, business profile, leads, campaigns, approvals
+- Groq AI campaign content generation (per-channel)
+- AI-powered lead scraping
+- Real Twilio SMS, Gmail SMTP, Razorpay test billing
+- React frontend with sidebar layout, all 11 core pages
 
-### Iteration 2 — P1 + new SaaS features (17/17 new tests pass)
-- ✅ **AI Lead Scoring**: `/api/leads/score-batch` — Groq scores all leads vs business ICP
-- ✅ **Auto-reply**: `/api/leads/{id}/ai-reply` — AI drafts reply for inbound message
-- ✅ **Mini-CRM**: `/api/leads/{id}` lead detail + `/api/leads/{id}/communications` log
-- ✅ **Integrations Hub**: WhatsApp, LinkedIn, Facebook, Instagram, X CRUD endpoints
-- ✅ **Real WhatsApp** via Twilio sandbox (`_send_whatsapp_sync`)
-- ✅ **Daily AI Briefing**: `/api/briefing/generate` + `latest`
-- ✅ **Background-task campaign send** (non-blocking, returns immediately)
-- ✅ **Brute-force lockout** with X-Forwarded-For + email-only fallback (locks at 5 fails)
-- ✅ Frontend: LeadDetail page (with score + comm history + AI reply), Integrations page, BriefingCard on dashboard, "AI Score All" button, clickable lead rows
+### Iteration 2 — AI SaaS features (17/17 tests pass)
+- AI Lead Scoring (Groq scores all leads vs ICP with reasoning)
+- Mini-CRM: Lead Detail page + communication history + AI auto-reply
+- Channel Integrations Hub (WhatsApp live, social platforms configurable)
+- Daily AI Growth Briefing on Dashboard
+- Background-task campaign send + Brute-force lockout
 
-## Backlog / future enhancements
-- **P1**: Encrypt integration tokens at rest (currently plaintext in mongo)
-- **P1**: TTL index on `login_attempts`; recovery sweep for campaigns stuck in SENDING
-- **P2**: Real OAuth flows for LinkedIn/Facebook/Instagram/X (require Meta/LI/X dev apps)
-- **P2**: Real Playwright web scraping (currently AI-generated samples)
-- **P2**: Modularise `server.py` into routers (~1340 lines)
-- **P2**: Email open/click tracking; segmentation on campaign send
-- **P3**: Team/multi-user workspaces; A/B test variants; Celery/Arq durable queue
-- **P3**: Cron-scheduled daily briefing email delivery (currently on-demand)
+### Iteration 3 — Growth Studio + hardening (18/19 → fixed in iter4)
+- Onboarding wizard with **business auto-fill from URL** (AI scrapes website)
+- Growth Studio (4 tabs):
+  - **Market Analysis** (SWOT, market size, competitor matrix, positioning)
+  - **SEO Toolkit** (Keywords, Backlinks, Content Gaps)
+  - **PR & Outreach** (Press release, Media list, Outreach email)
+  - **12-Month Plan** (Vision, north-star metric, quarterly themes, monthly milestones, hiring, marketing mix, KPIs)
+- **Inbox** page for Twilio inbound replies (auto-routed via webhook)
+- TTL on login_attempts, recovery sweep for stuck campaigns, encrypted integration secrets
+
+### Iteration 4 — Reliability & security (30/30 tests pass, 100%)
+- Centralised `_groq_chat` helper with retry-once on `json_validate_failed` (was 33% flaky → now 100% reliable)
+- SSRF protection on `/api/business/auto-fill` (blocks loopback/private/link-local/metadata IPs)
+- Twilio webhook signature validation (opt-in via `STRICT_TWILIO_WEBHOOK=1`)
+- Phone number normalisation in webhook (handles "+1", spaces, dashes)
+- Module-level Groq client (avoids per-request TLS handshake)
+- **LinkedIn-style Source Sans 3 typography** + grouped sidebar (Workspace/Pipeline/Growth/Settings)
 
 ## File map
 ```
-/app/backend/server.py                      # Full FastAPI (~1340 lines)
-/app/backend/.env                           # All integration keys
-/app/frontend/src/App.js                    # Router + auth gates
-/app/frontend/src/index.css                 # Swiss design tokens + utilities
-/app/frontend/src/lib/api.js                # axios + bearer interceptor
-/app/frontend/src/context/AuthContext.jsx
+/app/backend/server.py                   # ~1785 lines, all features
+/app/backend/.env                        # Live keys (Twilio, Groq, Razorpay, Gmail)
+/app/frontend/src/App.js                 # Router + auth gates + onboarding redirect
+/app/frontend/src/index.css              # Source Sans 3 + utility classes
 /app/frontend/src/components/{AppLayout,PageHeader,BriefingCard}.jsx
-/app/frontend/src/pages/{Landing,Login,Register,Dashboard,Leads,LeadDetail,Campaigns,Approvals,Scraping,Integrations,Business,Reports,Billing}.jsx
-/app/memory/test_credentials.md             # Admin creds
-/app/test_reports/iteration_1.json          # 37/37 baseline pass
-/app/test_reports/iteration_2.json          # 17/17 new feature pass
+/app/frontend/src/pages/{Landing,Login,Register,Onboarding,Dashboard,Inbox,Approvals,
+                         Leads,LeadDetail,Campaigns,Scraping,GrowthStudio,Integrations,
+                         Business,Reports,Billing}.jsx
+/app/memory/PRD.md, test_credentials.md
+/app/test_reports/iteration_{1..4}.json  # All passing
 ```
+
+## Backlog (low priority)
+- Split `server.py` into routers/ (auth, leads, campaigns, ai, growth_studio, webhooks)
+- Replace inbox N+1 lead lookup with $lookup aggregation
+- Per-user rate limit on AI generation endpoints
+- Broader phone-match fallback for non-E.164 stored leads
+- TOCTOU hardening on SSRF check (pin resolved IP)
+- Real OAuth flows for LinkedIn/Facebook/Instagram/X (need platform dev apps)
+- Real Playwright web scraping
+- Cron-scheduled daily briefing email delivery
+- Team/multi-user workspaces
