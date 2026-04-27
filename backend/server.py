@@ -34,8 +34,10 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
 # Service clients (lazy import-safe)
 from twilio.rest import Client as TwilioClient
+from twilio.request_validator import RequestValidator as TwilioRequestValidator
 import razorpay
 from groq import Groq
+import groq as _groq_pkg
 
 # ---------- Setup ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -70,6 +72,72 @@ def _dec(value: str) -> Optional[str]:
 
 
 SENSITIVE_INTEGRATION_KEYS = {"access_token", "auth_token", "bearer_token", "api_key", "client_secret", "page_access_token"}
+
+# Module-level Groq client reused across calls
+_GROQ = Groq(api_key=os.environ["GROQ_API_KEY"])
+
+
+def _groq_chat(prompt: str, system: str = "Output strict JSON only.", json_mode: bool = True,
+               max_tokens: int = 2000, temperature: float = 0.5) -> str:
+    """Robust Groq chat completion with retry on json_validate_failed.
+    Returns the raw string content. Raises HTTPException(502) on terminal failure."""
+    attempts = [
+        {"temperature": temperature, "system": system},
+        {"temperature": 0.0, "system": system + " Use ONLY ASCII double quotes; escape any inner quotes with \\\". Do not use smart quotes or apostrophes inside string values."},
+    ]
+    last_err = None
+    for cfg in attempts:
+        try:
+            kwargs = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": cfg["system"]},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": cfg["temperature"],
+                "max_tokens": max_tokens,
+            }
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            comp = _GROQ.chat.completions.create(**kwargs)
+            return comp.choices[0].message.content
+        except _groq_pkg.BadRequestError as e:
+            last_err = e
+            logger.warning("Groq json_validate_failed, retrying with stricter prompt: %s", str(e)[:200])
+            continue
+        except Exception as e:
+            last_err = e
+            logger.exception("Groq call failed")
+            break
+    raise HTTPException(status_code=502, detail=f"AI provider returned invalid output. Please retry.")
+
+
+def _is_safe_url(url: str) -> bool:
+    """Block SSRF: reject loopback/private/link-local/metadata IPs."""
+    try:
+        from urllib.parse import urlparse
+        import socket
+        import ipaddress
+        p = urlparse(url)
+        if p.scheme not in ("http", "https"):
+            return False
+        host = p.hostname or ""
+        if not host:
+            return False
+        # Resolve and check
+        try:
+            ip_str = socket.gethostbyname(host)
+            ip = ipaddress.ip_address(ip_str)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+                return False
+            # Block AWS/GCP metadata
+            if ip_str.startswith("169.254."):
+                return False
+        except Exception:
+            return False
+        return True
+    except Exception:
+        return False
 
 app = FastAPI(title="ZeroMark AI")
 api = APIRouter(prefix="/api")
@@ -619,21 +687,14 @@ async def ai_generate_content(payload: AIGenerateIn, user=Depends(get_current_us
         "Use {{name}} as a placeholder where the recipient's name should appear."
     )
 
-    def _generate():
-        client_g = Groq(api_key=os.environ["GROQ_API_KEY"])
-        completion = client_g.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are an expert marketing copywriter. Write compelling, concise content that drives conversions."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.8,
-            max_tokens=800,
-        )
-        return completion.choices[0].message.content
-
     try:
-        content = await asyncio.get_event_loop().run_in_executor(None, _generate)
+        content = await asyncio.get_event_loop().run_in_executor(
+            None, _groq_chat, prompt,
+            "You are an expert marketing copywriter. Write compelling, concise content that drives conversions.",
+            False, 800, 0.8,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Groq generation failed")
         raise HTTPException(status_code=500, detail=f"AI generation failed: {e}")
@@ -899,18 +960,7 @@ async def _ai_generate_sample_leads(payload: ScrapeIn, user_id: str) -> List[Dic
         )
 
     def _gen():
-        c = Groq(api_key=os.environ["GROQ_API_KEY"])
-        comp = c.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are a data generator. Output strict JSON only with no markdown."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.7,
-            max_tokens=1500,
-            response_format={"type": "json_object"},
-        )
-        return comp.choices[0].message.content
+        return _groq_chat(prompt, "You are a data generator. Output strict JSON only with no markdown.", True, 1500, 0.7)
 
     raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
     import json, re
@@ -1055,20 +1105,10 @@ def _score_leads_sync(business_ctx: str, leads: List[Dict[str, Any]]) -> List[Di
         f"reason must be ≤140 chars, plain English.\n\n"
         f"LEADS: {payload}"
     )
-    c = Groq(api_key=os.environ["GROQ_API_KEY"])
-    comp = c.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": "You are a precise B2B sales analyst. Output strict JSON only."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.3,
-        max_tokens=2000,
-        response_format={"type": "json_object"},
-    )
+    raw = _groq_chat(prompt, "You are a precise B2B sales analyst. Output strict JSON only.", True, 2000, 0.3)
     import json
     try:
-        data = json.loads(comp.choices[0].message.content)
+        data = json.loads(raw)
         return data.get("scores", [])
     except Exception:
         return []
@@ -1174,17 +1214,7 @@ async def ai_draft_reply(lead_id: str, payload: AIReplyIn, user=Depends(get_curr
     )
 
     def _gen():
-        c = Groq(api_key=os.environ["GROQ_API_KEY"])
-        comp = c.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are a senior B2B sales copywriter."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.6,
-            max_tokens=400,
-        )
-        return comp.choices[0].message.content
+        return _groq_chat(prompt, "You are a senior B2B sales copywriter.", False, 400, 0.6)
 
     reply = await asyncio.get_event_loop().run_in_executor(None, _gen)
     return {"reply": reply.strip()}
@@ -1274,18 +1304,7 @@ async def generate_briefing(user=Depends(get_current_user)):
     )
 
     def _gen():
-        c = Groq(api_key=os.environ["GROQ_API_KEY"])
-        comp = c.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are a no-nonsense growth advisor. Output strict JSON."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.5,
-            max_tokens=800,
-            response_format={"type": "json_object"},
-        )
-        return comp.choices[0].message.content
+        return _groq_chat(prompt, "You are a no-nonsense growth advisor. Output strict JSON.", True, 800, 0.5)
 
     raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
     import json
@@ -1333,9 +1352,12 @@ async def auto_fill_business(payload: AutoFillIn, user=Depends(get_current_user)
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
+    if not _is_safe_url(url):
+        raise HTTPException(status_code=400, detail="URL not allowed (private/internal addresses blocked)")
+
     def _fetch():
         try:
-            r = _http.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 ZeroMarkBot"})
+            r = _http.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 ZeroMarkBot"}, allow_redirects=True)
             return r.text[:30000]
         except Exception as e:
             return f"FETCH_ERROR: {e}"
@@ -1360,18 +1382,7 @@ async def auto_fill_business(payload: AutoFillIn, user=Depends(get_current_user)
     )
 
     def _gen():
-        c = Groq(api_key=os.environ["GROQ_API_KEY"])
-        comp = c.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are a B2B research analyst. Output strict JSON only."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=1200,
-            response_format={"type": "json_object"},
-        )
-        return comp.choices[0].message.content
+        return _groq_chat(prompt, "You are a B2B research analyst. Output strict JSON only.", True, 1200, 0.3)
 
     raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
     import json
@@ -1418,18 +1429,7 @@ async def market_analyze(payload: MarketAnalysisIn, user=Depends(get_current_use
     )
 
     def _gen():
-        c = Groq(api_key=os.environ["GROQ_API_KEY"])
-        comp = c.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are a strategic consultant. Output strict JSON only."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.5,
-            max_tokens=2500,
-            response_format={"type": "json_object"},
-        )
-        return comp.choices[0].message.content
+        return _groq_chat(prompt, "You are a strategic consultant. Output strict JSON only.", True, 2500, 0.5)
 
     raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
     import json
@@ -1626,20 +1626,9 @@ async def growth_plan_latest(user=Depends(get_current_user)):
 
 # Helper: Groq JSON-mode call returning either a single object or an array under given key
 async def _groq_json(prompt: str, key: Optional[str] = None, max_tokens: int = 2000) -> Any:
-    def _gen():
-        c = Groq(api_key=os.environ["GROQ_API_KEY"])
-        comp = c.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "Output strict JSON only with no markdown code fences."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.5,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"},
-        )
-        return comp.choices[0].message.content
-    raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
+    raw = await asyncio.get_event_loop().run_in_executor(
+        None, _groq_chat, prompt, "Output strict JSON only with no markdown code fences.", True, max_tokens, 0.5
+    )
     import json
     try:
         data = json.loads(raw)
@@ -1651,18 +1640,43 @@ async def _groq_json(prompt: str, key: Optional[str] = None, max_tokens: int = 2
 
 
 # ---------- Inbound webhook listener (Twilio SMS / WhatsApp) ----------
+async def _validate_twilio_signature(request: Request, form_data: Dict[str, str]) -> bool:
+    """Validate Twilio request signature. Returns True if valid or if validation is disabled in test."""
+    sig = request.headers.get("X-Twilio-Signature", "")
+    if not sig:
+        # In production set env STRICT_TWILIO_WEBHOOK=1 to enforce
+        return os.environ.get("STRICT_TWILIO_WEBHOOK") != "1"
+    try:
+        validator = TwilioRequestValidator(os.environ["TWILIO_AUTH_TOKEN"])
+        url = str(request.url)
+        return validator.validate(url, dict(form_data), sig)
+    except Exception:
+        return False
+
+
 @api.post("/webhooks/twilio/sms")
 async def twilio_inbound_sms(request: Request):
     """Twilio inbound SMS webhook. Logs the message to the matching lead's CRM thread."""
     form = await request.form()
+    form_dict = {k: v for k, v in form.items()}
+    if not await _validate_twilio_signature(request, form_dict):
+        logger.warning("Twilio webhook signature validation failed")
+        return Response(content="<Response/>", media_type="application/xml", status_code=403)
+
     from_number = form.get("From", "")
     body = form.get("Body", "")
     is_whatsapp = from_number.startswith("whatsapp:")
-    phone = from_number.replace("whatsapp:", "")
+    phone_raw = from_number.replace("whatsapp:", "")
+    # Normalise: strip spaces/dashes/parens for matching
+    phone_norm = "".join(ch for ch in phone_raw if ch.isdigit() or ch == "+")
     channel = "WHATSAPP" if is_whatsapp else "SMS"
 
-    # Find matching lead (any user) by phone
-    lead = await db.leads.find_one({"phone": phone})
+    # Find matching lead by exact OR normalised phone
+    lead = await db.leads.find_one({"$or": [
+        {"phone": phone_raw},
+        {"phone": phone_norm},
+        {"phone": phone_raw.replace("+", "")},
+    ]})
     if lead:
         await db.communications.insert_one({
             "id": str(uuid.uuid4()),
@@ -1674,11 +1688,9 @@ async def twilio_inbound_sms(request: Request):
             "status": "RECEIVED",
             "sent_at": now_utc().isoformat(),
         })
-        # Bump lead status to INTERESTED if currently NEW/CONTACTED
         if lead.get("status") in ("NEW", "CONTACTED"):
             await db.leads.update_one({"id": lead["id"]}, {"$set": {"status": "INTERESTED"}})
 
-    # Twilio expects TwiML response
     return Response(content="<Response/>", media_type="application/xml")
 
 

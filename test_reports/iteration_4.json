@@ -1,0 +1,56 @@
+{
+  "summary": "Iteration 4 backend re-test of iter3 fixes — 30/30 PASS in 70s. Confirmed: (1) Groq json_validate_failed retry-once works — backend logs show ~4+ retries fired during the 5-run press-release stress test and ALL 5 calls returned 200 (was 33% pass in iter3). (2) SSRF block on /api/business/auto-fill correctly returns 400 'URL not allowed' for 169.254.169.254, localhost, 127.0.0.1, 10.0.0.1, 192.168.1.1, and rejects file:// scheme. (3) Public URL (https://stripe.com) is NOT misclassified as SSRF and returns 200. (4) Twilio webhook phone-normalisation: lead saved as '+15551234567', webhook From='+1 555-XXX-XXXX' formatted with spaces+dashes — match works, INBOUND comm logged, lead status flipped. (5) STRICT_TWILIO_WEBHOOK is unset (intentional in preview) — webhook without X-Twilio-Signature still returns 200 + TwiML. (6) Every AI endpoint that routes through _groq_chat (market/analyze, seo/keywords, seo/backlinks, seo/content-gaps, pr/press-release, pr/media-list, pr/outreach-email, growth-plan/generate, briefing/generate, ai/generate-content, leads/score-batch, leads/{id}/ai-reply) returns 200. (7) Regression on auth/login, dashboard/stats, leads list, communications/inbox auth pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/business/auto-fill",
+        "issue": "On JSON parse failure of the Groq response, falls back to raise HTTPException(500, 'AI parsing failed'). _groq_chat already retries upstream json_validate_failed, but if the SECOND retry returns syntactically valid JSON that python json.loads still rejects (rare), the user gets a 500. Consider returning 502 with a retry hint instead, consistent with _groq_chat's terminal failure."
+      },
+      {
+        "endpoint": "POST /api/webhooks/twilio/sms",
+        "issue": "Phone matching only covers (raw, normalised stripped, raw without '+'). If a lead is stored WITHOUT the country code (e.g. '5551234567') and Twilio sends '+15551234567', match still fails. Add a last-7-or-10-digit fallback or store all leads in E.164 on create."
+      },
+      {
+        "endpoint": "GET /api/communications/inbox",
+        "issue": "Still N+1 — one db.leads.find_one per message. Reported in iter3, not addressed in iter4. Functionally fine, perf concern only."
+      },
+      {
+        "endpoint": "POST /api/growth-plan/generate / /api/market/analyze / /api/briefing/generate",
+        "issue": "Still no debounce/rate-limit per user — iter3 minor issue carried over."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter4_reliability.py",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [
+    "All iter3 critical + targeted minor fixes are validated. Ship as-is.",
+    "Optional follow-ups (low priority): split server.py (~1785 lines) into routers/, replace inbox N+1 with $lookup, add per-user rate limit on AI generation endpoints, broaden phone-match fallback for non-E.164 stored leads."
+  ],
+  "critical_code_review_comments": [
+    "_groq_chat() centralisation is clean — single retry path, ASCII-quote enforcement on retry, and 502 on terminal failure. Good fix.",
+    "_is_safe_url() correctly checks scheme + resolves DNS + ipaddress.is_private/is_loopback/is_link_local + explicit 169.254.x.x — covers AWS/GCP metadata. Note: it resolves DNS once before the fetch but the actual requests.get does its own DNS lookup → tiny TOCTOU window. Acceptable for now; for hardening, pin the resolved IP into the connection.",
+    "_validate_twilio_signature() correctly fails-open only when STRICT_TWILIO_WEBHOOK!=1 AND no signature header is present. If a header is present but invalid, returns False → 403. Correct behaviour.",
+    "server.py is now 1785 lines — still well over the 700-line guideline. Recommend splitting into routers/ in a future iteration (auth, leads, ai, integrations, growth_studio, webhooks)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter4_reliability.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (30/30)",
+    "frontend": "n/a (skipped per request)"
+  },
+  "test_credentials": "admin@zeromark.ai / admin123 (auto-seeded). Test users/leads created with TEST_iter4_ prefix and cleaned up in teardown.",
+  "seed_data_creation": "All TEST_iter4_ leads (phone-normalisation lead, score-batch lead, ai-reply lead) deleted in finally blocks. No residual test data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter4 fixes are solid. /app/backend/tests/test_iter4_reliability.py is a regression suite for AI reliability + SSRF + webhook phone normalisation — keep it green on every iteration. The press-release stress test (5x parametrised) is intentionally aggressive and proves the retry path: backend.err.log will show 'Groq json_validate_failed, retrying with stricter prompt' WARNINGs but every call still returns 200. STRICT_TWILIO_WEBHOOK is intentionally NOT in .env in preview — DO NOT add it; the test asserts that webhooks without the signature header still 200.",
+  "rca of the issue": "RESOLVED. Iter3 root cause was uncaught groq.BadRequestError(json_validate_failed) bubbling to FastAPI's 500 handler. Iter4 fix: a centralised _groq_chat() helper at server.py:80 wraps every AI endpoint, catches groq.BadRequestError, logs a warning, and retries once with temperature=0.0 + an ASCII-only/escape-quotes system prompt. Verified live during this run — 4+ retry events logged, 0 user-facing 500s. Iter3 SSRF concern resolved by _is_safe_url() at server.py:115 called from /api/business/auto-fill at server.py:1355 — verified blocking 169.254.169.254 / localhost / 127.0.0.1 / 10.x / 192.168.x. Iter3 phone-match fragility resolved by normalising From in the webhook (strip non-digit/+) and matching against {phone_raw, phone_norm, phone_raw_no_plus} via $or — verified end-to-end with formatted From and clean stored phone."
+}
