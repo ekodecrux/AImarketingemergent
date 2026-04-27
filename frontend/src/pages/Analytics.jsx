@@ -122,10 +122,16 @@ export default function Analytics() {
                                         data-testid="input-avg-deal-value" />
                                 </div>
                                 <div className="sm:col-span-2 flex items-center gap-3 bg-white rounded-xl px-4 py-3 border border-[#EDE5D4]">
-                                    <input id="grt" type="checkbox" checked={form.guarantee_enabled}
-                                        onChange={(e) => setForm({ ...form, guarantee_enabled: e.target.checked })}
-                                        className="h-4 w-4" data-testid="input-guarantee-enabled" />
-                                    <label htmlFor="grt" className="text-sm font-semibold cursor-pointer flex items-center gap-1.5">
+                                    <button
+                                        type="button"
+                                        onClick={() => setForm({ ...form, guarantee_enabled: !form.guarantee_enabled })}
+                                        className={`relative w-11 h-6 rounded-full transition-colors ${form.guarantee_enabled ? "bg-[#FF562D]" : "bg-[#EDE5D4]"}`}
+                                        data-testid="input-guarantee-enabled"
+                                        aria-pressed={form.guarantee_enabled}
+                                    >
+                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${form.guarantee_enabled ? "translate-x-5" : ""}`}></span>
+                                    </button>
+                                    <label onClick={() => setForm({ ...form, guarantee_enabled: !form.guarantee_enabled })} className="text-sm font-semibold cursor-pointer flex items-center gap-1.5 select-none">
                                         <ShieldCheck size={14} weight="fill" className="text-[#FF562D]" />
                                         Enable lead guarantee terms
                                     </label>
