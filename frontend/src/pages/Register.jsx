@@ -26,38 +26,39 @@ export default function Register() {
         }
     };
     return (
-        <div className="min-h-screen grid lg:grid-cols-2 bg-white">
-            <div className="hidden lg:flex flex-col justify-between p-12 bg-[#2563EB] text-white relative overflow-hidden">
-                <div className="relative z-10">
-                    <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-white flex items-center justify-center">
-                            <Sparkle size={18} weight="fill" className="text-[#2563EB]" />
-                        </div>
-                        <span className="font-display text-2xl font-black tracking-tighter">ZEROMARK</span>
+        <div className="min-h-screen grid lg:grid-cols-[1fr_1.1fr] bg-white">
+            <div className="hidden lg:flex flex-col justify-between p-12 bg-[#F8FAFC] border-r border-[#E2E8F0]">
+                <Link to="/" className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 bg-[#0F172A] flex items-center justify-center rounded-md">
+                        <Sparkle size={18} weight="fill" className="text-[#2563EB]" />
                     </div>
-                </div>
-                <div className="relative z-10 max-w-md">
-                    <p className="text-[10px] uppercase tracking-[0.3em] text-white/60 mb-4">// Get started</p>
-                    <h2 className="font-display text-5xl font-black tracking-tighter leading-[1.05] mb-6">
-                        14 days.<br/>Zero credit card.<br/>All channels.
+                    <span className="font-display text-2xl font-black tracking-tight text-[#0F172A]">ZeroMark</span>
+                </Link>
+                <div className="max-w-md">
+                    <span className="zm-tag-pill mb-6">// Free 14-day trial</span>
+                    <h2 className="font-display text-4xl font-black tracking-tight leading-[1.1] mb-6 mt-6 text-[#0F172A]">
+                        From signup to first lead in under 5 minutes.
                     </h2>
-                    <p className="text-base text-white/80 leading-relaxed">
-                        Generate AI marketing copy, scrape leads, run approval workflows, and send through email,
-                        SMS, WhatsApp & social. Free for two weeks.
-                    </p>
+                    <ul className="space-y-3 text-sm text-[#475569]">
+                        <li className="flex items-start gap-2"><span className="text-[#2563EB] font-bold">✓</span> Paste your URL — AI fills your profile</li>
+                        <li className="flex items-start gap-2"><span className="text-[#2563EB] font-bold">✓</span> Set lead target — AI builds 12-month plan</li>
+                        <li className="flex items-start gap-2"><span className="text-[#2563EB] font-bold">✓</span> Identifies your Ideal Customer Profile</li>
+                        <li className="flex items-start gap-2"><span className="text-[#2563EB] font-bold">✓</span> Distributes budget paid + organic</li>
+                        <li className="flex items-start gap-2"><span className="text-[#2563EB] font-bold">✓</span> Forecast alerts when you fall behind</li>
+                    </ul>
                 </div>
-                <div className="relative z-10 text-[10px] uppercase tracking-[0.3em] text-white/60">
-                    NO CARD REQUIRED
+                <div className="text-[11px] uppercase tracking-[0.15em] text-[#94A3B8] font-bold">
+                    No credit card · Cancel anytime
                 </div>
             </div>
 
             <div className="flex items-center justify-center p-8 lg:p-12">
                 <form onSubmit={handleSubmit} className="w-full max-w-sm" data-testid="register-form">
                     <p className="zm-section-label mb-3">// Create account</p>
-                    <h1 className="font-display text-4xl font-black tracking-tighter mb-2">Start your trial.</h1>
-                    <p className="text-sm text-[#71717A] mb-8">
+                    <h1 className="font-display text-3xl font-black tracking-tight mb-2 text-[#0F172A]">Start your trial.</h1>
+                    <p className="text-sm text-[#64748B] mb-8">
                         Already have an account?{" "}
-                        <Link to="/login" className="text-[#2563EB] font-semibold underline underline-offset-2" data-testid="link-login">
+                        <Link to="/login" className="text-[#2563EB] font-semibold hover:underline" data-testid="link-login">
                             Sign in
                         </Link>
                     </p>
@@ -65,7 +66,7 @@ export default function Register() {
                     <div className="grid grid-cols-2 gap-3 mb-4">
                         <div>
                             <label className="zm-label">First name</label>
-                            <input className="zm-input" required value={form.first_name} onChange={update("first_name")} data-testid="register-firstname-input" />
+                            <input className="zm-input" required value={form.first_name} onChange={update("first_name")} data-testid="register-firstname-input" autoFocus />
                         </div>
                         <div>
                             <label className="zm-label">Last name</label>
@@ -73,16 +74,20 @@ export default function Register() {
                         </div>
                     </div>
 
-                    <label className="zm-label">Email</label>
-                    <input type="email" required value={form.email} onChange={update("email")} className="zm-input mb-4" data-testid="register-email-input" />
+                    <label className="zm-label">Work email</label>
+                    <input type="email" required value={form.email} onChange={update("email")} className="zm-input mb-4" placeholder="you@company.com" data-testid="register-email-input" />
 
-                    <label className="zm-label">Password</label>
-                    <input type="password" required minLength={6} value={form.password} onChange={update("password")} className="zm-input mb-6" data-testid="register-password-input" />
+                    <label className="zm-label">Password (min 6 chars)</label>
+                    <input type="password" required minLength={6} value={form.password} onChange={update("password")} className="zm-input mb-6" placeholder="••••••••" data-testid="register-password-input" />
 
                     <button type="submit" disabled={loading} className="zm-btn-primary w-full" data-testid="register-submit-button">
-                        {loading ? "Creating..." : "Create account"}
+                        {loading ? "Creating account…" : "Create account & start trial"}
                         <ArrowRight size={16} weight="bold" />
                     </button>
+
+                    <p className="text-[11px] text-[#94A3B8] text-center mt-4 font-semibold">
+                        By signing up you agree to a 14-day free trial · no card needed
+                    </p>
                 </form>
             </div>
         </div>

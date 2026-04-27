@@ -447,7 +447,7 @@ async def list_leads(
 async def create_lead(payload: LeadIn, user=Depends(get_current_user)):
     doc = payload.model_dump()
     doc["id"] = str(uuid.uuid4())
-    doc["user_id"] = user["id"]
+    doc["user_id"] = ws(user)
     doc["created_at"] = now_utc().isoformat()
     await db.leads.insert_one(doc)
     doc.pop("_id", None)
@@ -484,7 +484,7 @@ async def import_leads(leads: List[LeadIn], user=Depends(get_current_user)):
     for lead in leads:
         d = lead.model_dump()
         d["id"] = str(uuid.uuid4())
-        d["user_id"] = user["id"]
+        d["user_id"] = ws(user)
         d["created_at"] = now_utc().isoformat()
         docs.append(d)
     if docs:
@@ -505,7 +505,7 @@ async def create_campaign(payload: CampaignIn, user=Depends(get_current_user)):
     cid = str(uuid.uuid4())
     doc = payload.model_dump()
     doc["id"] = cid
-    doc["user_id"] = user["id"]
+    doc["user_id"] = ws(user)
     doc["status"] = "PENDING_APPROVAL"
     doc["created_at"] = now_utc().isoformat()
     doc["sent_count"] = 0
@@ -1669,6 +1669,169 @@ async def growth_plan_generate(user=Depends(get_current_user)):
 async def growth_plan_latest(user=Depends(get_current_user)):
     rec = await db.growth_plans.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)])
     return {"plan": rec}
+
+
+# ---------- ICP (Ideal Customer Profile) ----------
+@api.post("/icp/generate")
+async def icp_generate(user=Depends(get_current_user)):
+    """Generates a structured Ideal Customer Profile: persona, firmographics, signals, sample companies."""
+    await check_ai_rate_limit(user)
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    target_doc = await db.lead_targets.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+
+    biz_ctx = (
+        f"Business: {profile.get('business_name','')}\n"
+        f"Industry: {profile.get('industry','')}\n"
+        f"Location: {profile.get('location','')}\n"
+        f"Target audience hint: {profile.get('target_audience','')}\n"
+        f"Description: {profile.get('description','')}\n"
+        f"Monthly lead target: {target_doc.get('monthly_lead_target','not set')}\n"
+        f"Avg deal value (USD): {target_doc.get('avg_deal_value_usd','not set')}\n"
+    )
+
+    prompt = (
+        f"Build a sharp ICP for the business below. Return STRICT JSON with keys:\n"
+        f"  persona (object: title, seniority, role_summary, daily_pains (array of 3), buying_triggers (array of 3), "
+        f"     objections (array of 3), preferred_channels (array of 3, e.g. 'LinkedIn','Email','Cold call')),\n"
+        f"  firmographics (object: company_size_range, industry, revenue_band_usd, geography, tech_stack_signals (array of 5)),\n"
+        f"  buying_signals (array of 5 — observable triggers like 'just raised Series A','hiring for X role','posted on LinkedIn about Y'),\n"
+        f"  sample_companies (array of 10 plausible target company names matching the firmographics),\n"
+        f"  recommended_outreach_channels (array of 4 channels with rationale, "
+        f"     each: {{channel, type ('paid'|'organic'), why_this_works, opening_message_hook}}),\n"
+        f"  qualification_questions (array of 5 questions reps should ask early to qualify a lead),\n"
+        f"  disqualifiers (array of 3 conditions where this lead is NOT a fit).\n\n"
+        f"BUSINESS:\n{biz_ctx}"
+    )
+    icp = await _groq_json(prompt, max_tokens=2400)
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "icp": icp,
+        "generated_at": now_utc().isoformat(),
+    }
+    await db.icps.insert_one(record)
+    record.pop("_id", None)
+    return {"icp": record}
+
+
+@api.get("/icp/latest")
+async def icp_latest(user=Depends(get_current_user)):
+    rec = await db.icps.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)])
+    return {"icp": rec}
+
+
+# ---------- Setup status (drives the onboarding checklist) ----------
+@api.get("/setup/status")
+async def setup_status(user=Depends(get_current_user)):
+    wid = ws(user)
+    profile = await db.business_profiles.find_one({"user_id": wid}, {"_id": 0})
+    target = await db.lead_targets.find_one({"user_id": wid}, {"_id": 0})
+    icp = await db.icps.find_one({"user_id": wid}, {"_id": 0})
+    plan = await db.growth_plans.find_one({"user_id": wid}, {"_id": 0})
+    leads_count = await db.leads.count_documents({"user_id": wid})
+    campaigns_count = await db.campaigns.count_documents({"user_id": wid})
+    sent_count = await db.campaigns.count_documents({"user_id": wid, "status": "SENT"})
+
+    has_profile = bool(profile and profile.get("business_name") and profile.get("industry"))
+    has_target = bool(target and target.get("monthly_lead_target"))
+    has_icp = bool(icp)
+    has_plan = bool(plan)
+    has_leads = leads_count > 0
+    has_campaign = campaigns_count > 0
+    has_sent = sent_count > 0
+
+    steps = [
+        {"id": "profile", "label": "Complete business profile", "done": has_profile, "cta": "/business", "cta_label": "Open profile"},
+        {"id": "target", "label": "Set your monthly lead target", "done": has_target, "cta": "/analytics", "cta_label": "Set target"},
+        {"id": "icp", "label": "Generate Ideal Customer Profile", "done": has_icp, "cta": "/growth", "cta_label": "Generate ICP"},
+        {"id": "plan", "label": "Build 12-month growth plan", "done": has_plan, "cta": "/growth", "cta_label": "Build plan"},
+        {"id": "leads", "label": "Discover your first leads", "done": has_leads, "cta": "/scraping", "cta_label": "Find leads"},
+        {"id": "campaign", "label": "Draft your first campaign", "done": has_campaign, "cta": "/campaigns", "cta_label": "Create campaign"},
+        {"id": "sent", "label": "Send your first campaign", "done": has_sent, "cta": "/approvals", "cta_label": "Approve & send"},
+    ]
+    completed = sum(1 for s in steps if s["done"])
+    return {
+        "completed": completed,
+        "total": len(steps),
+        "percent": round(completed / len(steps) * 100),
+        "next_step": next((s for s in steps if not s["done"]), None),
+        "steps": steps,
+        "has_profile": has_profile,
+    }
+
+
+# ---------- Autopilot Kickoff (one-shot orchestrator) ----------
+class AutopilotIn(BaseModel):
+    monthly_lead_target: int
+    avg_deal_value_usd: float
+    target_audience: Optional[str] = None  # additional descriptor user adds
+    guarantee_enabled: bool = False
+    guarantee_terms: Optional[str] = None
+
+
+@api.post("/autopilot/kickoff")
+async def autopilot_kickoff(payload: AutopilotIn, user=Depends(get_current_user)):
+    """One-shot: save target → generate market analysis + ICP + 12-month plan with channel distribution.
+    Returns all artifacts so the UI can render a 'mission control' summary.
+    Counts as 3 AI calls — rate limit is enforced per call."""
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    if not profile.get("business_name"):
+        raise HTTPException(status_code=400, detail="Save your business profile first")
+
+    # Optionally enrich profile with the user's audience hint
+    if payload.target_audience and payload.target_audience.strip():
+        merged_audience = (profile.get("target_audience") or "").strip()
+        if payload.target_audience not in merged_audience:
+            new_audience = (merged_audience + " | " + payload.target_audience).strip(" |")
+            await db.business_profiles.update_one(
+                {"user_id": ws(user)}, {"$set": {"target_audience": new_audience}},
+            )
+
+    # 1) Save lead target
+    revenue_target = payload.monthly_lead_target * payload.avg_deal_value_usd
+    await db.lead_targets.update_one(
+        {"user_id": ws(user)},
+        {"$set": {
+            "user_id": ws(user),
+            "monthly_lead_target": payload.monthly_lead_target,
+            "avg_deal_value_usd": payload.avg_deal_value_usd,
+            "monthly_revenue_target_usd": revenue_target,
+            "guarantee_enabled": payload.guarantee_enabled,
+            "guarantee_terms": payload.guarantee_terms,
+            "updated_at": now_utc().isoformat(),
+        }, "$setOnInsert": {"created_at": now_utc().isoformat()}},
+        upsert=True,
+    )
+
+    # 2) Generate ICP (independent AI call)
+    icp_result = await icp_generate(user)
+
+    # 3) Generate 12-month growth plan (independent AI call)
+    plan_result = await growth_plan_generate(user)
+
+    # 4) Default-on alert preferences (so user gets forecast updates)
+    await db.alert_preferences.update_one(
+        {"user_id": ws(user)},
+        {"$setOnInsert": {
+            "user_id": ws(user),
+            "email_enabled": True, "slack_enabled": False, "inapp_enabled": True,
+            "weekly_digest": True, "daily_check": True,
+            "hour_utc": 9, "at_risk_threshold_pct": 80,
+            "created_at": now_utc().isoformat(),
+        }},
+        upsert=True,
+    )
+
+    return {
+        "success": True,
+        "lead_target": {
+            "monthly_lead_target": payload.monthly_lead_target,
+            "avg_deal_value_usd": payload.avg_deal_value_usd,
+            "monthly_revenue_target_usd": revenue_target,
+        },
+        "icp": icp_result["icp"]["icp"] if icp_result.get("icp") else None,
+        "plan": plan_result["plan"]["plan"] if plan_result.get("plan") else None,
+    }
 
 
 # ---------- Editable channel distribution + Guaranteed Leads target ----------

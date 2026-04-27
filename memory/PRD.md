@@ -13,6 +13,17 @@
 
 ## What's been implemented
 
+### Iteration 9 (Feb 2026) — Integrated end-to-end flow + ICP + Setup Checklist + Polish
+- **New**: `POST /api/icp/generate` + `GET /api/icp/latest` — structured Ideal Customer Profile (persona, firmographics with 5 tech signals, 5 buying signals, 10 sample target companies, 4 recommended channels with opening hooks, 5 qualification questions, 3 disqualifiers)
+- **New**: `POST /api/autopilot/kickoff` — one-shot orchestrator that saves lead target → generates ICP → builds 12-month plan → enables forecast alerts (3 AI calls bundled)
+- **New**: `GET /api/setup/status` — drives the dashboard checklist (7 steps: profile, target, ICP, plan, leads, campaign, sent), returns next_step + completion %
+- **Fix**: `create_lead`, `import_leads`, `create_campaign` now use `ws(user)` for workspace invariant (P2 from iter6 closed)
+- **Frontend**: Re-built Onboarding wizard (4-step: URL → profile → goal → autopilot summary) with progress bar
+- **Frontend**: `SetupChecklist` hero on Dashboard — gradient blue card with progress bar, 7-step grid, prominent "Next: X" CTA. Auto-redirects to `/onboarding` if profile missing
+- **Frontend**: Cleaned-up Login + Register — split layout with feature list (no more dark image panel). More professional SaaS feel
+- **Frontend**: Growth Studio gets new **"Ideal Customer"** tab as the *first* tab — buyer persona card, firmographics, sample companies list, recommended channels with opening hooks
+- **Docs**: `/app/USER_GUIDE.md` — comprehensive step-by-step user guide
+
 ### Iteration 8 (Feb 2026) — Theme switch: Professional Blue + White
 - Replaced Unbounce coral/cream/Fraunces palette with a clean SaaS blue + white theme:
   - Primary `#2563EB` (blue-600), hover `#1D4ED8`, light tint `#DBEAFE`

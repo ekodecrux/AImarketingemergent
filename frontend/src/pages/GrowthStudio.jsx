@@ -3,11 +3,12 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import {
-    ChartLineUp, MagnifyingGlass, Newspaper, Calendar,
+    ChartLineUp, MagnifyingGlass, Newspaper, Calendar, Target,
     Sparkle, ArrowRight, ArrowsClockwise,
 } from "@phosphor-icons/react";
 
 const TABS = [
+    { id: "icp", label: "Ideal Customer", icon: Target },
     { id: "market", label: "Market Analysis", icon: ChartLineUp },
     { id: "seo", label: "SEO Toolkit", icon: MagnifyingGlass },
     { id: "pr", label: "PR & Outreach", icon: Newspaper },
@@ -15,7 +16,7 @@ const TABS = [
 ];
 
 export default function GrowthStudio() {
-    const [tab, setTab] = useState("market");
+    const [tab, setTab] = useState("icp");
     return (
         <div>
             <PageHeader
@@ -40,11 +41,184 @@ export default function GrowthStudio() {
                     ))}
                 </div>
 
+                {tab === "icp" && <ICPTab />}
                 {tab === "market" && <MarketTab />}
                 {tab === "seo" && <SEOTab />}
                 {tab === "pr" && <PRTab />}
                 {tab === "plan" && <PlanTab />}
             </div>
+        </div>
+    );
+}
+
+/* ---------- ICP ---------- */
+function ICPTab() {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        api.get("/icp/latest").then((r) => {
+            if (r.data.icp) setData(r.data.icp.icp);
+        }).catch(() => {});
+    }, []);
+
+    const generate = async () => {
+        setLoading(true);
+        const t = toast.loading("Building your Ideal Customer Profile…");
+        try {
+            const r = await api.post("/icp/generate");
+            setData(r.data.icp.icp);
+            toast.success("ICP ready", { id: t });
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Failed", { id: t });
+        } finally { setLoading(false); }
+    };
+
+    return (
+        <div className="space-y-6" data-testid="icp-tab">
+            <ActionBar
+                title="Identify your Ideal Customer Profile"
+                desc="Persona, firmographics, buying signals, sample target companies, and recommended outreach channels."
+                onClick={generate}
+                loading={loading}
+                cta={data ? "Regenerate ICP" : "Generate ICP"}
+            />
+            {data && (
+                <div className="space-y-6">
+                    {/* Persona */}
+                    {data.persona && (
+                        <div className="zm-card p-7 bg-[#0F172A] text-white">
+                            <p className="zm-section-label text-white/60 mb-2">// Buyer persona</p>
+                            <h3 className="font-display text-3xl font-black tracking-tight">
+                                {data.persona.title}
+                                {data.persona.seniority && <span className="text-[#2563EB] ml-2 text-2xl">· {data.persona.seniority}</span>}
+                            </h3>
+                            <p className="text-sm text-white/70 mt-3 leading-relaxed">{data.persona.role_summary}</p>
+                            <div className="grid sm:grid-cols-3 gap-4 mt-6">
+                                <PersonaList title="Daily pains" items={data.persona.daily_pains} />
+                                <PersonaList title="Buying triggers" items={data.persona.buying_triggers} />
+                                <PersonaList title="Common objections" items={data.persona.objections} />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Firmographics + Sample companies */}
+                    <div className="grid md:grid-cols-2 gap-6">
+                        {data.firmographics && (
+                            <Section title="Firmographics">
+                                <div className="zm-card p-6 space-y-3 text-sm">
+                                    <Row k="Company size" v={data.firmographics.company_size_range} />
+                                    <Row k="Industry" v={data.firmographics.industry} />
+                                    <Row k="Revenue band" v={data.firmographics.revenue_band_usd} />
+                                    <Row k="Geography" v={data.firmographics.geography} />
+                                    {Array.isArray(data.firmographics.tech_stack_signals) && (
+                                        <div className="pt-2 border-t border-[#E2E8F0]">
+                                            <p className="zm-section-label mb-2">Tech / behavior signals</p>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {data.firmographics.tech_stack_signals.map((s, i) => (
+                                                    <span key={i} className="zm-badge bg-[#DBEAFE] text-[#1D4ED8]">{s}</span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </Section>
+                        )}
+
+                        {Array.isArray(data.sample_companies) && (
+                            <Section title="Sample target companies (10)">
+                                <div className="zm-card divide-y divide-[#E2E8F0]">
+                                    {data.sample_companies.map((c, i) => (
+                                        <div key={i} className="px-5 py-3 flex items-center gap-3 text-sm">
+                                            <span className="font-mono text-[10px] text-[#94A3B8] w-6">{String(i + 1).padStart(2, "0")}</span>
+                                            <span className="font-semibold">{c}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </Section>
+                        )}
+                    </div>
+
+                    {/* Buying signals */}
+                    {Array.isArray(data.buying_signals) && (
+                        <Section title="Buying signals to watch">
+                            <div className="zm-card p-6 grid md:grid-cols-2 gap-3">
+                                {data.buying_signals.map((s, i) => (
+                                    <div key={i} className="flex gap-2 text-sm">
+                                        <Sparkle size={14} weight="fill" className="text-[#2563EB] mt-0.5 shrink-0" />
+                                        <span>{s}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </Section>
+                    )}
+
+                    {/* Recommended channels */}
+                    {Array.isArray(data.recommended_outreach_channels) && (
+                        <Section title="Recommended outreach channels">
+                            <div className="grid md:grid-cols-2 gap-4">
+                                {data.recommended_outreach_channels.map((c, i) => (
+                                    <div key={i} className="zm-card p-5">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h4 className="font-display text-lg font-bold tracking-tight">{c.channel}</h4>
+                                            <span className={`zm-badge ${c.type === "paid" ? "bg-[#DBEAFE] text-[#1D4ED8]" : "bg-[#D1FAE5] text-[#047857]"}`}>{(c.type || "").toUpperCase()}</span>
+                                        </div>
+                                        <p className="text-xs text-[#64748B] mb-3">{c.why_this_works}</p>
+                                        {c.opening_message_hook && (
+                                            <div className="bg-[#F8FAFC] border-l-2 border-[#2563EB] p-3 text-xs italic text-[#0F172A]">
+                                                "{c.opening_message_hook}"
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </Section>
+                    )}
+
+                    {/* Qualification + disqualifiers */}
+                    <div className="grid md:grid-cols-2 gap-6">
+                        {Array.isArray(data.qualification_questions) && (
+                            <Section title="Qualification questions">
+                                <ul className="zm-card p-6 space-y-2 text-sm">
+                                    {data.qualification_questions.map((q, i) => (
+                                        <li key={i} className="flex gap-2"><span className="text-[#2563EB] font-bold">{i + 1}.</span> {q}</li>
+                                    ))}
+                                </ul>
+                            </Section>
+                        )}
+                        {Array.isArray(data.disqualifiers) && (
+                            <Section title="Disqualifiers">
+                                <ul className="zm-card p-6 space-y-2 text-sm">
+                                    {data.disqualifiers.map((d, i) => (
+                                        <li key={i} className="flex gap-2"><span className="text-[#DC2626] font-bold">×</span> {d}</li>
+                                    ))}
+                                </ul>
+                            </Section>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function PersonaList({ title, items }) {
+    return (
+        <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/50 mb-2">{title}</p>
+            <ul className="space-y-1 text-xs text-white/90">
+                {(items || []).map((it, i) => <li key={i}>• {it}</li>)}
+            </ul>
+        </div>
+    );
+}
+
+function Row({ k, v }) {
+    if (!v) return null;
+    return (
+        <div className="flex justify-between gap-4">
+            <span className="text-[#64748B] text-xs uppercase tracking-wider font-semibold">{k}</span>
+            <span className="font-semibold text-right">{v}</span>
         </div>
     );
 }
