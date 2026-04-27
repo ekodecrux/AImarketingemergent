@@ -91,7 +91,7 @@ export default function Leads() {
                 <div className="zm-card overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="border-b border-[#EDE5D4]">
+                            <tr className="border-b border-[#E2E8F0]">
                                 <th className="text-left px-4 py-3 zm-section-label">Name</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Email</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Phone</th>
@@ -111,13 +111,13 @@ export default function Leads() {
                                 </td></tr>
                             )}
                             {data.leads.map((l) => (
-                                <tr key={l.id} onClick={() => navigate(`/leads/${l.id}`)} className="border-b border-[#EDE5D4] last:border-b-0 hover:bg-[#F9F9FB] cursor-pointer" data-testid={`lead-row-${l.id}`}>
+                                <tr key={l.id} onClick={() => navigate(`/leads/${l.id}`)} className="border-b border-[#E2E8F0] last:border-b-0 hover:bg-[#F9F9FB] cursor-pointer" data-testid={`lead-row-${l.id}`}>
                                     <td className="px-4 py-3 font-semibold">{l.name}</td>
                                     <td className="px-4 py-3 text-[#71717A]">{l.email || "—"}</td>
                                     <td className="px-4 py-3 text-[#71717A]">{l.phone || "—"}</td>
-                                    <td className="px-4 py-3"><span className="zm-badge bg-[#FAF7F2] text-[#0E0F11]">{l.source}</span></td>
+                                    <td className="px-4 py-3"><span className="zm-badge bg-[#F8FAFC] text-[#0F172A]">{l.source}</span></td>
                                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                                        <select value={l.status} onChange={(e) => handleStatusChange(l.id, e.target.value, e)} className="text-xs border border-[#EDE5D4] px-2 py-1 bg-white">
+                                        <select value={l.status} onChange={(e) => handleStatusChange(l.id, e.target.value, e)} className="text-xs border border-[#E2E8F0] px-2 py-1 bg-white">
                                             {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                                         </select>
                                     </td>
@@ -158,7 +158,7 @@ function ScoreCell({ score }) {
     return (
         <div className="flex items-center gap-2">
             <span className="font-mono text-xs font-bold" style={{ color }}>{score}</span>
-            <div className="w-16 h-1 bg-[#FAF7F2]">
+            <div className="w-16 h-1 bg-[#F8FAFC]">
                 <div className="h-full" style={{ width: `${score}%`, background: color }} />
             </div>
         </div>
@@ -237,7 +237,7 @@ function ScrapeModal({ onClose, onDone }) {
                             key={v} type="button" onClick={() => setType(v)}
                             data-testid={`scrape-type-${v}`}
                             className={`px-3 py-2.5 text-xs uppercase tracking-[0.15em] font-bold border ${
-                                type === v ? "bg-[#0E0F11] text-white border-[#0E0F11]" : "bg-white text-[#71717A] border-[#EDE5D4] hover:border-[#0E0F11]"
+                                type === v ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#71717A] border-[#E2E8F0] hover:border-[#0F172A]"
                             }`}
                         >{label}</button>
                     ))}
@@ -261,7 +261,7 @@ function ScrapeModal({ onClose, onDone }) {
                     </div>
                 )}
 
-                <p className="text-xs text-[#71717A] bg-[#FAF7F2] p-3 border-l-2 border-[#FF562D]">
+                <p className="text-xs text-[#71717A] bg-[#F8FAFC] p-3 border-l-2 border-[#2563EB]">
                     Powered by Groq AI · Generates research-grade lead data based on your inputs and auto-imports into your pipeline.
                 </p>
 
@@ -278,13 +278,13 @@ export function ModalShell({ title, eyebrow, onClose, children, size = "md" }) {
     const widths = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-4xl" };
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className={`bg-white border border-[#EDE5D4] w-full ${widths[size]} max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-start justify-between p-6 border-b border-[#EDE5D4]">
+            <div className={`bg-white border border-[#E2E8F0] w-full ${widths[size]} max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start justify-between p-6 border-b border-[#E2E8F0]">
                     <div>
                         {eyebrow && <p className="zm-section-label mb-1">{eyebrow}</p>}
                         <h2 className="font-display text-2xl font-bold tracking-tight">{title}</h2>
                     </div>
-                    <button onClick={onClose} className="text-[#71717A] hover:text-[#0E0F11]" data-testid="modal-close">
+                    <button onClick={onClose} className="text-[#71717A] hover:text-[#0F172A]" data-testid="modal-close">
                         <X size={18} weight="bold" />
                     </button>
                 </div>

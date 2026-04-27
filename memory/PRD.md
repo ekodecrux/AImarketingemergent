@@ -13,6 +13,15 @@
 
 ## What's been implemented
 
+### Iteration 8 (Feb 2026) — Theme switch: Professional Blue + White
+- Replaced Unbounce coral/cream/Fraunces palette with a clean SaaS blue + white theme:
+  - Primary `#2563EB` (blue-600), hover `#1D4ED8`, light tint `#DBEAFE`
+  - Background `#F8FAFC` (slate-50), card border `#E2E8F0` (slate-200), ink `#0F172A` (slate-900)
+  - Success `#10B981`, amber accent `#F59E0B`
+- Reverted Fraunces serif → Source Sans 3 throughout for cleaner SaaS look
+- Removed playful "ink-drop shadow" + rotated cards on landing; cleaner shadow-md and editorial italics removed
+- Bulk find/replace across all 25+ pages/components — zero coral/cream remaining
+
 ### Iteration 7 (Feb 2026) — Forecast Alerts (Slack/Email/In-app + AI suggestions)
 **Backend**
 - `GET/POST /api/alerts/preferences` — channel toggles (email/slack/in-app), cadence (daily silent + weekly Monday digest), `hour_utc`, configurable `at_risk_threshold_pct` (default 80%), `slack_webhook_url` validated to start with `https://hooks.slack.com/`

@@ -139,7 +139,7 @@ export default function Team() {
                                 </div>
                             </form>
                             {tempPassword && (
-                                <div className="mt-4 p-3 bg-[#FAF7F2] border-l-2 border-[#10B981] text-xs">
+                                <div className="mt-4 p-3 bg-[#F8FAFC] border-l-2 border-[#10B981] text-xs">
                                     <p className="font-bold uppercase tracking-[0.15em] text-[#71717A] mb-1">// Temporary password</p>
                                     <p className="font-mono">{tempPassword}</p>
                                     <p className="text-[#71717A] mt-1">Email sent. Share this if delivery fails.</p>
@@ -148,11 +148,11 @@ export default function Team() {
                         </div>
                     )}
 
-                    <div className="zm-card divide-y divide-[#EDE5D4]" data-testid="members-list">
+                    <div className="zm-card divide-y divide-[#E2E8F0]" data-testid="members-list">
                         {loading && <p className="p-12 text-sm text-[#A1A1AA] text-center">Loading…</p>}
                         {!loading && members.map((m) => (
                             <div key={m.id} className="px-6 py-4 flex items-center gap-4" data-testid={`member-${m.id}`}>
-                                <div className="w-10 h-10 bg-[#FF562D] text-white flex items-center justify-center font-semibold rounded-sm">
+                                <div className="w-10 h-10 bg-[#2563EB] text-white flex items-center justify-center font-semibold rounded-sm">
                                     {(m.first_name?.[0] || m.email[0]).toUpperCase()}
                                 </div>
                                 <div className="flex-1 min-w-0">
@@ -162,7 +162,7 @@ export default function Team() {
                                     </p>
                                     <p className="text-xs text-[#71717A] truncate">{m.email}</p>
                                 </div>
-                                <span className="zm-badge bg-[#FAF7F2] text-[#0E0F11]">{m.is_owner ? "OWNER" : m.role.toUpperCase()}</span>
+                                <span className="zm-badge bg-[#F8FAFC] text-[#0F172A]">{m.is_owner ? "OWNER" : m.role.toUpperCase()}</span>
                                 {isOwner && !m.is_owner && (
                                     <button onClick={() => remove(m.id)} className="text-[#71717A] hover:text-[#E32636] p-2" data-testid={`remove-${m.id}`}>
                                         <Trash size={16} weight="bold" />
@@ -177,7 +177,7 @@ export default function Team() {
                 <div className="space-y-6">
                     <div className="zm-card p-6" data-testid="briefing-prefs">
                         <div className="flex items-center gap-2 mb-3">
-                            <Bell size={16} weight="bold" className="text-[#FF562D]" />
+                            <Bell size={16} weight="bold" className="text-[#2563EB]" />
                             <h3 className="font-display text-lg font-bold tracking-tight">Daily Briefing</h3>
                         </div>
                         <p className="text-xs text-[#71717A] mb-4 leading-relaxed">
@@ -190,7 +190,7 @@ export default function Team() {
                                 checked={briefPref.daily_email}
                                 onChange={(e) => saveBriefPref({ daily_email: e.target.checked })}
                                 disabled={savingPref}
-                                className="w-4 h-4 accent-[#FF562D]"
+                                className="w-4 h-4 accent-[#2563EB]"
                                 data-testid="brief-toggle"
                             />
                         </label>
@@ -212,11 +212,11 @@ export default function Team() {
 
                     <div className="zm-card p-6">
                         <div className="flex items-center gap-2 mb-3">
-                            <Envelope size={16} weight="bold" className="text-[#FF562D]" />
+                            <Envelope size={16} weight="bold" className="text-[#2563EB]" />
                             <h3 className="font-display text-lg font-bold tracking-tight">Inbound email</h3>
                         </div>
                         <p className="text-xs text-[#71717A] leading-relaxed">
-                            Email replies sent to <span className="font-mono text-[#0E0F11]">{process.env.REACT_APP_SUPPORT_EMAIL || "your Gmail address"}</span> are auto-polled every 3 minutes via IMAP and routed to the matching lead in your Inbox.
+                            Email replies sent to <span className="font-mono text-[#0F172A]">{process.env.REACT_APP_SUPPORT_EMAIL || "your Gmail address"}</span> are auto-polled every 3 minutes via IMAP and routed to the matching lead in your Inbox.
                         </p>
                     </div>
 
@@ -225,10 +225,10 @@ export default function Team() {
                         <div className="zm-card p-6" data-testid="alert-prefs">
                             <div className="flex items-center justify-between mb-3">
                                 <div className="flex items-center gap-2">
-                                    <ShieldCheck size={16} weight="fill" className="text-[#FF562D]" />
+                                    <ShieldCheck size={16} weight="fill" className="text-[#2563EB]" />
                                     <h3 className="font-display text-lg font-bold tracking-tight">Forecast Alerts</h3>
                                 </div>
-                                <span className="zm-badge bg-[#FFE6DC] text-[#FF562D]">PROACTIVE</span>
+                                <span className="zm-badge bg-[#DBEAFE] text-[#2563EB]">PROACTIVE</span>
                             </div>
                             <p className="text-xs text-[#71717A] mb-4 leading-relaxed">
                                 Get pinged when your monthly lead forecast falls below your threshold — with an AI-suggested budget shift to recover the gap.
@@ -316,7 +316,7 @@ function Toggle({ label, icon: Icon, checked, onChange, disabled, testid }) {
             type="button"
             onClick={() => !disabled && onChange(!checked)}
             disabled={disabled}
-            className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-[#EDE5D4] bg-white hover:border-[#0E0F11] disabled:opacity-50 transition-colors text-left"
+            className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-[#E2E8F0] bg-white hover:border-[#0F172A] disabled:opacity-50 transition-colors text-left"
             data-testid={testid}
             aria-pressed={checked}
         >
@@ -324,7 +324,7 @@ function Toggle({ label, icon: Icon, checked, onChange, disabled, testid }) {
                 {Icon && <Icon size={14} weight="bold" className="text-[#52525B]" />}
                 {label}
             </span>
-            <span className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${checked ? "bg-[#FF562D]" : "bg-[#EDE5D4]"}`}>
+            <span className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${checked ? "bg-[#2563EB]" : "bg-[#E2E8F0]"}`}>
                 <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${checked ? "translate-x-4" : ""}`}></span>
             </span>
         </button>

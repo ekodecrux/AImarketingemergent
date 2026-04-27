@@ -93,7 +93,7 @@ export default function LandingPages() {
                                             <CheckCircle size={10} weight="fill" /> LIVE
                                         </span>
                                     ) : (
-                                        <span className="zm-badge bg-[#FAF7F2] text-[#71717A]">DRAFT</span>
+                                        <span className="zm-badge bg-[#F8FAFC] text-[#71717A]">DRAFT</span>
                                     )}
                                 </div>
                                 <p className="text-xs text-[#71717A] font-mono mb-3 truncate">/p/{p.slug}</p>

@@ -50,7 +50,7 @@ export default function Reports() {
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-0 zm-card mb-8" data-testid="report-types">
                     {REPORT_TYPES.map((t, i) => (
-                        <div key={t.v} className={`p-6 ${i < 2 ? "md:border-r border-b md:border-b-0" : ""} border-[#EDE5D4]`}>
+                        <div key={t.v} className={`p-6 ${i < 2 ? "md:border-r border-b md:border-b-0" : ""} border-[#E2E8F0]`}>
                             <t.icon size={24} weight="bold" className="mb-3" />
                             <h3 className="font-display text-lg font-bold tracking-tight">{t.label}</h3>
                             <p className="text-xs text-[#71717A] mt-1 mb-4">{t.desc}</p>
@@ -65,7 +65,7 @@ export default function Reports() {
                     <div className="zm-card p-6 mb-6" data-testid="report-active">
                         <p className="zm-section-label">// Latest report</p>
                         <h3 className="font-display text-2xl font-bold tracking-tight mt-1 mb-4">{active.type.replace(/_/g, " ")}</h3>
-                        <pre className="bg-[#FAF7F2] border-l-2 border-[#FF562D] p-4 text-xs overflow-x-auto font-mono">{JSON.stringify(active.data, null, 2)}</pre>
+                        <pre className="bg-[#F8FAFC] border-l-2 border-[#2563EB] p-4 text-xs overflow-x-auto font-mono">{JSON.stringify(active.data, null, 2)}</pre>
                     </div>
                 )}
 
@@ -73,7 +73,7 @@ export default function Reports() {
                 <div className="zm-card overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="border-b border-[#EDE5D4]">
+                            <tr className="border-b border-[#E2E8F0]">
                                 <th className="text-left px-4 py-3 zm-section-label">Type</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Period</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Generated</th>
@@ -85,14 +85,14 @@ export default function Reports() {
                                 <tr><td colSpan={4} className="px-4 py-12 text-center text-[#A1A1AA]">No reports generated</td></tr>
                             )}
                             {reports.map((r) => (
-                                <tr key={r.id} className="border-b border-[#EDE5D4] last:border-b-0">
+                                <tr key={r.id} className="border-b border-[#E2E8F0] last:border-b-0">
                                     <td className="px-4 py-3 font-semibold">{r.type.replace(/_/g, " ")}</td>
                                     <td className="px-4 py-3 text-[#71717A]">
                                         {new Date(r.period_start).toLocaleDateString()} → {new Date(r.period_end).toLocaleDateString()}
                                     </td>
                                     <td className="px-4 py-3 text-[#71717A]">{new Date(r.generated_at).toLocaleString()}</td>
                                     <td className="px-4 py-3 text-right">
-                                        <button onClick={() => setActive(r)} className="text-[#FF562D] text-xs uppercase tracking-[0.15em] font-bold hover:underline">View</button>
+                                        <button onClick={() => setActive(r)} className="text-[#2563EB] text-xs uppercase tracking-[0.15em] font-bold hover:underline">View</button>
                                     </td>
                                 </tr>
                             ))}

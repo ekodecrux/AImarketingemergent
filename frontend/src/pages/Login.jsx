@@ -28,7 +28,7 @@ export default function Login() {
     return (
         <div className="min-h-screen grid lg:grid-cols-2 bg-white">
             {/* Left brand panel */}
-            <div className="hidden lg:flex flex-col justify-between p-12 bg-[#0E0F11] text-white relative overflow-hidden">
+            <div className="hidden lg:flex flex-col justify-between p-12 bg-[#0F172A] text-white relative overflow-hidden">
                 <div
                     className="absolute inset-0 opacity-30"
                     style={{
@@ -40,7 +40,7 @@ export default function Login() {
                 <div className="relative z-10">
                     <div className="flex items-center gap-2">
                         <div className="w-8 h-8 bg-white flex items-center justify-center">
-                            <Sparkle size={18} weight="fill" className="text-[#FF562D]" />
+                            <Sparkle size={18} weight="fill" className="text-[#2563EB]" />
                         </div>
                         <span className="font-display text-2xl font-black tracking-tighter">ZEROMARK</span>
                     </div>
@@ -67,7 +67,7 @@ export default function Login() {
                     <h1 className="font-display text-4xl font-black tracking-tighter mb-2">Access the platform.</h1>
                     <p className="text-sm text-[#71717A] mb-8">
                         New here?{" "}
-                        <Link to="/register" className="text-[#FF562D] font-semibold underline underline-offset-2" data-testid="link-register">
+                        <Link to="/register" className="text-[#2563EB] font-semibold underline underline-offset-2" data-testid="link-register">
                             Create an account
                         </Link>
                     </p>
@@ -104,7 +104,7 @@ export default function Login() {
                         <ArrowRight size={16} weight="bold" />
                     </button>
 
-                    <div className="mt-8 pt-6 border-t border-[#EDE5D4]">
+                    <div className="mt-8 pt-6 border-t border-[#E2E8F0]">
                         <p className="text-[10px] uppercase tracking-[0.2em] text-[#A1A1AA] mb-2">Demo credentials</p>
                         <p className="text-xs text-[#71717A] font-mono">admin@zeromark.ai / admin123</p>
                     </div>

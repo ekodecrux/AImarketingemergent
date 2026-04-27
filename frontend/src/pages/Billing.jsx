@@ -54,7 +54,7 @@ export default function Billing() {
                         toast.error("Verification failed");
                     }
                 },
-                theme: { color: "#FF562D" },
+                theme: { color: "#2563EB" },
                 modal: { ondismiss: () => setLoading(null) },
             };
             new window.Razorpay(opts).open();
@@ -81,7 +81,7 @@ export default function Billing() {
                             <div
                                 key={p.id}
                                 data-testid={`plan-${p.id}`}
-                                className={`p-8 ${i < 2 ? "md:border-r border-b md:border-b-0" : ""} border-[#EDE5D4] ${isFeatured ? "bg-[#0E0F11] text-white" : "bg-white"}`}
+                                className={`p-8 ${i < 2 ? "md:border-r border-b md:border-b-0" : ""} border-[#E2E8F0] ${isFeatured ? "bg-[#0F172A] text-white" : "bg-white"}`}
                             >
                                 {isFeatured && (
                                     <div className="flex items-center gap-1 mb-4">
@@ -89,7 +89,7 @@ export default function Billing() {
                                         <span className="text-[10px] uppercase tracking-[0.25em] font-bold">Most popular</span>
                                     </div>
                                 )}
-                                <h3 className={`font-display text-3xl font-black tracking-tighter ${isFeatured ? "text-white" : "text-[#0E0F11]"}`}>{p.name}</h3>
+                                <h3 className={`font-display text-3xl font-black tracking-tighter ${isFeatured ? "text-white" : "text-[#0F172A]"}`}>{p.name}</h3>
                                 <div className="my-4">
                                     <span className="font-display text-5xl font-black tracking-tighter">₹{p.price_inr}</span>
                                     <span className={`text-sm ${isFeatured ? "text-white/60" : "text-[#71717A]"}`}> /mo</span>
@@ -97,7 +97,7 @@ export default function Billing() {
                                 <ul className="space-y-2 mb-6">
                                     {p.features.map((f) => (
                                         <li key={f} className={`flex items-start gap-2 text-sm ${isFeatured ? "text-white/80" : "text-[#71717A]"}`}>
-                                            <Check size={14} weight="bold" className={isFeatured ? "text-[#10B981] mt-0.5" : "text-[#FF562D] mt-0.5"} />
+                                            <Check size={14} weight="bold" className={isFeatured ? "text-[#10B981] mt-0.5" : "text-[#2563EB] mt-0.5"} />
                                             {f}
                                         </li>
                                     ))}
@@ -106,7 +106,7 @@ export default function Billing() {
                                     disabled={isCurrent || loading === p.id}
                                     onClick={() => checkout(p.id)}
                                     data-testid={`subscribe-${p.id}`}
-                                    className={isFeatured ? "zm-btn bg-white text-[#0E0F11] hover:bg-[#FAF7F2] w-full" : "zm-btn-primary w-full"}
+                                    className={isFeatured ? "zm-btn bg-white text-[#0F172A] hover:bg-[#F8FAFC] w-full" : "zm-btn-primary w-full"}
                                 >
                                     {isCurrent ? "Current plan" : (loading === p.id ? "Opening…" : "Subscribe")}
                                 </button>
@@ -118,8 +118,8 @@ export default function Billing() {
                 <div className="zm-card p-6 mt-6">
                     <p className="zm-section-label mb-2">// Test mode</p>
                     <p className="text-sm text-[#71717A]">
-                        Razorpay is in test mode. Use test card <span className="font-mono text-[#0E0F11]">4111 1111 1111 1111</span>,
-                        any future expiry, any CVV. UPI test: <span className="font-mono text-[#0E0F11]">success@razorpay</span>.
+                        Razorpay is in test mode. Use test card <span className="font-mono text-[#0F172A]">4111 1111 1111 1111</span>,
+                        any future expiry, any CVV. UPI test: <span className="font-mono text-[#0F172A]">success@razorpay</span>.
                     </p>
                 </div>
             </div>

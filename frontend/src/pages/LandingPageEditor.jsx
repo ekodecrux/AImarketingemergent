@@ -139,20 +139,20 @@ export default function LandingPageEditor() {
                         <p className="zm-section-label mb-2 px-2">// Page settings</p>
                         <input className="zm-input mb-2" value={page.title} onChange={(e) => setPage({ ...page, title: e.target.value })} placeholder="Page title" data-testid="page-title-input" />
                         <input className="zm-input mb-2 font-mono text-xs" value={page.slug} onChange={(e) => setPage({ ...page, slug: e.target.value })} placeholder="url-slug" data-testid="page-slug-input" />
-                        <input type="color" value={page.theme?.primary_color || "#FF562D"} onChange={(e) => setPage({ ...page, theme: { ...page.theme, primary_color: e.target.value } })} className="w-full h-9 cursor-pointer" data-testid="page-color" />
+                        <input type="color" value={page.theme?.primary_color || "#2563EB"} onChange={(e) => setPage({ ...page, theme: { ...page.theme, primary_color: e.target.value } })} className="w-full h-9 cursor-pointer" data-testid="page-color" />
                     </div>
 
                     <div className="zm-card">
-                        <div className="flex items-center justify-between p-3 border-b border-[#EDE5D4]">
+                        <div className="flex items-center justify-between p-3 border-b border-[#E2E8F0]">
                             <p className="zm-section-label">// Sections</p>
-                            <button onClick={() => setShowAdd(!showAdd)} className="text-xs uppercase tracking-[0.1em] font-bold text-[#FF562D] hover:underline flex items-center gap-1" data-testid="add-section">
+                            <button onClick={() => setShowAdd(!showAdd)} className="text-xs uppercase tracking-[0.1em] font-bold text-[#2563EB] hover:underline flex items-center gap-1" data-testid="add-section">
                                 <Plus size={11} weight="bold" /> Add
                             </button>
                         </div>
                         {showAdd && (
-                            <div className="p-3 border-b border-[#EDE5D4] bg-[#FAF7F2] grid grid-cols-2 gap-1.5" data-testid="section-type-picker">
+                            <div className="p-3 border-b border-[#E2E8F0] bg-[#F8FAFC] grid grid-cols-2 gap-1.5" data-testid="section-type-picker">
                                 {SECTION_TYPES.map((t) => (
-                                    <button key={t.id} onClick={() => addSection(t.id)} className="px-2 py-1.5 text-xs bg-white border border-[#EDE5D4] hover:border-[#FF562D] hover:text-[#FF562D] uppercase tracking-[0.05em] font-bold" data-testid={`add-${t.id}`}>
+                                    <button key={t.id} onClick={() => addSection(t.id)} className="px-2 py-1.5 text-xs bg-white border border-[#E2E8F0] hover:border-[#2563EB] hover:text-[#2563EB] uppercase tracking-[0.05em] font-bold" data-testid={`add-${t.id}`}>
                                         {t.label}
                                     </button>
                                 ))}
@@ -164,8 +164,8 @@ export default function LandingPageEditor() {
                                     key={i}
                                     onClick={() => setActiveIdx(i)}
                                     data-testid={`section-${i}`}
-                                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm border-b border-[#EDE5D4] last:border-b-0 ${
-                                        activeIdx === i ? "bg-[#0E0F11] text-white" : "bg-white hover:bg-[#FAF7F2]"
+                                    className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm border-b border-[#E2E8F0] last:border-b-0 ${
+                                        activeIdx === i ? "bg-[#0F172A] text-white" : "bg-white hover:bg-[#F8FAFC]"
                                     }`}
                                 >
                                     <span className="font-mono text-[10px] opacity-60 w-5">{String(i + 1).padStart(2, "0")}</span>
@@ -178,7 +178,7 @@ export default function LandingPageEditor() {
 
                 {/* CENTER: Live preview */}
                 <div className="zm-card overflow-hidden">
-                    <div className="bg-[#FAF7F2] px-4 py-2 border-b border-[#EDE5D4] flex items-center gap-2">
+                    <div className="bg-[#F8FAFC] px-4 py-2 border-b border-[#E2E8F0] flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-[#E32636]"></span>
                         <span className="w-2 h-2 rounded-full bg-[#F59E0B]"></span>
                         <span className="w-2 h-2 rounded-full bg-[#10B981]"></span>
@@ -214,13 +214,13 @@ export default function LandingPageEditor() {
 function SectionEditor({ section, onUpdate, onMove, onRemove, onAIGenerate, generating, canMoveUp, canMoveDown }) {
     return (
         <div className="zm-card sticky top-6">
-            <div className="p-4 border-b border-[#EDE5D4] flex items-center justify-between">
+            <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between">
                 <p className="zm-section-label capitalize">// {section.type.replace("_", " ")}</p>
                 <div className="flex gap-1">
-                    <button onClick={() => onMove(-1)} disabled={!canMoveUp} className="p-1.5 hover:bg-[#FAF7F2] disabled:opacity-30" data-testid="section-up">
+                    <button onClick={() => onMove(-1)} disabled={!canMoveUp} className="p-1.5 hover:bg-[#F8FAFC] disabled:opacity-30" data-testid="section-up">
                         <ArrowUp size={12} weight="bold" />
                     </button>
-                    <button onClick={() => onMove(1)} disabled={!canMoveDown} className="p-1.5 hover:bg-[#FAF7F2] disabled:opacity-30" data-testid="section-down">
+                    <button onClick={() => onMove(1)} disabled={!canMoveDown} className="p-1.5 hover:bg-[#F8FAFC] disabled:opacity-30" data-testid="section-down">
                         <ArrowDown size={12} weight="bold" />
                     </button>
                     <button onClick={onRemove} className="p-1.5 hover:bg-[#FEE2E2] hover:text-[#E32636]" data-testid="section-remove">
@@ -267,7 +267,7 @@ function SectionEditor({ section, onUpdate, onMove, onRemove, onAIGenerate, gene
                         <label className="zm-label">Items</label>
                         <div className="space-y-2">
                             {section.items.map((it, i) => (
-                                <div key={i} className="bg-[#FAF7F2] p-3 space-y-2 relative">
+                                <div key={i} className="bg-[#F8FAFC] p-3 space-y-2 relative">
                                     <button onClick={() => onUpdate({ items: section.items.filter((_, j) => j !== i) })} className="absolute top-1.5 right-1.5 text-[#71717A] hover:text-[#E32636]"><X size={12} weight="bold" /></button>
                                     {Object.keys(it).map((k) => (
                                         <input key={k} className="zm-input text-xs" placeholder={k} value={it[k] || ""} onChange={(e) => {
@@ -302,7 +302,7 @@ function SectionEditor({ section, onUpdate, onMove, onRemove, onAIGenerate, gene
                                         onClick={() => onUpdate({
                                             fields: on ? section.fields.filter((x) => x !== f) : [...section.fields, f]
                                         })}
-                                        className={`px-2 py-1.5 text-xs uppercase tracking-[0.05em] font-bold border ${on ? "bg-[#FF562D] border-[#FF562D] text-white" : "bg-white border-[#EDE5D4] text-[#71717A]"}`}
+                                        className={`px-2 py-1.5 text-xs uppercase tracking-[0.05em] font-bold border ${on ? "bg-[#2563EB] border-[#2563EB] text-white" : "bg-white border-[#E2E8F0] text-[#71717A]"}`}
                                         data-testid={`field-toggle-${f}`}
                                     >
                                         {f}

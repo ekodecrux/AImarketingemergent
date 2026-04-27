@@ -54,7 +54,7 @@ export default function Approvals() {
                         {items.map((a) => (
                             <div key={a.id} className="zm-card" data-testid={`approval-${a.id}`}>
                                 <div className="grid lg:grid-cols-[1fr_auto] gap-0">
-                                    <div className="p-6 border-b lg:border-b-0 lg:border-r border-[#EDE5D4]">
+                                    <div className="p-6 border-b lg:border-b-0 lg:border-r border-[#E2E8F0]">
                                         <div className="flex items-center gap-3 mb-2">
                                             <span className="zm-badge bg-[#F59E0B] text-white">PENDING</span>
                                             <span className="text-xs uppercase tracking-[0.2em] text-[#71717A] font-bold">{a.channel}</span>
@@ -62,7 +62,7 @@ export default function Approvals() {
                                         <h3 className="font-display text-xl font-bold tracking-tight mb-1">
                                             {a.campaign?.name || "Campaign"}
                                         </h3>
-                                        {a.subject && <p className="text-sm text-[#71717A] mb-3">Subject: <span className="font-semibold text-[#0E0F11]">{a.subject}</span></p>}
+                                        {a.subject && <p className="text-sm text-[#71717A] mb-3">Subject: <span className="font-semibold text-[#0F172A]">{a.subject}</span></p>}
                                         {editing === a.id ? (
                                             <textarea
                                                 className="zm-input font-mono text-xs mt-3"
@@ -72,7 +72,7 @@ export default function Approvals() {
                                                 data-testid={`edit-content-${a.id}`}
                                             />
                                         ) : (
-                                            <pre className="bg-[#FAF7F2] border-l-2 border-[#0E0F11] p-4 text-xs whitespace-pre-wrap font-mono text-[#0E0F11]">
+                                            <pre className="bg-[#F8FAFC] border-l-2 border-[#0F172A] p-4 text-xs whitespace-pre-wrap font-mono text-[#0F172A]">
 {a.content}
                                             </pre>
                                         )}

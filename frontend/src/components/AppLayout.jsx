@@ -50,12 +50,12 @@ export default function AppLayout() {
     const handleLogout = async () => { await logout(); navigate("/login"); };
 
     return (
-        <div className="min-h-screen flex bg-[#FAF7F2]">
-            <aside className="w-64 bg-white border-r border-[#EDE5D4] flex flex-col">
-                <div className="px-6 py-5 border-b border-[#EDE5D4]">
+        <div className="min-h-screen flex bg-[#F8FAFC]">
+            <aside className="w-64 bg-white border-r border-[#E2E8F0] flex flex-col">
+                <div className="px-6 py-5 border-b border-[#E2E8F0]">
                     <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 bg-[#0E0F11] flex items-center justify-center rounded-xl">
-                            <Sparkle size={18} weight="fill" className="text-[#FF562D]" />
+                        <div className="w-9 h-9 bg-[#0F172A] flex items-center justify-center rounded-xl">
+                            <Sparkle size={18} weight="fill" className="text-[#2563EB]" />
                         </div>
                         <h1 className="font-display text-xl font-black tracking-tight">ZeroMark</h1>
                     </div>
@@ -74,15 +74,15 @@ export default function AppLayout() {
                                     className={({ isActive }) =>
                                         `flex items-center gap-3 px-3 py-2 text-sm font-semibold transition-colors rounded-xl ${
                                             isActive
-                                                ? "bg-[#0E0F11] text-white"
-                                                : "text-[#52525B] hover:bg-[#FAF7F2] hover:text-[#0E0F11]"
+                                                ? "bg-[#0F172A] text-white"
+                                                : "text-[#52525B] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
                                         }`
                                     }
                                 >
                                     <item.icon size={16} weight="bold" />
                                     <span className="flex-1">{item.label}</span>
                                     {item.badge && (
-                                        <span className="text-[8px] font-bold uppercase tracking-wider bg-[#FF562D] text-white px-1.5 py-0.5 rounded-full">
+                                        <span className="text-[8px] font-bold uppercase tracking-wider bg-[#2563EB] text-white px-1.5 py-0.5 rounded-full">
                                             {item.badge}
                                         </span>
                                     )}
@@ -92,7 +92,7 @@ export default function AppLayout() {
                     ))}
                 </nav>
 
-                <div className="border-t border-[#EDE5D4] p-4">
+                <div className="border-t border-[#E2E8F0] p-4">
                     <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0 flex-1">
                             <p className="text-sm font-bold truncate" data-testid="user-name">
@@ -104,7 +104,7 @@ export default function AppLayout() {
                         <button
                             onClick={handleLogout}
                             data-testid="logout-button"
-                            className="p-2 hover:bg-[#FAF7F2] text-[#71717A] hover:text-[#FF562D] transition-colors rounded-xl"
+                            className="p-2 hover:bg-[#F8FAFC] text-[#71717A] hover:text-[#2563EB] transition-colors rounded-xl"
                             title="Logout"
                         >
                             <SignOut size={18} weight="bold" />

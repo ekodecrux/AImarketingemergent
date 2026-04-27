@@ -90,7 +90,7 @@ export default function LeadDetail() {
                             <span className="text-sm text-[#71717A]">/ 100</span>
                         </div>
                         {lead.score_reason && (
-                            <div className="mt-4 p-3 bg-[#FAF7F2] border-l-2 border-[#FF562D]">
+                            <div className="mt-4 p-3 bg-[#F8FAFC] border-l-2 border-[#2563EB]">
                                 <p className="text-xs text-[#71717A] leading-relaxed">{lead.score_reason}</p>
                             </div>
                         )}
@@ -111,7 +111,7 @@ export default function LeadDetail() {
                 {/* Right: communications + AI reply */}
                 <div className="lg:col-span-2 space-y-6">
                     <div className="zm-card">
-                        <div className="flex items-center justify-between p-6 border-b border-[#EDE5D4]">
+                        <div className="flex items-center justify-between p-6 border-b border-[#E2E8F0]">
                             <div>
                                 <p className="zm-section-label">// Conversation</p>
                                 <h3 className="font-display text-xl font-bold tracking-tight mt-1">Communication history</h3>
@@ -127,7 +127,7 @@ export default function LeadDetail() {
                         </div>
 
                         {showLog && (
-                            <form onSubmit={submitLog} className="p-6 border-b border-[#EDE5D4] bg-[#FAF7F2] space-y-3" data-testid="log-comm-form">
+                            <form onSubmit={submitLog} className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC] space-y-3" data-testid="log-comm-form">
                                 <div className="grid grid-cols-2 gap-3">
                                     <select value={logForm.direction} onChange={(e) => setLogForm({ ...logForm, direction: e.target.value })} className="zm-input">
                                         <option value="INBOUND">Inbound</option>
@@ -143,14 +143,14 @@ export default function LeadDetail() {
                         )}
 
                         {showAI && (
-                            <div className="p-6 border-b border-[#EDE5D4] bg-[#FAF7F2] space-y-3" data-testid="ai-reply-panel">
+                            <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC] space-y-3" data-testid="ai-reply-panel">
                                 <p className="zm-label mb-1">Inbound message from lead</p>
                                 <textarea value={aiInput} onChange={(e) => setAiInput(e.target.value)} rows={3} className="zm-input" placeholder="Paste what they said…" />
                                 <button onClick={draftReply} disabled={aiLoading} className="zm-btn-dark w-full" data-testid="ai-draft-reply">
                                     <Sparkle size={12} weight="fill" /> {aiLoading ? "Drafting…" : "Draft reply with Groq"}
                                 </button>
                                 {aiReply && (
-                                    <div className="bg-white border-l-2 border-[#FF562D] p-3">
+                                    <div className="bg-white border-l-2 border-[#2563EB] p-3">
                                         <p className="zm-section-label mb-1">// Suggested reply</p>
                                         <p className="text-sm whitespace-pre-wrap leading-relaxed">{aiReply}</p>
                                     </div>
@@ -165,20 +165,20 @@ export default function LeadDetail() {
                                 const Icon = CHANNEL_ICON[c.channel] || EnvelopeSimple;
                                 const isInbound = c.direction === "INBOUND";
                                 return (
-                                    <div key={c.id} className={`p-5 border-b border-[#EDE5D4] last:border-b-0 flex gap-3 ${isInbound ? "bg-[#FAF7F2]" : "bg-white"}`}>
-                                        <div className="w-8 h-8 bg-white border border-[#EDE5D4] flex items-center justify-center flex-shrink-0">
+                                    <div key={c.id} className={`p-5 border-b border-[#E2E8F0] last:border-b-0 flex gap-3 ${isInbound ? "bg-[#F8FAFC]" : "bg-white"}`}>
+                                        <div className="w-8 h-8 bg-white border border-[#E2E8F0] flex items-center justify-center flex-shrink-0">
                                             <Icon size={14} weight="bold" />
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="zm-badge bg-[#0E0F11] text-white inline-flex items-center gap-1">
+                                                <span className="zm-badge bg-[#0F172A] text-white inline-flex items-center gap-1">
                                                     {isInbound ? <ArrowDown size={10} weight="bold" /> : <ArrowUp size={10} weight="bold" />}
                                                     {c.direction}
                                                 </span>
                                                 <span className="text-[10px] uppercase tracking-[0.2em] text-[#71717A] font-bold">{c.channel}</span>
                                                 <span className="text-[10px] text-[#A1A1AA] ml-auto">{new Date(c.sent_at).toLocaleString()}</span>
                                             </div>
-                                            <p className="text-sm whitespace-pre-wrap leading-relaxed text-[#0E0F11]">{c.content || "(campaign send)"}</p>
+                                            <p className="text-sm whitespace-pre-wrap leading-relaxed text-[#0F172A]">{c.content || "(campaign send)"}</p>
                                         </div>
                                     </div>
                                 );
@@ -193,7 +193,7 @@ export default function LeadDetail() {
 
 function Field({ label, value }) {
     return (
-        <div className="flex justify-between gap-3 border-b border-[#FAF7F2] pb-2 last:border-b-0 last:pb-0">
+        <div className="flex justify-between gap-3 border-b border-[#F8FAFC] pb-2 last:border-b-0 last:pb-0">
             <span className="text-xs uppercase tracking-[0.15em] text-[#71717A] font-bold">{label}</span>
             <span className="text-sm text-right break-all">{value}</span>
         </div>

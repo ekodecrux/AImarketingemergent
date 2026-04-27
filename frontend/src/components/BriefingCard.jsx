@@ -18,7 +18,7 @@ export default function BriefingCard({ initial }) {
     };
 
     return (
-        <div className="zm-card bg-[#0E0F11] text-white border-0" data-testid="briefing-card">
+        <div className="zm-card bg-[#0F172A] text-white border-0" data-testid="briefing-card">
             <div className="p-6 border-b border-white/10 flex items-start justify-between">
                 <div>
                     <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold">// Daily AI briefing</p>
@@ -36,7 +36,7 @@ export default function BriefingCard({ initial }) {
                 {!briefing ? (
                     <div className="py-8 text-center">
                         <p className="text-sm text-white/60 mb-4">No briefing yet. One click to get your first AI growth report.</p>
-                        <button onClick={generate} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2 bg-white text-[#0E0F11] text-xs uppercase tracking-[0.15em] font-bold hover:bg-[#FAF7F2]" data-testid="briefing-generate">
+                        <button onClick={generate} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2 bg-white text-[#0F172A] text-xs uppercase tracking-[0.15em] font-bold hover:bg-[#F8FAFC]" data-testid="briefing-generate">
                             <Sparkle size={12} weight="fill" /> Generate briefing
                         </button>
                     </div>

@@ -11,7 +11,7 @@ import {
     Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
 
-const SOURCE_COLORS = ["#FF562D", "#0FB39A", "#0E0F11", "#FFD300", "#A855F7"];
+const SOURCE_COLORS = ["#2563EB", "#10B981", "#0F172A", "#F59E0B", "#A855F7"];
 
 export default function Analytics() {
     const [live, setLive] = useState(null);
@@ -67,7 +67,7 @@ export default function Analytics() {
     return (
         <div data-testid="analytics-page">
             <PageHeader
-                eyebrow={<><span className="w-2 h-2 inline-block rounded-full bg-[#0FB39A] animate-pulse mr-2"></span>Live · auto-refreshes every 30s</>}
+                eyebrow={<><span className="w-2 h-2 inline-block rounded-full bg-[#10B981] animate-pulse mr-2"></span>Live · auto-refreshes every 30s</>}
                 title="Real-time Analytics"
                 subtitle="Pipeline value, monthly revenue and target pace at a glance."
                 action={
@@ -79,12 +79,12 @@ export default function Analytics() {
             <div className="px-8 py-6 space-y-6">
                 {/* Live counters */}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4" data-testid="live-counters">
-                    <Counter icon={Pulse} label="Last hour" value={live.live.leads_last_hour} sub="leads" color="#FF562D" highlight />
-                    <Counter icon={Users} label="Today" value={live.live.leads_today} sub="leads" color="#0E0F11" />
-                    <Counter icon={Users} label="This month" value={live.live.leads_this_month} sub="leads" color="#0FB39A" />
-                    <Counter icon={Target} label="Converted" value={live.live.converted_this_month} sub="this month" color="#FFD300" />
-                    <Counter icon={CurrencyDollar} label="Revenue" value={fmt(live.live.revenue_this_month)} sub="this month" color="#FF562D" />
-                    <Counter icon={ChartLineUp} label="Pipeline" value={fmt(live.live.pipeline_value)} sub="estimated" color="#0E0F11" />
+                    <Counter icon={Pulse} label="Last hour" value={live.live.leads_last_hour} sub="leads" color="#2563EB" highlight />
+                    <Counter icon={Users} label="Today" value={live.live.leads_today} sub="leads" color="#0F172A" />
+                    <Counter icon={Users} label="This month" value={live.live.leads_this_month} sub="leads" color="#10B981" />
+                    <Counter icon={Target} label="Converted" value={live.live.converted_this_month} sub="this month" color="#F59E0B" />
+                    <Counter icon={CurrencyDollar} label="Revenue" value={fmt(live.live.revenue_this_month)} sub="this month" color="#2563EB" />
+                    <Counter icon={ChartLineUp} label="Pipeline" value={fmt(live.live.pipeline_value)} sub="estimated" color="#0F172A" />
                 </div>
 
                 {/* Target progress + Guarantee */}
@@ -98,8 +98,8 @@ export default function Analytics() {
                                     {live.target.on_track === null
                                         ? "Set a target to track guaranteed leads"
                                         : live.target.on_track
-                                            ? <span className="text-[#0FB39A] font-semibold">On track to hit target this month</span>
-                                            : <span className="text-[#FF562D] font-semibold">Forecasted to miss target — increase paid budget?</span>}
+                                            ? <span className="text-[#10B981] font-semibold">On track to hit target this month</span>
+                                            : <span className="text-[#2563EB] font-semibold">Forecasted to miss target — increase paid budget?</span>}
                                 </p>
                             </div>
                             <button onClick={() => setEditing(!editing)} className="zm-btn-secondary text-xs" data-testid="edit-target-btn">
@@ -108,7 +108,7 @@ export default function Analytics() {
                         </div>
 
                         {editing ? (
-                            <div className="grid sm:grid-cols-2 gap-4 bg-[#FAF7F2] p-5 rounded-2xl border border-[#EDE5D4]" data-testid="target-edit-form">
+                            <div className="grid sm:grid-cols-2 gap-4 bg-[#F8FAFC] p-5 rounded-2xl border border-[#E2E8F0]" data-testid="target-edit-form">
                                 <div>
                                     <label className="zm-label">Monthly lead target</label>
                                     <input type="number" min="1" className="zm-input" value={form.monthly_lead_target}
@@ -121,18 +121,18 @@ export default function Analytics() {
                                         onChange={(e) => setForm({ ...form, avg_deal_value_usd: parseFloat(e.target.value) || 0 })}
                                         data-testid="input-avg-deal-value" />
                                 </div>
-                                <div className="sm:col-span-2 flex items-center gap-3 bg-white rounded-xl px-4 py-3 border border-[#EDE5D4]">
+                                <div className="sm:col-span-2 flex items-center gap-3 bg-white rounded-xl px-4 py-3 border border-[#E2E8F0]">
                                     <button
                                         type="button"
                                         onClick={() => setForm({ ...form, guarantee_enabled: !form.guarantee_enabled })}
-                                        className={`relative w-11 h-6 rounded-full transition-colors ${form.guarantee_enabled ? "bg-[#FF562D]" : "bg-[#EDE5D4]"}`}
+                                        className={`relative w-11 h-6 rounded-full transition-colors ${form.guarantee_enabled ? "bg-[#2563EB]" : "bg-[#E2E8F0]"}`}
                                         data-testid="input-guarantee-enabled"
                                         aria-pressed={form.guarantee_enabled}
                                     >
                                         <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${form.guarantee_enabled ? "translate-x-5" : ""}`}></span>
                                     </button>
                                     <label onClick={() => setForm({ ...form, guarantee_enabled: !form.guarantee_enabled })} className="text-sm font-semibold cursor-pointer flex items-center gap-1.5 select-none">
-                                        <ShieldCheck size={14} weight="fill" className="text-[#FF562D]" />
+                                        <ShieldCheck size={14} weight="fill" className="text-[#2563EB]" />
                                         Enable lead guarantee terms
                                     </label>
                                 </div>
@@ -170,11 +170,11 @@ export default function Analytics() {
                                     isCurrency
                                 />
                                 {live.target.guarantee_enabled && live.target.guarantee_terms && (
-                                    <div className="mt-4 bg-[#FFE6DC] rounded-2xl p-4 flex gap-3">
-                                        <ShieldCheck size={18} weight="fill" className="text-[#FF562D] mt-0.5 shrink-0" />
+                                    <div className="mt-4 bg-[#DBEAFE] rounded-2xl p-4 flex gap-3">
+                                        <ShieldCheck size={18} weight="fill" className="text-[#2563EB] mt-0.5 shrink-0" />
                                         <div>
-                                            <p className="text-xs uppercase tracking-[0.12em] font-bold text-[#FF562D] mb-1">Lead Guarantee Active</p>
-                                            <p className="text-sm text-[#0E0F11]">{live.target.guarantee_terms}</p>
+                                            <p className="text-xs uppercase tracking-[0.12em] font-bold text-[#2563EB] mb-1">Lead Guarantee Active</p>
+                                            <p className="text-sm text-[#0F172A]">{live.target.guarantee_terms}</p>
                                         </div>
                                     </div>
                                 )}
@@ -183,9 +183,9 @@ export default function Analytics() {
                     </div>
 
                     {/* Forecast card */}
-                    <div className="zm-card p-7 bg-[#0E0F11] text-white" data-testid="forecast-card">
+                    <div className="zm-card p-7 bg-[#0F172A] text-white" data-testid="forecast-card">
                         <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/60 mb-1">// Month forecast</p>
-                        <p className="font-display text-5xl font-black tracking-tighter mt-3 text-[#FF562D]">{live.target.forecast_leads}</p>
+                        <p className="font-display text-5xl font-black tracking-tighter mt-3 text-[#2563EB]">{live.target.forecast_leads}</p>
                         <p className="text-xs text-white/70 font-semibold uppercase tracking-wider mt-1">Projected leads</p>
 
                         <div className="my-5 h-px bg-white/10"></div>
@@ -196,7 +196,7 @@ export default function Analytics() {
                         <div className="my-5 h-px bg-white/10"></div>
 
                         <div className="flex items-center gap-2">
-                            <TrendUp size={16} weight="bold" className="text-[#FF562D]" />
+                            <TrendUp size={16} weight="bold" className="text-[#2563EB]" />
                             <p className="text-xs">Updates in real time as new leads come in</p>
                         </div>
                     </div>
@@ -215,18 +215,18 @@ export default function Analytics() {
                             <AreaChart data={live.charts.hourly_leads_24h}>
                                 <defs>
                                     <linearGradient id="leadgrad" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#FF562D" stopOpacity={0.45} />
-                                        <stop offset="100%" stopColor="#FF562D" stopOpacity={0} />
+                                        <stop offset="0%" stopColor="#2563EB" stopOpacity={0.45} />
+                                        <stop offset="100%" stopColor="#2563EB" stopOpacity={0} />
                                     </linearGradient>
                                 </defs>
-                                <CartesianGrid stroke="#EDE5D4" strokeDasharray="3 3" vertical={false} />
-                                <XAxis dataKey="hour" tick={{ fontSize: 10, fill: "#71717A" }} stroke="#EDE5D4" interval={3} />
-                                <YAxis tick={{ fontSize: 10, fill: "#71717A" }} stroke="#EDE5D4" allowDecimals={false} />
+                                <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="hour" tick={{ fontSize: 10, fill: "#71717A" }} stroke="#E2E8F0" interval={3} />
+                                <YAxis tick={{ fontSize: 10, fill: "#71717A" }} stroke="#E2E8F0" allowDecimals={false} />
                                 <Tooltip
-                                    contentStyle={{ background: "#0E0F11", border: "none", borderRadius: 12, fontSize: 12, color: "#fff" }}
-                                    cursor={{ fill: "rgba(255,86,45,0.05)" }}
+                                    contentStyle={{ background: "#0F172A", border: "none", borderRadius: 12, fontSize: 12, color: "#fff" }}
+                                    cursor={{ fill: "rgba(37,99,235,0.05)" }}
                                 />
-                                <Area type="monotone" dataKey="count" stroke="#FF562D" strokeWidth={2.5} fill="url(#leadgrad)" />
+                                <Area type="monotone" dataKey="count" stroke="#2563EB" strokeWidth={2.5} fill="url(#leadgrad)" />
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>
@@ -247,7 +247,7 @@ export default function Analytics() {
                                                 <span>{s.name}</span>
                                                 <span>{s.value} <span className="text-[#A1A1AA]">({pct}%)</span></span>
                                             </div>
-                                            <div className="h-2 bg-[#FAF7F2] rounded-full overflow-hidden">
+                                            <div className="h-2 bg-[#F8FAFC] rounded-full overflow-hidden">
                                                 <div className="h-full rounded-full" style={{ width: `${pct}%`, background: SOURCE_COLORS[i % SOURCE_COLORS.length] }}></div>
                                             </div>
                                         </div>
@@ -266,22 +266,22 @@ export default function Analytics() {
                                 <p className="zm-section-label">// Revenue trend</p>
                                 <h3 className="font-display text-2xl font-black tracking-tight mt-1">Last 6 months</h3>
                             </div>
-                            <span className="zm-badge bg-[#FFE6DC] text-[#FF562D]">
+                            <span className="zm-badge bg-[#DBEAFE] text-[#2563EB]">
                                 <Sparkle size={10} weight="fill" className="mr-1" /> Auto-tracked
                             </span>
                         </div>
                         <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={revenue}>
-                                <CartesianGrid stroke="#EDE5D4" strokeDasharray="3 3" vertical={false} />
-                                <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#52525B" }} stroke="#EDE5D4" />
-                                <YAxis tick={{ fontSize: 11, fill: "#52525B" }} stroke="#EDE5D4" />
+                                <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#52525B" }} stroke="#E2E8F0" />
+                                <YAxis tick={{ fontSize: 11, fill: "#52525B" }} stroke="#E2E8F0" />
                                 <Tooltip
-                                    contentStyle={{ background: "#0E0F11", border: "none", borderRadius: 12, fontSize: 12, color: "#fff" }}
-                                    cursor={{ fill: "rgba(255,86,45,0.05)" }}
+                                    contentStyle={{ background: "#0F172A", border: "none", borderRadius: 12, fontSize: 12, color: "#fff" }}
+                                    cursor={{ fill: "rgba(37,99,235,0.05)" }}
                                 />
                                 <Bar dataKey="revenue" radius={[8, 8, 0, 0]}>
                                     {revenue.map((_, i) => (
-                                        <Cell key={i} fill={i === revenue.length - 1 ? "#FF562D" : "#0E0F11"} />
+                                        <Cell key={i} fill={i === revenue.length - 1 ? "#2563EB" : "#0F172A"} />
                                     ))}
                                 </Bar>
                             </BarChart>
@@ -296,10 +296,10 @@ export default function Analytics() {
 function Counter({ icon: Icon, label, value, sub, color, highlight }) {
     return (
         <div
-            className={`zm-card p-5 relative overflow-hidden ${highlight ? "ring-2 ring-[#FF562D]" : ""}`}
+            className={`zm-card p-5 relative overflow-hidden ${highlight ? "ring-2 ring-[#2563EB]" : ""}`}
             data-testid={`counter-${label.toLowerCase().replace(/\s+/g, "-")}`}
         >
-            {highlight && <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#FF562D] animate-pulse"></span>}
+            {highlight && <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#2563EB] animate-pulse"></span>}
             <Icon size={18} weight="fill" style={{ color }} />
             <p className="font-display text-3xl font-black tracking-tighter mt-2">{value}</p>
             <p className="text-[10px] uppercase tracking-[0.12em] text-[#71717A] font-bold mt-1">{label} · {sub}</p>
@@ -319,26 +319,26 @@ function ProgressBar({ label, current, target, forecast, pct, suffix, isCurrency
                     <span className="font-display text-3xl font-black tracking-tighter">{fmtv(current)}</span>
                     <span className="text-sm text-[#71717A] font-semibold ml-2">/ {fmtv(target)} {label.toLowerCase()}</span>
                 </div>
-                <span className={`zm-badge ${onTrack ? "bg-[#0FB39A] text-white" : "bg-[#FFE6DC] text-[#FF562D]"}`}>
+                <span className={`zm-badge ${onTrack ? "bg-[#10B981] text-white" : "bg-[#DBEAFE] text-[#2563EB]"}`}>
                     {clampedPct}% achieved
                 </span>
             </div>
-            <div className="relative h-3 bg-[#FAF7F2] rounded-full overflow-hidden border border-[#EDE5D4]">
-                <div className="absolute h-full bg-[#FF562D] rounded-full" style={{ width: `${clampedPct}%` }}></div>
+            <div className="relative h-3 bg-[#F8FAFC] rounded-full overflow-hidden border border-[#E2E8F0]">
+                <div className="absolute h-full bg-[#2563EB] rounded-full" style={{ width: `${clampedPct}%` }}></div>
                 {target > 0 && (
                     <div
-                        className="absolute top-0 h-full border-r-2 border-dashed border-[#0E0F11] opacity-60"
+                        className="absolute top-0 h-full border-r-2 border-dashed border-[#0F172A] opacity-60"
                         style={{ left: `${Math.min(100, forecastPct)}%` }}
                         title={`Forecast: ${fmtv(forecast)}`}
                     ></div>
                 )}
             </div>
             <p className="text-[11px] text-[#71717A] font-semibold mt-1.5">
-                Forecast end-of-month: <span className="text-[#0E0F11] font-bold">{fmtv(forecast)}</span>
+                Forecast end-of-month: <span className="text-[#0F172A] font-bold">{fmtv(forecast)}</span>
                 {target > 0 && (
                     onTrack
-                        ? <span className="text-[#0FB39A] ml-2">✓ on track</span>
-                        : <span className="text-[#FF562D] ml-2">⚠ behind pace</span>
+                        ? <span className="text-[#10B981] ml-2">✓ on track</span>
+                        : <span className="text-[#2563EB] ml-2">⚠ behind pace</span>
                 )}
             </p>
         </div>

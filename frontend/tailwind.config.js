@@ -6,14 +6,14 @@ module.exports = {
         extend: {
             fontFamily: {
                 sans: ['"Source Sans 3"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'system-ui', 'sans-serif'],
-                display: ['"Fraunces"', '"Source Sans 3"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'system-ui', 'serif'],
+                display: ['"Source Sans 3"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'system-ui', 'sans-serif'],
             },
             borderRadius: {
-                lg: '12px',
-                md: '8px',
-                sm: '6px',
-                '2xl': '20px',
-                '3xl': '28px',
+                lg: '8px',
+                md: '6px',
+                sm: '4px',
+                '2xl': '12px',
+                '3xl': '16px',
             },
             colors: {
                 background: 'hsl(var(--background))',
@@ -29,23 +29,19 @@ module.exports = {
                 input: 'hsl(var(--input))',
                 ring: 'hsl(var(--ring))',
                 brand: {
-                    coral: '#FF562D',
-                    coralDark: '#E04416',
-                    coralLight: '#FFE6DC',
-                    ink: '#0E0F11',
-                    cream: '#FAF7F2',
-                    sand: '#EDE5D4',
-                    teal: '#0FB39A',
-                    yellow: '#FFD300',
+                    blue: '#2563EB',
+                    blueDark: '#1D4ED8',
+                    blueLight: '#DBEAFE',
+                    ink: '#0F172A',
+                    bg: '#F8FAFC',
+                    border: '#E2E8F0',
+                    success: '#10B981',
+                    amber: '#F59E0B',
                 },
                 chart: {
                     '1': 'hsl(var(--chart-1))', '2': 'hsl(var(--chart-2))', '3': 'hsl(var(--chart-3))',
                     '4': 'hsl(var(--chart-4))', '5': 'hsl(var(--chart-5))'
                 }
-            },
-            boxShadow: {
-                'brand-pop': '0 2px 0 0 #0E0F11',
-                'brand-pop-lg': '0 4px 0 0 #0E0F11',
             },
         }
     },

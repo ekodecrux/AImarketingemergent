@@ -47,7 +47,7 @@ function App() {
         <BrowserRouter>
             <AuthProvider>
                 <Toaster position="top-right" toastOptions={{
-                    style: { background: "#0E0F11", color: "#fff", border: "none", borderRadius: 12, fontFamily: "Source Sans 3" },
+                    style: { background: "#0F172A", color: "#fff", border: "none", borderRadius: 12, fontFamily: "Source Sans 3" },
                 }} />
                 <Routes>
                     <Route path="/" element={<Landing />} />

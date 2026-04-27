@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700;800;900&family=Fraunces:opsz,wght@9..144,700;9..144,800;9..144,900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700;800;900&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -9,44 +9,44 @@ html, body {
     font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background: #FAF7F2;
-    color: #0E0F11;
+    background: #F8FAFC;
+    color: #0F172A;
     font-feature-settings: "ss01", "ss03";
 }
 
 .font-display {
-    font-family: 'Fraunces', 'Source Sans 3', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, serif;
-    letter-spacing: -0.02em;
+    font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -0.018em;
     font-weight: 800;
 }
 
 @layer base {
     :root {
-        --background: 36 33% 96%;
-        --foreground: 220 8% 6%;
+        --background: 210 40% 98%;
+        --foreground: 222 47% 11%;
         --card: 0 0% 100%;
-        --card-foreground: 220 8% 6%;
+        --card-foreground: 222 47% 11%;
         --popover: 0 0% 100%;
-        --popover-foreground: 220 8% 6%;
-        --primary: 14 100% 58%;
+        --popover-foreground: 222 47% 11%;
+        --primary: 221 83% 53%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 220 8% 6%;
+        --secondary: 222 47% 11%;
         --secondary-foreground: 0 0% 100%;
-        --muted: 36 20% 92%;
-        --muted-foreground: 220 6% 40%;
-        --accent: 36 25% 90%;
-        --accent-foreground: 220 8% 6%;
-        --destructive: 354 76% 52%;
+        --muted: 210 40% 96%;
+        --muted-foreground: 215 16% 47%;
+        --accent: 214 95% 93%;
+        --accent-foreground: 222 47% 11%;
+        --destructive: 0 84% 60%;
         --destructive-foreground: 0 0% 100%;
-        --border: 36 18% 86%;
-        --input: 36 18% 86%;
-        --ring: 14 100% 58%;
-        --chart-1: 14 100% 58%;
-        --chart-2: 220 8% 6%;
-        --chart-3: 38 92% 56%;
-        --chart-4: 174 62% 44%;
+        --border: 214 32% 91%;
+        --input: 214 32% 91%;
+        --ring: 221 83% 53%;
+        --chart-1: 221 83% 53%;
+        --chart-2: 222 47% 11%;
+        --chart-3: 38 92% 50%;
+        --chart-4: 158 64% 40%;
         --chart-5: 268 70% 60%;
-        --radius: 0.75rem;
+        --radius: 0.5rem;
     }
 }
 
@@ -55,34 +55,34 @@ html, body {
     body { @apply bg-background text-foreground; }
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #E2DAC9; border-radius: 6px; }
-    ::-webkit-scrollbar-thumb:hover { background: #C8BBA1; }
-    ::selection { background: #FF562D; color: #fff; }
+    ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 6px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+    ::selection { background: #2563EB; color: #fff; }
 }
 
 @layer components {
     .zm-btn {
-        @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold tracking-tight transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed rounded-full;
+        @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold tracking-tight transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed rounded-md;
     }
-    .zm-btn-primary { @apply zm-btn bg-[#FF562D] text-white hover:bg-[#E04416] shadow-[0_2px_0_0_#0E0F11] hover:shadow-[0_3px_0_0_#0E0F11] hover:-translate-y-px; }
-    .zm-btn-secondary { @apply zm-btn bg-white border-2 border-[#0E0F11] text-[#0E0F11] hover:bg-[#0E0F11] hover:text-white; }
-    .zm-btn-dark { @apply zm-btn bg-[#0E0F11] text-white hover:bg-[#27272A] shadow-[0_2px_0_0_#FF562D]; }
-    .zm-btn-destructive { @apply zm-btn bg-[#E32636] text-white hover:bg-[#B91C2C]; }
-    .zm-card { @apply bg-white border border-[#EDE5D4] rounded-2xl shadow-[0_1px_0_0_rgba(14,15,17,0.04)]; }
+    .zm-btn-primary { @apply zm-btn bg-[#2563EB] text-white hover:bg-[#1D4ED8] shadow-sm; }
+    .zm-btn-secondary { @apply zm-btn bg-white border border-[#E2E8F0] text-[#0F172A] hover:bg-[#F8FAFC] hover:border-[#CBD5E1] shadow-sm; }
+    .zm-btn-dark { @apply zm-btn bg-[#0F172A] text-white hover:bg-[#1E293B] shadow-sm; }
+    .zm-btn-destructive { @apply zm-btn bg-[#DC2626] text-white hover:bg-[#B91C1C]; }
+    .zm-card { @apply bg-white border border-[#E2E8F0] rounded-lg shadow-sm; }
     .zm-input {
-        @apply w-full px-4 py-2.5 text-sm bg-white border-2 border-[#EDE5D4] focus:outline-none focus:border-[#0E0F11] focus:ring-0 placeholder:text-[#A1A1AA] rounded-xl transition-colors;
+        @apply w-full px-3 py-2.5 text-sm bg-white border border-[#E2E8F0] focus:outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20 placeholder:text-[#94A3B8] rounded-md transition-colors;
         font-family: 'Source Sans 3', system-ui, sans-serif;
     }
     .zm-label {
-        @apply block text-xs font-bold uppercase tracking-[0.08em] text-[#52525B] mb-1.5;
+        @apply block text-xs font-bold uppercase tracking-[0.06em] text-[#475569] mb-1.5;
     }
     .zm-badge {
-        @apply inline-flex items-center px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em] rounded-full;
+        @apply inline-flex items-center px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] rounded;
     }
     .zm-section-label {
-        @apply text-[11px] font-bold uppercase tracking-[0.12em] text-[#71717A];
+        @apply text-[11px] font-bold uppercase tracking-[0.1em] text-[#64748B];
     }
     .zm-tag-pill {
-        @apply inline-flex items-center px-3 py-1 text-[11px] font-bold uppercase tracking-[0.08em] rounded-full bg-[#0E0F11] text-white;
+        @apply inline-flex items-center px-3 py-1 text-[11px] font-bold uppercase tracking-[0.06em] rounded-full bg-[#DBEAFE] text-[#1D4ED8];
     }
 }
