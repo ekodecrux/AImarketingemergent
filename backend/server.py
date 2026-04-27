@@ -2042,6 +2042,289 @@ async def get_briefing_prefs(user=Depends(get_current_user)):
     }
 
 
+# ---------- Public Landing Pages ----------
+DEFAULT_SECTIONS = {
+    "hero": {
+        "type": "hero", "headline": "Your headline here", "subheadline": "Your subheadline",
+        "cta_text": "Get started", "cta_link": "#form", "background_image": "",
+    },
+    "features": {
+        "type": "features", "heading": "Why us",
+        "items": [
+            {"title": "Fast", "desc": "Ship in minutes, not weeks.", "icon": "lightning"},
+            {"title": "Reliable", "desc": "99.9% uptime SLA.", "icon": "shield"},
+            {"title": "Simple", "desc": "Built for non-technical founders.", "icon": "sparkle"},
+        ],
+    },
+    "testimonial": {
+        "type": "testimonial", "quote": "This product changed how we work.",
+        "author": "Jane Doe", "role": "Founder", "company": "Acme Co",
+    },
+    "cta": {
+        "type": "cta", "heading": "Ready to start?",
+        "subheading": "Join hundreds of teams using us.",
+        "cta_text": "Start free trial", "cta_link": "#form",
+    },
+    "form": {
+        "type": "form", "heading": "Get in touch", "subheading": "We'll get back within 24 hours.",
+        "fields": ["name", "email", "phone", "company", "message"],
+        "submit_text": "Submit", "success_message": "Thanks — we'll be in touch soon.",
+    },
+    "faq": {
+        "type": "faq", "heading": "Frequently asked",
+        "items": [
+            {"q": "How does it work?", "a": "Sign up, set up, ship."},
+            {"q": "Is there a free trial?", "a": "Yes — 14 days."},
+        ],
+    },
+    "image_text": {
+        "type": "image_text", "heading": "Built for scale",
+        "body": "Describe your value here.",
+        "image": "", "position": "right",
+    },
+}
+
+
+class LandingPageIn(BaseModel):
+    title: str
+    slug: Optional[str] = None
+    sections: List[Dict[str, Any]] = []
+    theme: Optional[Dict[str, Any]] = None  # {primary_color, font}
+    published: bool = False
+    seo_title: Optional[str] = None
+    seo_description: Optional[str] = None
+
+
+def _slugify(text: str) -> str:
+    import re
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return s[:60] or secrets.token_urlsafe(6).lower().replace("_", "-")
+
+
+@api.get("/landing-pages")
+async def list_landing_pages(user=Depends(get_current_user)):
+    pages = await db.landing_pages.find({"user_id": ws(user)}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return {"pages": pages}
+
+
+@api.post("/landing-pages")
+async def create_landing_page(payload: LandingPageIn, user=Depends(get_current_user)):
+    pid = str(uuid.uuid4())
+    base_slug = payload.slug or _slugify(payload.title)
+    slug = base_slug
+    counter = 1
+    while await db.landing_pages.find_one({"slug": slug}):
+        counter += 1
+        slug = f"{base_slug}-{counter}"
+    sections = payload.sections or [DEFAULT_SECTIONS["hero"], DEFAULT_SECTIONS["features"], DEFAULT_SECTIONS["form"]]
+    doc = {
+        "id": pid,
+        "user_id": ws(user),
+        "title": payload.title,
+        "slug": slug,
+        "sections": sections,
+        "theme": payload.theme or {"primary_color": "#002EB8", "font": "Source Sans 3"},
+        "published": payload.published,
+        "seo_title": payload.seo_title or payload.title,
+        "seo_description": payload.seo_description or "",
+        "created_at": now_utc().isoformat(),
+        "view_count": 0,
+        "submission_count": 0,
+    }
+    await db.landing_pages.insert_one(doc)
+    doc.pop("_id", None)
+    return {"page": doc}
+
+
+@api.get("/landing-pages/{pid}")
+async def get_landing_page(pid: str, user=Depends(get_current_user)):
+    page = await db.landing_pages.find_one({"id": pid, "user_id": ws(user)}, {"_id": 0})
+    if not page:
+        raise HTTPException(status_code=404, detail="Landing page not found")
+    return {"page": page}
+
+
+@api.put("/landing-pages/{pid}")
+async def update_landing_page(pid: str, payload: LandingPageIn, user=Depends(get_current_user)):
+    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    update["updated_at"] = now_utc().isoformat()
+    # Slug uniqueness if changed
+    if payload.slug:
+        existing = await db.landing_pages.find_one({"slug": payload.slug, "id": {"$ne": pid}})
+        if existing:
+            raise HTTPException(status_code=400, detail="Slug already in use")
+    res = await db.landing_pages.update_one({"id": pid, "user_id": ws(user)}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Landing page not found")
+    page = await db.landing_pages.find_one({"id": pid}, {"_id": 0})
+    return {"page": page}
+
+
+@api.delete("/landing-pages/{pid}")
+async def delete_landing_page(pid: str, user=Depends(get_current_user)):
+    await db.landing_pages.delete_one({"id": pid, "user_id": ws(user)})
+    return {"success": True}
+
+
+class GenerateSectionIn(BaseModel):
+    section_type: str
+    goal: Optional[str] = None
+    tone: str = "professional"
+
+
+@api.post("/landing-pages/{pid}/ai-generate-section")
+async def ai_generate_section(pid: str, payload: GenerateSectionIn, user=Depends(get_current_user)):
+    await check_ai_rate_limit(user)
+    page = await db.landing_pages.find_one({"id": pid, "user_id": ws(user)}, {"_id": 0})
+    if not page:
+        raise HTTPException(status_code=404, detail="Landing page not found")
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+
+    biz_ctx = (
+        f"Business: {profile.get('business_name','')}\n"
+        f"Industry: {profile.get('industry','')}\n"
+        f"Target audience: {profile.get('target_audience','')}\n"
+        f"Description: {profile.get('description','')}\n"
+        f"Tone: {payload.tone}\n"
+        f"Goal: {payload.goal or 'drive conversions'}\n"
+    )
+
+    section_prompts = {
+        "hero": (
+            "Write a punchy landing page HERO section. Output STRICT JSON: "
+            "{type:'hero', headline (max 8 words, bold claim), subheadline (1-2 sentences expanding the headline), "
+            "cta_text (action verb 2-4 words, e.g. 'Start free trial'), cta_link (use '#form'), "
+            "background_image (leave empty string)}."
+        ),
+        "features": (
+            "Write a FEATURES section with 3 benefits. Output STRICT JSON: "
+            "{type:'features', heading (e.g. 'Why teams choose us'), items: array of 3 {title (3-5 words), "
+            "desc (1 sentence), icon (one of: lightning, shield, sparkle, target, rocket, chart)}}."
+        ),
+        "testimonial": (
+            "Write a realistic-sounding TESTIMONIAL. Output STRICT JSON: "
+            "{type:'testimonial', quote (2-3 sentences), author (plausible name), role, company}."
+        ),
+        "cta": (
+            "Write a strong final-call-to-action section. STRICT JSON: "
+            "{type:'cta', heading (urgency-driving), subheading (1 sentence reinforcement), "
+            "cta_text (action verb), cta_link ('#form')}."
+        ),
+        "form": (
+            "Write a contact form section. STRICT JSON: "
+            "{type:'form', heading (inviting tone), subheading (sets expectation), "
+            "fields (array; pick relevant from: name,email,phone,company,message), "
+            "submit_text, success_message}."
+        ),
+        "faq": (
+            "Write 4 likely FAQs. STRICT JSON: "
+            "{type:'faq', heading:'Frequently asked', items: array of 4 {q, a (1-2 sentences)}}."
+        ),
+        "image_text": (
+            "Write an IMAGE+TEXT feature block. STRICT JSON: "
+            "{type:'image_text', heading (4-6 words), body (2-3 sentences with concrete benefit), "
+            "image (leave empty), position ('right')}."
+        ),
+    }
+    spec = section_prompts.get(payload.section_type)
+    if not spec:
+        raise HTTPException(status_code=400, detail=f"Unknown section type: {payload.section_type}")
+
+    prompt = f"{biz_ctx}\n\nTASK: {spec}"
+    section = await _groq_json(prompt, max_tokens=900)
+    return {"section": section}
+
+
+# ---------- PUBLIC: View landing page + submit form ----------
+@api.get("/public/p/{slug}")
+async def public_get_landing_page(slug: str):
+    page = await db.landing_pages.find_one({"slug": slug, "published": True}, {"_id": 0, "user_id": 0})
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found or unpublished")
+    # Increment view count async (best-effort)
+    await db.landing_pages.update_one({"slug": slug}, {"$inc": {"view_count": 1}})
+    return {"page": page}
+
+
+class PublicSubmissionIn(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    message: Optional[str] = None
+    extra: Optional[Dict[str, Any]] = None
+
+
+@api.post("/public/p/{slug}/submit")
+async def public_submit_form(slug: str, payload: PublicSubmissionIn, request: Request):
+    page = await db.landing_pages.find_one({"slug": slug, "published": True}, {"_id": 0})
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    # Anti-abuse: simple rate limit (10 submissions per 5 min per IP per page)
+    ip = (request.headers.get("x-forwarded-for", "") or (request.client.host if request.client else "")).split(",")[0].strip()
+    cutoff = (now_utc() - timedelta(minutes=5)).isoformat()
+    recent = await db.public_submissions.count_documents({
+        "ip": ip, "slug": slug, "created_at": {"$gte": cutoff}
+    })
+    if recent >= 10:
+        raise HTTPException(status_code=429, detail="Too many submissions. Please try later.")
+
+    if not (payload.name or payload.email or payload.phone):
+        raise HTTPException(status_code=400, detail="Name, email or phone required")
+
+    workspace_owner_id = page["user_id"]
+
+    # Create lead
+    lead_id = str(uuid.uuid4())
+    notes_parts = []
+    if payload.message:
+        notes_parts.append(f"Message: {payload.message}")
+    notes_parts.append(f"Source page: {page['title']} (/p/{slug})")
+    if payload.extra:
+        notes_parts.append(f"Extra: {payload.extra}")
+
+    lead_doc = {
+        "id": lead_id,
+        "user_id": workspace_owner_id,
+        "name": payload.name or (payload.email.split("@")[0] if payload.email else "Anonymous"),
+        "email": payload.email,
+        "phone": payload.phone,
+        "company": payload.company,
+        "source": "LANDING_PAGE",
+        "status": "NEW",
+        "score": 60,  # higher than scraped because they self-submitted
+        "notes": " | ".join(notes_parts),
+        "landing_page_id": page["id"],
+        "created_at": now_utc().isoformat(),
+    }
+    await db.leads.insert_one(lead_doc)
+
+    # Log a comm record so it shows in Inbox immediately
+    if payload.message:
+        await db.communications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": workspace_owner_id,
+            "lead_id": lead_id,
+            "channel": "FORM",
+            "direction": "INBOUND",
+            "subject": f"New form submission · {page['title']}",
+            "content": payload.message,
+            "status": "RECEIVED",
+            "sent_at": now_utc().isoformat(),
+        })
+
+    await db.public_submissions.insert_one({
+        "id": str(uuid.uuid4()),
+        "slug": slug, "ip": ip,
+        "lead_id": lead_id,
+        "created_at": now_utc().isoformat(),
+    })
+    await db.landing_pages.update_one({"slug": slug}, {"$inc": {"submission_count": 1}})
+
+    return {"success": True, "message": page.get("sections", [{}])[-1].get("success_message", "Thanks!")}
+
+
 # Register router
 app.include_router(api)
 
@@ -2188,6 +2471,8 @@ async def on_startup():
     await db.approvals.create_index([("user_id", 1), ("status", 1)])
     await db.ai_calls.create_index([("user_id", 1), ("ts", -1)])
     await db.ai_calls.create_index("ts", expireAfterSeconds=7200)
+    await db.landing_pages.create_index("slug", unique=True)
+    await db.landing_pages.create_index([("user_id", 1), ("created_at", -1)])
     try:
         await db.login_attempts.create_index("last_attempt", expireAfterSeconds=3600)
     except Exception:
