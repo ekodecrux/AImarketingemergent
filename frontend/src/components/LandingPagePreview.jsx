@@ -132,9 +132,34 @@ function SectionRender({ section, primary, onSubmit, isPublic }) {
         case "form":
             return <FormSection section={section} primary={primary} onSubmit={onSubmit} isPublic={isPublic} />;
 
+        case "rich_text":
+            return (
+                <section className="py-12 px-6">
+                    <article className="max-w-3xl mx-auto prose prose-slate prose-lg" data-testid="rich-text-section">
+                        <RichTextRenderer body={section.body_md || section.body || ""} />
+                    </article>
+                </section>
+            );
+
         default:
-            return <div className="p-8 bg-[#F8FAFC] text-xs text-[#71717A]">Unknown section: {section.type}</div>;
+            return <div className="p-8 bg-[#F8FAFC] text-xs text-[#64748B]">Unknown section: {section.type}</div>;
     }
+}
+
+function RichTextRenderer({ body }) {
+    // Simple Markdown-ish renderer: paragraphs + headings (## / ###) + lists.
+    const blocks = body.split(/\n\n+/).map((b, i) => {
+        const t = b.trim();
+        if (!t) return null;
+        if (t.startsWith("## ")) return <h2 key={i} className="font-display text-3xl font-black tracking-tight mt-10 mb-4 text-[#0F172A]">{t.slice(3)}</h2>;
+        if (t.startsWith("### ")) return <h3 key={i} className="font-display text-xl font-bold tracking-tight mt-6 mb-3 text-[#0F172A]">{t.slice(4)}</h3>;
+        if (t.startsWith("- ") || t.startsWith("* ")) {
+            const items = t.split("\n").map((l) => l.replace(/^[-*]\s+/, ""));
+            return <ul key={i} className="list-disc ml-6 my-3 space-y-1.5 text-[#475569]">{items.map((x, j) => <li key={j}>{x}</li>)}</ul>;
+        }
+        return <p key={i} className="my-3 leading-relaxed text-[#475569]">{t}</p>;
+    });
+    return <>{blocks}</>;
 }
 
 function FormSection({ section, primary, onSubmit, isPublic }) {

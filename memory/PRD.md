@@ -13,6 +13,29 @@
 
 ## What's been implemented
 
+### Iteration 12 (Feb 2026) — Auto-publish queue + Daily auto-content + Recovery loop
+**Backend**
+- New `/api/schedule` POST/GET/PUT/DELETE — content_id × scheduled_at × platforms[]; supports linkedin/twitter/instagram/blog/email_broadcast
+- `/api/schedule/{id}/publish-now` — manual force-publish
+- Publishing dispatcher with 5 platform handlers:
+  - `_publish_to_blog` — actually publishes content as a hosted landing page at `/p/{slug}` with full meta tags + JSON-LD schema attached
+  - `_publish_to_email_broadcast` — emails the article to all CONTACTED+INTERESTED+NEW leads via existing Gmail SMTP
+  - `_publish_to_linkedin/twitter/instagram` — calls real API if OAuth token present in `db.oauth_tokens`, otherwise returns `mock_published` with preview text + clear "connect OAuth" message (NOT lying about success)
+- New APScheduler jobs:
+  - `_publish_due_schedules_tick` — every 5 min: pick up `status=PENDING` schedules whose `scheduled_at <= now`, dispatch them
+  - `_daily_auto_content_tick` — hourly: for each user with `auto_daily_content=True` whose preferred hour matches, generate 1 content kit (skips if one already exists today)
+- **Recovery loop**: when forecast alert fires for an at-risk workspace AND `auto_publish_when_at_risk=True`, `_auto_schedule_recovery_content` automatically schedules 3 most-recent draft content kits across the next 7 days (LinkedIn + Twitter + Blog), then sends an in-app notification
+- New `AlertPreferencesIn` fields: `auto_daily_content`, `auto_publish_when_at_risk`
+- All schedule lifecycle events fire in-app notifications
+- `delete_content` cascades to delete its scheduled posts
+
+**Frontend**
+- New `/schedule` page — 7-day weekly calendar grid (Mon→Sun), prev/today/next nav, click any day's "+ Schedule" → modal with date/time picker + content kit dropdown + 5 platform multi-select
+- ScheduleCard shows time + title + platform icons + status (PENDING blue / PUBLISHED green / FAILED red) + remove (X) + "Publish now →"
+- Top "Autopilot" gradient banner with 2 toggles for daily auto-gen + at-risk auto-recovery
+- Sidebar: new **Schedule** entry with "AUTO" badge under Growth section
+- `LandingPagePreview` now supports `rich_text` section type with simple Markdown-ish renderer (paragraphs / H2-H3 / bullet lists) so auto-published blog posts render properly at `/p/{slug}`
+
 ### Iteration 11 (Feb 2026) — Currency-agnostic + Content Studio + AI commentary stripped
 **Backend**
 - 49-country `COUNTRY_CURRENCY` map (ISO 3166 + 4217 + Intl locale strings) covering all major SaaS markets

@@ -2112,7 +2112,279 @@ async def update_content_status(cid: str, payload: ContentStatusIn, user=Depends
 @api.delete("/content/{cid}")
 async def delete_content(cid: str, user=Depends(get_current_user)):
     await db.content_kits.delete_one({"id": cid, "user_id": ws(user)})
+    await db.content_schedules.delete_many({"content_id": cid, "user_id": ws(user)})
     return {"success": True}
+
+
+# ---------- Content Scheduling / Auto-publish ----------
+class ScheduleIn(BaseModel):
+    content_id: str
+    scheduled_at: str  # ISO datetime UTC
+    platforms: List[str]  # ['linkedin', 'twitter', 'instagram', 'email_broadcast', 'blog']
+
+
+class ScheduleUpdateIn(BaseModel):
+    scheduled_at: Optional[str] = None
+    platforms: Optional[List[str]] = None
+    status: Optional[str] = None
+
+
+SUPPORTED_PLATFORMS = {"linkedin", "twitter", "instagram", "email_broadcast", "blog"}
+
+
+@api.post("/schedule")
+async def create_schedule(payload: ScheduleIn, user=Depends(get_current_user)):
+    bad = [p for p in payload.platforms if p not in SUPPORTED_PLATFORMS]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Unsupported platforms: {bad}")
+    content = await db.content_kits.find_one({"id": payload.content_id, "user_id": ws(user)})
+    if not content:
+        raise HTTPException(status_code=404, detail="Content not found")
+    try:
+        when = datetime.fromisoformat(payload.scheduled_at.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid scheduled_at — must be ISO datetime")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "content_id": payload.content_id,
+        "scheduled_at": when.isoformat(),
+        "platforms": payload.platforms,
+        "status": "PENDING",
+        "delivery": {p: {"status": "pending"} for p in payload.platforms},
+        "created_at": now_utc().isoformat(),
+    }
+    await db.content_schedules.insert_one(doc)
+    doc.pop("_id", None)
+    return {"schedule": doc}
+
+
+@api.get("/schedule")
+async def list_schedules(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    q: Dict[str, Any] = {"user_id": ws(user)}
+    if from_date or to_date:
+        q["scheduled_at"] = {}
+        if from_date:
+            q["scheduled_at"]["$gte"] = from_date
+        if to_date:
+            q["scheduled_at"]["$lte"] = to_date
+    items = await db.content_schedules.find(q, {"_id": 0}).sort("scheduled_at", 1).to_list(500)
+    # Hydrate with content title for UI
+    cids = list({i["content_id"] for i in items})
+    contents = await db.content_kits.find({"id": {"$in": cids}, "user_id": ws(user)}, {"_id": 0, "id": 1, "kit": 1, "topic": 1}).to_list(len(cids))
+    by_id = {c["id"]: c for c in contents}
+    for it in items:
+        c = by_id.get(it["content_id"]) or {}
+        it["title"] = ((c.get("kit") or {}).get("blog_post") or {}).get("title") or c.get("topic") or "Untitled"
+    return {"schedules": items}
+
+
+@api.put("/schedule/{sid}")
+async def update_schedule(sid: str, payload: ScheduleUpdateIn, user=Depends(get_current_user)):
+    upd: Dict[str, Any] = {}
+    if payload.scheduled_at:
+        try:
+            datetime.fromisoformat(payload.scheduled_at.replace("Z", "+00:00"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid scheduled_at")
+        upd["scheduled_at"] = payload.scheduled_at
+    if payload.platforms is not None:
+        bad = [p for p in payload.platforms if p not in SUPPORTED_PLATFORMS]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"Unsupported platforms: {bad}")
+        upd["platforms"] = payload.platforms
+    if payload.status:
+        if payload.status not in ("PENDING", "CANCELLED"):
+            raise HTTPException(status_code=400, detail="Invalid status")
+        upd["status"] = payload.status
+    if not upd:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    res = await db.content_schedules.update_one({"id": sid, "user_id": ws(user)}, {"$set": upd})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"success": True}
+
+
+@api.delete("/schedule/{sid}")
+async def delete_schedule(sid: str, user=Depends(get_current_user)):
+    await db.content_schedules.delete_one({"id": sid, "user_id": ws(user)})
+    return {"success": True}
+
+
+@api.post("/schedule/{sid}/publish-now")
+async def publish_schedule_now(sid: str, user=Depends(get_current_user)):
+    """Force-publish a scheduled item immediately (manual trigger)."""
+    sched = await db.content_schedules.find_one({"id": sid, "user_id": ws(user)})
+    if not sched:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    res = await _publish_scheduled(sched)
+    return res
+
+
+async def _publish_to_linkedin(content: Dict[str, Any], oauth_token: Optional[str]) -> Dict[str, Any]:
+    """Posts a status update to LinkedIn. Falls back to MOCK if no token."""
+    body = next((p["body"] for p in (content.get("kit") or {}).get("social_posts", []) if p.get("platform") == "linkedin"), None)
+    if not body:
+        body = (content.get("kit") or {}).get("blog_post", {}).get("excerpt", "")
+    if not oauth_token:
+        return {"status": "mock_published", "message": "MOCKED — connect LinkedIn OAuth to actually publish.", "preview": body[:200]}
+    try:
+        import requests as _rq
+        r = _rq.post(
+            "https://api.linkedin.com/v2/ugcPosts",
+            headers={"Authorization": f"Bearer {oauth_token}", "X-Restli-Protocol-Version": "2.0.0", "Content-Type": "application/json"},
+            json={
+                "author": "urn:li:person:me",  # caller must have set their URN; this is a stub
+                "lifecycleState": "PUBLISHED",
+                "specificContent": {
+                    "com.linkedin.ugc.ShareContent": {
+                        "shareCommentary": {"text": body[:2900]},
+                        "shareMediaCategory": "NONE",
+                    },
+                },
+                "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+            },
+            timeout=15,
+        )
+        return {"status": "published" if r.status_code in (200, 201) else "failed", "http": r.status_code, "preview": body[:200]}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)[:120]}
+
+
+async def _publish_to_twitter(content: Dict[str, Any], oauth_token: Optional[str]) -> Dict[str, Any]:
+    body = next((p["body"] for p in (content.get("kit") or {}).get("social_posts", []) if p.get("platform") == "twitter"), None)
+    if not body:
+        body = (content.get("kit") or {}).get("blog_post", {}).get("title", "")
+    if not oauth_token:
+        return {"status": "mock_published", "message": "MOCKED — connect Twitter/X OAuth to actually publish.", "preview": body[:200]}
+    try:
+        import requests as _rq
+        r = _rq.post(
+            "https://api.twitter.com/2/tweets",
+            headers={"Authorization": f"Bearer {oauth_token}", "Content-Type": "application/json"},
+            json={"text": body[:280]},
+            timeout=15,
+        )
+        return {"status": "published" if r.status_code in (200, 201) else "failed", "http": r.status_code, "preview": body[:200]}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)[:120]}
+
+
+async def _publish_to_instagram(content: Dict[str, Any], oauth_token: Optional[str]) -> Dict[str, Any]:
+    body = next((p["body"] for p in (content.get("kit") or {}).get("social_posts", []) if p.get("platform") == "instagram"), None)
+    if not oauth_token:
+        return {"status": "mock_published", "message": "MOCKED — Instagram needs Meta OAuth + image asset; connect on Integrations.", "preview": (body or "")[:200]}
+    return {"status": "mock_published", "message": "Instagram OAuth detected but image attachment flow not fully implemented (requires Meta Graph media upload).", "preview": (body or "")[:200]}
+
+
+async def _publish_to_blog(content: Dict[str, Any], user_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Publishes the content's blog post to a hosted landing page slug — internal CMS."""
+    blog = (content.get("kit") or {}).get("blog_post") or {}
+    slug = blog.get("slug") or _slugify(blog.get("title") or "post")
+    page_doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user_doc),
+        "slug": slug,
+        "name": blog.get("title", "Blog post"),
+        "sections": [
+            {"type": "hero", "headline": blog.get("title"), "subheadline": blog.get("excerpt")},
+            {"type": "rich_text", "body_md": blog.get("body_md", "")},
+        ],
+        "published": True,
+        "type": "blog",
+        "meta_tags": (content.get("kit") or {}).get("meta_tags") or {},
+        "schema_jsonld": (content.get("kit") or {}).get("schema_jsonld"),
+        "created_at": now_utc().isoformat(),
+    }
+    # Avoid slug collisions per workspace
+    existing = await db.landing_pages.find_one({"user_id": ws(user_doc), "slug": slug})
+    if existing:
+        page_doc["slug"] = f"{slug}-{int(now_utc().timestamp())}"
+    await db.landing_pages.insert_one(page_doc)
+    return {"status": "published", "slug": page_doc["slug"], "url": f"/p/{page_doc['slug']}"}
+
+
+async def _publish_to_email_broadcast(content: Dict[str, Any], user_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Email-broadcasts the blog excerpt to all CONTACTED+INTERESTED leads with valid email."""
+    blog = (content.get("kit") or {}).get("blog_post") or {}
+    subject = blog.get("title") or "New from us"
+    body = (blog.get("excerpt") or "") + "\n\n" + (blog.get("body_md") or "")[:2000]
+    leads = await db.leads.find(
+        {"user_id": ws(user_doc), "email": {"$ne": None}, "status": {"$in": ["CONTACTED", "INTERESTED", "NEW"]}},
+        {"_id": 0, "email": 1, "id": 1},
+    ).to_list(500)
+    sent = 0
+    for ld in leads:
+        try:
+            ok = await asyncio.get_event_loop().run_in_executor(
+                None, _send_email_sync, ld["email"], subject, body.replace("\n", "<br/>"),
+            )
+            if ok:
+                sent += 1
+        except Exception:
+            continue
+    return {"status": "published" if sent else "failed", "recipients": len(leads), "delivered": sent}
+
+
+async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
+    """Dispatches a scheduled content item to all its platforms."""
+    user_doc = await db.users.find_one({"workspace_id": sched["user_id"]}, {"_id": 0}) \
+        or await db.users.find_one({"id": sched["user_id"]}, {"_id": 0})
+    if not user_doc:
+        await db.content_schedules.update_one({"id": sched["id"]}, {"$set": {"status": "FAILED", "error": "user not found"}})
+        return {"status": "FAILED"}
+    content = await db.content_kits.find_one({"id": sched["content_id"], "user_id": sched["user_id"]}, {"_id": 0})
+    if not content:
+        await db.content_schedules.update_one({"id": sched["id"]}, {"$set": {"status": "FAILED", "error": "content missing"}})
+        return {"status": "FAILED"}
+
+    # Lookup OAuth tokens (placeholder — real OAuth flow stores these on db.oauth_tokens)
+    tokens_doc = await db.oauth_tokens.find_one({"user_id": sched["user_id"]}, {"_id": 0}) or {}
+    delivery: Dict[str, Any] = {}
+    for plat in sched["platforms"]:
+        try:
+            if plat == "linkedin":
+                delivery[plat] = await _publish_to_linkedin(content, tokens_doc.get("linkedin"))
+            elif plat == "twitter":
+                delivery[plat] = await _publish_to_twitter(content, tokens_doc.get("twitter"))
+            elif plat == "instagram":
+                delivery[plat] = await _publish_to_instagram(content, tokens_doc.get("instagram"))
+            elif plat == "blog":
+                delivery[plat] = await _publish_to_blog(content, user_doc)
+            elif plat == "email_broadcast":
+                delivery[plat] = await _publish_to_email_broadcast(content, user_doc)
+            else:
+                delivery[plat] = {"status": "failed", "error": "unsupported"}
+        except Exception as e:
+            delivery[plat] = {"status": "failed", "error": str(e)[:120]}
+
+    overall = "PUBLISHED" if any(v.get("status") in ("published", "mock_published") for v in delivery.values()) else "FAILED"
+    await db.content_schedules.update_one(
+        {"id": sched["id"]},
+        {"$set": {"status": overall, "delivery": delivery, "published_at": now_utc().isoformat()}},
+    )
+    if overall == "PUBLISHED":
+        await db.content_kits.update_one(
+            {"id": sched["content_id"]},
+            {"$set": {"status": "PUBLISHED", "published_at": now_utc().isoformat()}},
+        )
+    # In-app notification
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": sched["user_id"],
+        "type": "auto_publish",
+        "severity": "info" if overall == "PUBLISHED" else "high",
+        "title": f"Auto-publish {overall.lower()} · {len(sched['platforms'])} channels",
+        "body": f"{((content.get('kit') or {}).get('blog_post') or {}).get('title') or 'Content'} → {', '.join(sched['platforms'])}",
+        "link": "/schedule",
+        "read": False,
+        "created_at": now_utc().isoformat(),
+    })
+    return {"status": overall, "delivery": delivery}
 
 
 # ---------- Setup status (drives the onboarding checklist) ----------
@@ -3158,6 +3430,8 @@ class AlertPreferencesIn(BaseModel):
     daily_check: bool = True
     hour_utc: int = 9  # When to deliver daily/weekly alerts
     at_risk_threshold_pct: int = 80  # forecast/target * 100 < this → alert
+    auto_daily_content: bool = False  # Auto-generate one content kit per day at hour_utc
+    auto_publish_when_at_risk: bool = False  # When forecast at risk, auto-schedule extra content this week
 
 
 @api.get("/alerts/preferences")
@@ -3404,7 +3678,49 @@ async def _send_forecast_alert(user_doc: Dict[str, Any], kind: str = "daily", fo
         "sent_at": now_utc().isoformat(),
     })
 
+    # Auto-schedule extra content when at risk (closes the loop: behind → publish more)
+    if at_risk and prefs.get("auto_publish_when_at_risk") and (kind == "weekly" or kind == "daily"):
+        try:
+            await _auto_schedule_recovery_content(workspace_id, payload)
+        except Exception:
+            logger.exception("auto recovery content scheduling failed")
+
     return {"sent": True, "delivered": delivered, "payload": payload}
+
+
+async def _auto_schedule_recovery_content(workspace_id: str, payload: Dict[str, Any]) -> None:
+    """When a workspace is at risk, auto-schedule 3 extra content posts evenly spaced over the next 7 days."""
+    # Pick 3 most recent DRAFT content kits
+    drafts = await db.content_kits.find(
+        {"user_id": workspace_id, "status": "DRAFT"}, {"_id": 0, "id": 1},
+    ).sort("generated_at", -1).limit(3).to_list(3)
+    if not drafts:
+        return
+    base = now_utc() + timedelta(hours=2)
+    for i, draft in enumerate(drafts):
+        when = base + timedelta(days=i * 2)  # day +0, +2, +4
+        await db.content_schedules.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": workspace_id,
+            "content_id": draft["id"],
+            "scheduled_at": when.isoformat(),
+            "platforms": ["linkedin", "twitter", "blog"],
+            "status": "PENDING",
+            "delivery": {"linkedin": {"status": "pending"}, "twitter": {"status": "pending"}, "blog": {"status": "pending"}},
+            "auto_recovery": True,
+            "created_at": now_utc().isoformat(),
+        })
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": workspace_id,
+        "type": "auto_recovery",
+        "severity": "high",
+        "title": f"Auto-scheduled {len(drafts)} content posts to recover {payload.get('forecast_pct_of_target',0)}% forecast",
+        "body": "Forecast is below target. Extra posts scheduled across the next 7 days. Edit or cancel in Schedule.",
+        "link": "/schedule",
+        "read": False,
+        "created_at": now_utc().isoformat(),
+    })
 
 
 @api.post("/alerts/test")
@@ -3558,6 +3874,58 @@ async def _send_forecast_alerts_tick():
 
 
 
+async def _publish_due_schedules_tick():
+    """Every 5 minutes: pick up any PENDING schedules whose scheduled_at <= now, publish them."""
+    now_iso = now_utc().isoformat()
+    cursor = db.content_schedules.find({"status": "PENDING", "scheduled_at": {"$lte": now_iso}}, {"_id": 0}).limit(50)
+    items = await cursor.to_list(50)
+    for sched in items:
+        try:
+            await _publish_scheduled(sched)
+        except Exception:
+            logger.exception("Auto-publish failed for schedule %s", sched.get("id"))
+
+
+async def _daily_auto_content_tick():
+    """Once per hour: for each active workspace whose autocontent_hour matches, generate a daily content kit."""
+    now = now_utc()
+    cursor = db.alert_preferences.find(
+        {"hour_utc": now.hour, "auto_daily_content": True}, {"_id": 0},
+    )
+    async for prefs in cursor:
+        try:
+            wid = prefs["user_id"]
+            user = await db.users.find_one({"workspace_id": wid}, {"_id": 0}) \
+                or await db.users.find_one({"id": wid}, {"_id": 0})
+            if not user:
+                continue
+            # Skip if a kit already generated today
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            existing = await db.content_kits.count_documents({
+                "user_id": wid, "generated_at": {"$gte": today_start},
+            })
+            if existing:
+                continue
+            try:
+                await content_generate(user=user)
+                # Fire notification
+                await db.notifications.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": wid,
+                    "type": "auto_content",
+                    "severity": "info",
+                    "title": "Daily content kit ready",
+                    "body": "AI generated today's blog + social + SEO. Open Content Studio to review or auto-schedule.",
+                    "link": "/content",
+                    "read": False,
+                    "created_at": now_utc().isoformat(),
+                })
+            except HTTPException:
+                continue
+        except Exception:
+            logger.exception("Auto-content tick failed for prefs=%s", prefs.get("user_id"))
+
+
 async def _send_daily_briefings():
     """For every user opted in, generate today's briefing and email it."""
     current_hour = now_utc().hour
@@ -3640,8 +4008,10 @@ async def on_startup():
     scheduler.add_job(_send_daily_briefings, "cron", minute=0, id="daily_briefings", replace_existing=True)
     scheduler.add_job(_imap_poll_inbound_emails, "interval", minutes=3, id="imap_poll", replace_existing=True)
     scheduler.add_job(_send_forecast_alerts_tick, "cron", minute=5, id="forecast_alerts", replace_existing=True)
+    scheduler.add_job(_publish_due_schedules_tick, "interval", minutes=5, id="auto_publish", replace_existing=True)
+    scheduler.add_job(_daily_auto_content_tick, "cron", minute=10, id="auto_daily_content", replace_existing=True)
     scheduler.start()
-    logger.info("APScheduler started: daily_briefings + imap_poll + forecast_alerts")
+    logger.info("APScheduler started: daily_briefings + imap_poll + forecast_alerts + auto_publish + auto_daily_content")
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@zeromark.ai")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")

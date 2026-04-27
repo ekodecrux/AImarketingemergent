@@ -27,6 +27,7 @@ import PublicLandingPage from "@/pages/PublicLandingPage";
 import Analytics from "@/pages/Analytics";
 import AuthCallback from "@/pages/AuthCallback";
 import Content from "@/pages/Content";
+import Schedule from "@/pages/Schedule";
 
 function Protected({ children }) {
     const { user, loading } = useAuth();
@@ -74,6 +75,7 @@ function App() {
                         <Route path="/landing-pages/:id" element={<LandingPageEditor />} />
                         <Route path="/growth" element={<GrowthStudio />} />
                         <Route path="/content" element={<Content />} />
+                        <Route path="/schedule" element={<Schedule />} />
                         <Route path="/scraping" element={<Scraping />} />
                         <Route path="/integrations" element={<Integrations />} />
                         <Route path="/business" element={<Business />} />

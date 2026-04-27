@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import {
     SquaresFour, Users, Megaphone, CheckSquare, Buildings,
     ChartBar, Receipt, SignOut, Sparkle, Compass, Plugs,
-    Tray, ChartLineUp, UsersThree, Globe, Pulse, Article,
+    Tray, ChartLineUp, UsersThree, Globe, Pulse, Article, CalendarBlank,
 } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import NotificationsBell from "@/components/NotificationsBell";
@@ -31,6 +31,7 @@ const sections = [
         items: [
             { to: "/growth", label: "Growth Studio", icon: ChartLineUp, testid: "nav-growth" },
             { to: "/content", label: "Content Studio", icon: Article, testid: "nav-content" },
+            { to: "/schedule", label: "Schedule", icon: CalendarBlank, testid: "nav-schedule", badge: "AUTO" },
             { to: "/reports", label: "Reports", icon: ChartBar, testid: "nav-reports" },
         ],
     },
