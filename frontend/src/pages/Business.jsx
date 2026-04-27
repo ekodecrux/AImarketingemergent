@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
+import { Sparkle, Globe } from "@phosphor-icons/react";
 
 export default function Business() {
     const [form, setForm] = useState({
@@ -10,6 +11,7 @@ export default function Business() {
     });
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [autoFilling, setAutoFilling] = useState(false);
 
     useEffect(() => {
         setLoading(true);
@@ -32,12 +34,56 @@ export default function Business() {
         }
     };
 
+    const autoFill = async () => {
+        if (!form.website_url) { toast.error("Add a website URL first"); return; }
+        setAutoFilling(true);
+        const t = toast.loading("AI analysing your website…");
+        try {
+            const r = await api.post("/business/auto-fill", { website_url: form.website_url });
+            const p = r.data.profile;
+            setForm({
+                ...form,
+                business_name: p.business_name || form.business_name,
+                industry: p.industry || form.industry,
+                location: p.location || form.location,
+                target_audience: p.target_audience || form.target_audience,
+                description: p.description || form.description,
+                website_url: p.website_url || form.website_url,
+            });
+            toast.success("Auto-filled — review and save", { id: t });
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Auto-fill failed", { id: t });
+        } finally {
+            setAutoFilling(false);
+        }
+    };
+
     return (
         <div>
-            <PageHeader eyebrow="// Identity" title="Business Profile" subtitle="The single source of truth ZeroMark uses to generate AI content." />
+            <PageHeader
+                eyebrow="// Identity"
+                title="Business Profile"
+                subtitle="The single source of truth ZeroMark uses for AI generation, lead scoring and growth plans."
+                action={
+                    <button onClick={autoFill} disabled={autoFilling} className="zm-btn-dark" data-testid="business-autofill">
+                        <Sparkle size={14} weight="fill" /> {autoFilling ? "Analysing…" : "Auto-fill from URL"}
+                    </button>
+                }
+            />
             <div className="px-8 py-6 max-w-3xl">
                 <form onSubmit={submit} className="zm-card p-8 space-y-5" data-testid="business-form">
                     {loading && <p className="text-sm text-[#A1A1AA]">Loading…</p>}
+                    <div>
+                        <label className="zm-label">Website URL</label>
+                        <div className="flex gap-2">
+                            <span className="inline-flex items-center px-3 bg-[#F4F4F5] border border-r-0 border-[#D4D4D8] text-[#71717A] rounded-sm">
+                                <Globe size={16} weight="bold" />
+                            </span>
+                            <input className="zm-input flex-1" value={form.website_url || ""} onChange={(e) => setForm({ ...form, website_url: e.target.value })} placeholder="https://yourcompany.com" data-testid="business-website" />
+                        </div>
+                        <p className="text-xs text-[#71717A] mt-1.5">Add your URL → click "Auto-fill from URL" above to have AI populate everything below.</p>
+                    </div>
+
                     <div className="grid md:grid-cols-2 gap-5">
                         <div>
                             <label className="zm-label">Business Name *</label>
@@ -52,14 +98,9 @@ export default function Business() {
                             <input required className="zm-input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Bangalore, India" data-testid="business-location" />
                         </div>
                         <div>
-                            <label className="zm-label">Website URL</label>
-                            <input className="zm-input" value={form.website_url || ""} onChange={(e) => setForm({ ...form, website_url: e.target.value })} placeholder="https://…" data-testid="business-website" />
+                            <label className="zm-label">Target Audience *</label>
+                            <input required className="zm-input" value={form.target_audience} onChange={(e) => setForm({ ...form, target_audience: e.target.value })} placeholder="Mid-market e-commerce founders" data-testid="business-audience" />
                         </div>
-                    </div>
-
-                    <div>
-                        <label className="zm-label">Target Audience *</label>
-                        <input required className="zm-input" value={form.target_audience} onChange={(e) => setForm({ ...form, target_audience: e.target.value })} placeholder="Mid-market e-commerce founders" data-testid="business-audience" />
                     </div>
                     <div>
                         <label className="zm-label">Description</label>

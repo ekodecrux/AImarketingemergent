@@ -1,5 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
-@import url('https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700;800;900&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -7,35 +6,37 @@
 
 html, body {
     margin: 0;
-    font-family: 'Manrope', system-ui, sans-serif;
+    font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     background: #F4F4F5;
     color: #09090B;
+    font-feature-settings: "ss01", "ss03";
 }
 
 .font-display {
-    font-family: 'Cabinet Grotesk', 'Manrope', system-ui, sans-serif;
-    letter-spacing: -0.02em;
+    font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -0.015em;
+    font-weight: 800;
 }
 
 @layer base {
     :root {
-        --background: 240 5% 96%;       /* #F4F4F5 */
-        --foreground: 240 6% 8%;        /* #09090B */
+        --background: 240 5% 96%;
+        --foreground: 240 6% 8%;
         --card: 0 0% 100%;
         --card-foreground: 240 6% 8%;
         --popover: 0 0% 100%;
         --popover-foreground: 240 6% 8%;
-        --primary: 226 100% 36%;        /* #002EB8 */
+        --primary: 226 100% 36%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 240 6% 10%;        /* #18181B */
+        --secondary: 240 6% 10%;
         --secondary-foreground: 0 0% 100%;
         --muted: 240 5% 89%;
         --muted-foreground: 240 4% 46%;
         --accent: 240 5% 96%;
         --accent-foreground: 240 6% 8%;
-        --destructive: 354 76% 52%;     /* #E32636 */
+        --destructive: 354 76% 52%;
         --destructive-foreground: 0 0% 100%;
         --border: 240 5% 89%;
         --input: 240 5% 89%;
@@ -45,64 +46,40 @@ html, body {
         --chart-3: 38 92% 50%;
         --chart-4: 354 76% 52%;
         --chart-5: 240 6% 10%;
-        --radius: 0.125rem;
+        --radius: 0.25rem;
     }
 }
 
 @layer base {
-    * {
-        @apply border-border;
-    }
-    body {
-        @apply bg-background text-foreground;
-    }
-    /* Override scrollbar */
-    ::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
-    }
+    * { @apply border-border; }
+    body { @apply bg-background text-foreground; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb {
-        background: #d4d4d8;
-        border-radius: 0;
-    }
+    ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 0; }
     ::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
-    ::selection {
-        background: #002EB8;
-        color: #fff;
-    }
+    ::selection { background: #002EB8; color: #fff; }
 }
 
 @layer components {
     .zm-btn {
-        @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold uppercase tracking-[0.1em] transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+        @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold tracking-tight transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed rounded-sm;
     }
-    .zm-btn-primary {
-        @apply zm-btn bg-[#002EB8] text-white hover:bg-[#001A7A] hover:translate-y-[-1px];
-    }
-    .zm-btn-secondary {
-        @apply zm-btn bg-white border border-[#E4E4E7] text-[#09090B] hover:bg-[#F4F4F5];
-    }
-    .zm-btn-dark {
-        @apply zm-btn bg-[#18181B] text-white hover:bg-[#09090B];
-    }
-    .zm-btn-destructive {
-        @apply zm-btn bg-[#E32636] text-white hover:bg-[#B91C2C];
-    }
-    .zm-card {
-        @apply bg-white border border-[#E4E4E7];
-    }
+    .zm-btn-primary { @apply zm-btn bg-[#002EB8] text-white hover:bg-[#001A7A]; }
+    .zm-btn-secondary { @apply zm-btn bg-white border border-[#D4D4D8] text-[#09090B] hover:bg-[#F4F4F5]; }
+    .zm-btn-dark { @apply zm-btn bg-[#18181B] text-white hover:bg-[#09090B]; }
+    .zm-btn-destructive { @apply zm-btn bg-[#E32636] text-white hover:bg-[#B91C2C]; }
+    .zm-card { @apply bg-white border border-[#E4E4E7] rounded-sm; }
     .zm-input {
-        @apply w-full px-3 py-2.5 text-sm bg-white border border-[#E4E4E7] focus:outline-none focus:border-[#002EB8] focus:ring-1 focus:ring-[#002EB8] placeholder:text-[#A1A1AA];
-        font-family: 'Manrope', sans-serif;
+        @apply w-full px-3 py-2.5 text-sm bg-white border border-[#D4D4D8] focus:outline-none focus:border-[#002EB8] focus:ring-1 focus:ring-[#002EB8] placeholder:text-[#A1A1AA] rounded-sm;
+        font-family: 'Source Sans 3', system-ui, sans-serif;
     }
     .zm-label {
-        @apply block text-xs font-bold uppercase tracking-[0.2em] text-[#71717A] mb-2;
+        @apply block text-xs font-semibold uppercase tracking-[0.08em] text-[#52525B] mb-1.5;
     }
     .zm-badge {
-        @apply inline-flex items-center px-2 py-1 text-[10px] font-bold uppercase tracking-[0.15em];
+        @apply inline-flex items-center px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] rounded-sm;
     }
     .zm-section-label {
-        @apply text-xs font-bold uppercase tracking-[0.2em] text-[#71717A];
+        @apply text-xs font-semibold uppercase tracking-[0.08em] text-[#71717A];
     }
 }

@@ -24,6 +24,9 @@ from typing import List, Optional, Any, Dict
 
 import bcrypt
 import jwt
+import requests as _http
+from cryptography.fernet import Fernet
+import base64
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -45,6 +48,28 @@ db = client[DB_NAME]
 
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALG = "HS256"
+
+# Fernet key derived from JWT_SECRET (deterministic, no extra env var needed)
+_FERNET_KEY = base64.urlsafe_b64encode(hashlib.sha256(JWT_SECRET.encode()).digest())
+_fernet = Fernet(_FERNET_KEY)
+
+
+def _enc(value: str) -> str:
+    if value is None:
+        return None
+    return _fernet.encrypt(value.encode()).decode()
+
+
+def _dec(value: str) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        return _fernet.decrypt(value.encode()).decode()
+    except Exception:
+        return None
+
+
+SENSITIVE_INTEGRATION_KEYS = {"access_token", "auth_token", "bearer_token", "api_key", "client_secret", "page_access_token"}
 
 app = FastAPI(title="ZeroMark AI")
 api = APIRouter(prefix="/api")
@@ -1186,7 +1211,17 @@ async def list_integrations(user=Depends(get_current_user)):
 @api.post("/integrations")
 async def upsert_integration(payload: IntegrationIn, user=Depends(get_current_user)):
     field = payload.channel.lower()
-    update = {f"{field}": {**payload.config, "connected": payload.connected, "updated_at": now_utc().isoformat()}}
+    # Encrypt sensitive fields at rest
+    cfg = {}
+    for k, v in payload.config.items():
+        if isinstance(v, str) and k in SENSITIVE_INTEGRATION_KEYS:
+            cfg[k] = _enc(v)
+            cfg[f"{k}__encrypted"] = True
+        else:
+            cfg[k] = v
+    cfg["connected"] = payload.connected
+    cfg["updated_at"] = now_utc().isoformat()
+    update = {field: cfg}
     await db.integrations.update_one(
         {"user_id": user["id"]},
         {"$set": update, "$setOnInsert": {"user_id": user["id"]}},
@@ -1286,6 +1321,387 @@ async def latest_briefing(user=Depends(get_current_user)):
     return {"briefing": rec}
 
 
+# ---------- Business profile auto-fill from website URL ----------
+class AutoFillIn(BaseModel):
+    website_url: str
+
+
+@api.post("/business/auto-fill")
+async def auto_fill_business(payload: AutoFillIn, user=Depends(get_current_user)):
+    """Scrape a website's homepage and use Groq to extract structured business profile."""
+    url = payload.website_url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    def _fetch():
+        try:
+            r = _http.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 ZeroMarkBot"})
+            return r.text[:30000]
+        except Exception as e:
+            return f"FETCH_ERROR: {e}"
+
+    html = await asyncio.get_event_loop().run_in_executor(None, _fetch)
+    if html.startswith("FETCH_ERROR"):
+        raise HTTPException(status_code=400, detail=f"Could not fetch website. {html[:200]}")
+
+    # Strip basic HTML tags for prompt
+    import re
+    text = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()[:8000]
+
+    prompt = (
+        f"Analyse the following website content and extract a structured business profile.\n\n"
+        f"URL: {url}\nCONTENT: {text}\n\n"
+        f"Return STRICT JSON with keys: business_name, industry, location, target_audience, "
+        f"description (2-3 sentences), value_proposition (1 sentence), key_offerings (array of 3-5 strings), "
+        f"competitors (array of likely competitor names from same niche)."
+    )
+
+    def _gen():
+        c = Groq(api_key=os.environ["GROQ_API_KEY"])
+        comp = c.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a B2B research analyst. Output strict JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=1200,
+            response_format={"type": "json_object"},
+        )
+        return comp.choices[0].message.content
+
+    raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
+    import json
+    try:
+        data = json.loads(raw)
+    except Exception:
+        raise HTTPException(status_code=500, detail="AI parsing failed")
+    data["website_url"] = url
+    return {"profile": data}
+
+
+# ---------- Growth Studio: Market Analysis ----------
+class MarketAnalysisIn(BaseModel):
+    website_url: Optional[str] = None
+    additional_context: Optional[str] = None
+
+
+@api.post("/market/analyze")
+async def market_analyze(payload: MarketAnalysisIn, user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    url = payload.website_url or profile.get("website_url") or ""
+
+    biz_ctx = (
+        f"Business: {profile.get('business_name', 'Unknown')}\n"
+        f"Industry: {profile.get('industry', '')}\n"
+        f"Target audience: {profile.get('target_audience', '')}\n"
+        f"Description: {profile.get('description', '')}\n"
+        f"Website: {url}\n"
+        f"Extra context: {payload.additional_context or ''}\n"
+    )
+
+    prompt = (
+        f"You are a senior B2B market strategist. Analyse this business and produce a comprehensive "
+        f"market analysis as STRICT JSON with these keys:\n"
+        f"  market_size (1-2 sentences with rough TAM/SAM/SOM if inferable),\n"
+        f"  growth_rate (1 sentence),\n"
+        f"  trends (array of 4-6 short-term trends),\n"
+        f"  competitors (array of objects {{name, strengths, weaknesses, positioning}}, 4-6 items),\n"
+        f"  swot (object with arrays strengths, weaknesses, opportunities, threats — 3 each),\n"
+        f"  positioning_recommendation (2-3 sentences),\n"
+        f"  unique_angles (array of 3-5 differentiator ideas),\n"
+        f"  immediate_actions (array of 5 concrete steps with priority high/med/low).\n\n"
+        f"BUSINESS:\n{biz_ctx}"
+    )
+
+    def _gen():
+        c = Groq(api_key=os.environ["GROQ_API_KEY"])
+        comp = c.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a strategic consultant. Output strict JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_tokens=2500,
+            response_format={"type": "json_object"},
+        )
+        return comp.choices[0].message.content
+
+    raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
+    import json
+    try:
+        analysis = json.loads(raw)
+    except Exception:
+        raise HTTPException(status_code=500, detail="AI parsing failed")
+
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "MARKET",
+        "data": analysis,
+        "generated_at": now_utc().isoformat(),
+    }
+    await db.market_analyses.insert_one(record)
+    record.pop("_id", None)
+    return {"analysis": record}
+
+
+@api.get("/market/latest")
+async def market_latest(user=Depends(get_current_user)):
+    rec = await db.market_analyses.find_one(
+        {"user_id": user["id"]}, {"_id": 0}, sort=[("generated_at", -1)]
+    )
+    return {"analysis": rec}
+
+
+# ---------- Growth Studio: SEO Toolkit ----------
+class SEORequestIn(BaseModel):
+    seed_keyword: Optional[str] = None
+    competitor_url: Optional[str] = None
+
+
+@api.post("/seo/keywords")
+async def seo_keywords(payload: SEORequestIn, user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    seed = payload.seed_keyword or profile.get("industry", "")
+    audience = profile.get("target_audience", "")
+
+    prompt = (
+        f"Act as an SEO research analyst. For the seed keyword '{seed}' targeting '{audience}', "
+        f"produce STRICT JSON with key 'keywords' = array of 25 objects with fields: "
+        f"keyword (string), intent (informational/commercial/transactional/navigational), "
+        f"difficulty (1-100 estimate), volume_band (low/mid/high), opportunity_score (1-100), "
+        f"category (short tag e.g. how-to, comparison, brand). "
+        f"Mix branded, long-tail, and competitor-comparison keywords."
+    )
+    return {"keywords": await _groq_json(prompt, key="keywords", max_tokens=2500)}
+
+
+@api.post("/seo/backlinks")
+async def seo_backlinks(payload: SEORequestIn, user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    industry = profile.get("industry", "")
+    site = payload.competitor_url or profile.get("website_url", "") or industry
+
+    prompt = (
+        f"Act as a link-building analyst. For a business in '{industry}' (website: {site}), "
+        f"produce STRICT JSON with key 'opportunities' = array of 15 objects: "
+        f"{{name (publication or site name), url (plausible URL), domain_authority (30-90 estimate), "
+        f"type (guest_post/listicle/podcast/directory/digital_pr/resource_page), "
+        f"angle (1-sentence pitch angle for outreach), "
+        f"effort (low/med/high), priority (high/med/low)}}. "
+        f"Include realistic mid-tier publications, niche directories, podcasts and resource pages. "
+        f"Mix easy wins with high-DA aspirational targets."
+    )
+    return {"opportunities": await _groq_json(prompt, key="opportunities", max_tokens=2500)}
+
+
+@api.post("/seo/content-gaps")
+async def seo_content_gaps(payload: SEORequestIn, user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    biz = profile.get("business_name", "") + " — " + profile.get("description", "")
+
+    prompt = (
+        f"Act as a content strategist. For: {biz} ({profile.get('industry', '')}), "
+        f"audience: {profile.get('target_audience', '')}. "
+        f"Produce STRICT JSON with key 'content_ideas' = array of 12 objects: "
+        f"{{title (compelling H1), format (blog/listicle/case-study/whitepaper/video/comparison), "
+        f"funnel_stage (TOFU/MOFU/BOFU), target_keyword, word_count_estimate (number), "
+        f"content_outline (array of 4-6 H2 section titles), why_now (1-sentence rationale)}}. "
+        f"Mix funnel stages and prioritise topics with high commercial intent."
+    )
+    return {"content_ideas": await _groq_json(prompt, key="content_ideas", max_tokens=3000)}
+
+
+# ---------- Growth Studio: PR & Media Outreach ----------
+class PressReleaseIn(BaseModel):
+    announcement: str
+    quote_from: Optional[str] = None
+
+
+@api.post("/pr/press-release")
+async def pr_press_release(payload: PressReleaseIn, user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    spokesperson = payload.quote_from or f"{user['first_name']} {user['last_name']}, founder of {profile.get('business_name','')}"
+    prompt = (
+        f"Write a polished press release in AP style for: {profile.get('business_name','')}.\n"
+        f"INDUSTRY: {profile.get('industry','')}\n"
+        f"DESCRIPTION: {profile.get('description','')}\n"
+        f"ANNOUNCEMENT: {payload.announcement}\n"
+        f"SPOKESPERSON: {spokesperson}\n\n"
+        f"Return STRICT JSON: {{headline, subhead, dateline, body (well-formatted with paragraphs separated by \\n\\n), "
+        f"quote, boilerplate (about-us paragraph), media_contact (name and email placeholder)}}."
+    )
+    return {"press_release": await _groq_json(prompt, max_tokens=2000)}
+
+
+@api.post("/pr/media-list")
+async def pr_media_list(payload: SEORequestIn, user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    industry = profile.get("industry", "")
+    location = profile.get("location", "")
+    prompt = (
+        f"Generate a targeted media outreach list for a {industry} company in {location}. "
+        f"STRICT JSON with key 'outlets' = array of 12 objects: "
+        f"{{publication, beat, contact_name (plausible journalist), email_pattern (e.g. firstname.lastname@publication.com), "
+        f"reach (S/M/L), angle (why_relevant in 1 sentence), social_handle}}. "
+        f"Include trade press, mainstream business outlets, and niche industry publications."
+    )
+    return {"outlets": await _groq_json(prompt, key="outlets", max_tokens=2200)}
+
+
+class OutreachIn(BaseModel):
+    journalist_name: str
+    publication: str
+    angle: str
+    announcement: str
+
+
+@api.post("/pr/outreach-email")
+async def pr_outreach_email(payload: OutreachIn, user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    prompt = (
+        f"Draft a personalised media pitch email.\n"
+        f"FROM: {user['first_name']} {user['last_name']}, {profile.get('business_name','')} ({profile.get('industry','')})\n"
+        f"TO: {payload.journalist_name} at {payload.publication}\n"
+        f"ANGLE: {payload.angle}\n"
+        f"ANNOUNCEMENT: {payload.announcement}\n\n"
+        f"Constraints: under 150 words, conversational, references their beat, opens with a hook, "
+        f"ends with a single clear ask. Return STRICT JSON: {{subject, body}}."
+    )
+    return {"email": await _groq_json(prompt, max_tokens=600)}
+
+
+# ---------- Growth Studio: 12-Month Growth Plan ----------
+@api.post("/growth-plan/generate")
+async def growth_plan_generate(user=Depends(get_current_user)):
+    profile = await db.business_profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    total_leads = await db.leads.count_documents({"user_id": user["id"]})
+    total_campaigns = await db.campaigns.count_documents({"user_id": user["id"]})
+
+    biz_ctx = (
+        f"Business: {profile.get('business_name','')} | Industry: {profile.get('industry','')}\n"
+        f"Target: {profile.get('target_audience','')} | Location: {profile.get('location','')}\n"
+        f"Description: {profile.get('description','')}\n"
+        f"Current state: {total_leads} leads, {total_campaigns} campaigns shipped."
+    )
+
+    prompt = (
+        f"You are a growth strategist. Build a comprehensive 12-MONTH GROWTH PLAN for the business below. "
+        f"Return STRICT JSON with the following keys:\n"
+        f"  vision (1-2 sentences),\n"
+        f"  north_star_metric (single metric we should obsess over),\n"
+        f"  quarterly_themes (array of 4 quarter objects: {{quarter (Q1..Q4), theme, primary_goal, "
+        f"     key_targets (array of 3 measurable targets), top_3_initiatives, channels (array), "
+        f"     estimated_budget_band (low/mid/high), risks (array of 2)}}),\n"
+        f"  monthly_milestones (array of 12 strings — one per month),\n"
+        f"  hiring_plan (array of 3-5 roles in chronological order with month),\n"
+        f"  marketing_mix (object with email %, sms %, whatsapp %, seo %, social %, pr %, paid_ads % — must sum to 100),\n"
+        f"  key_assumptions (array of 4-6 strings),\n"
+        f"  success_kpis (array of 5 specific numerical targets to hit by month 12).\n\n"
+        f"BUSINESS:\n{biz_ctx}"
+    )
+
+    plan = await _groq_json(prompt, max_tokens=4000)
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "plan": plan,
+        "generated_at": now_utc().isoformat(),
+    }
+    await db.growth_plans.insert_one(record)
+    record.pop("_id", None)
+    return {"plan": record}
+
+
+@api.get("/growth-plan/latest")
+async def growth_plan_latest(user=Depends(get_current_user)):
+    rec = await db.growth_plans.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("generated_at", -1)])
+    return {"plan": rec}
+
+
+# Helper: Groq JSON-mode call returning either a single object or an array under given key
+async def _groq_json(prompt: str, key: Optional[str] = None, max_tokens: int = 2000) -> Any:
+    def _gen():
+        c = Groq(api_key=os.environ["GROQ_API_KEY"])
+        comp = c.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "Output strict JSON only with no markdown code fences."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+        )
+        return comp.choices[0].message.content
+    raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
+    import json
+    try:
+        data = json.loads(raw)
+        if key and isinstance(data, dict) and key in data:
+            return data[key]
+        return data
+    except Exception:
+        return [] if key else {}
+
+
+# ---------- Inbound webhook listener (Twilio SMS / WhatsApp) ----------
+@api.post("/webhooks/twilio/sms")
+async def twilio_inbound_sms(request: Request):
+    """Twilio inbound SMS webhook. Logs the message to the matching lead's CRM thread."""
+    form = await request.form()
+    from_number = form.get("From", "")
+    body = form.get("Body", "")
+    is_whatsapp = from_number.startswith("whatsapp:")
+    phone = from_number.replace("whatsapp:", "")
+    channel = "WHATSAPP" if is_whatsapp else "SMS"
+
+    # Find matching lead (any user) by phone
+    lead = await db.leads.find_one({"phone": phone})
+    if lead:
+        await db.communications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": lead["user_id"],
+            "lead_id": lead["id"],
+            "channel": channel,
+            "direction": "INBOUND",
+            "content": body,
+            "status": "RECEIVED",
+            "sent_at": now_utc().isoformat(),
+        })
+        # Bump lead status to INTERESTED if currently NEW/CONTACTED
+        if lead.get("status") in ("NEW", "CONTACTED"):
+            await db.leads.update_one({"id": lead["id"]}, {"$set": {"status": "INTERESTED"}})
+
+    # Twilio expects TwiML response
+    return Response(content="<Response/>", media_type="application/xml")
+
+
+@api.post("/webhooks/twilio/whatsapp")
+async def twilio_inbound_whatsapp(request: Request):
+    return await twilio_inbound_sms(request)
+
+
+# ---------- Communications inbox (across leads) ----------
+@api.get("/communications/inbox")
+async def communications_inbox(user=Depends(get_current_user)):
+    cursor = db.communications.find(
+        {"user_id": user["id"], "direction": "INBOUND"},
+        {"_id": 0},
+    ).sort("sent_at", -1).limit(50)
+    items = await cursor.to_list(50)
+    # attach lead names
+    for it in items:
+        lead = await db.leads.find_one({"id": it.get("lead_id")}, {"_id": 0, "name": 1, "email": 1, "phone": 1})
+        it["lead"] = lead
+    return {"messages": items}
+
+
 # Register router
 app.include_router(api)
 
@@ -1305,6 +1721,20 @@ async def on_startup():
     await db.leads.create_index([("user_id", 1), ("created_at", -1)])
     await db.campaigns.create_index([("user_id", 1), ("created_at", -1)])
     await db.approvals.create_index([("user_id", 1), ("status", 1)])
+    # TTL on login_attempts (auto-delete after 1 hour)
+    try:
+        await db.login_attempts.create_index("last_attempt", expireAfterSeconds=3600)
+    except Exception:
+        pass
+
+    # Recovery sweep: any campaign stuck in SENDING for >5 min → mark FAILED
+    cutoff = (now_utc() - timedelta(minutes=5)).isoformat()
+    stuck = await db.campaigns.update_many(
+        {"status": "SENDING", "started_at": {"$lt": cutoff}},
+        {"$set": {"status": "FAILED", "failure_reason": "Recovered after pod restart"}},
+    )
+    if stuck.modified_count:
+        logger.info("Recovery sweep marked %d stuck campaigns as FAILED", stuck.modified_count)
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@zeromark.ai")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")

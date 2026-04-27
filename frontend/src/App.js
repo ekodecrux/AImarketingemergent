@@ -6,17 +6,20 @@ import { Toaster } from "sonner";
 import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import Onboarding from "@/pages/Onboarding";
 import AppLayout from "@/components/AppLayout";
 import Dashboard from "@/pages/Dashboard";
 import Leads from "@/pages/Leads";
 import LeadDetail from "@/pages/LeadDetail";
 import Campaigns from "@/pages/Campaigns";
 import Approvals from "@/pages/Approvals";
+import Inbox from "@/pages/Inbox";
 import Business from "@/pages/Business";
 import Reports from "@/pages/Reports";
 import Billing from "@/pages/Billing";
 import Scraping from "@/pages/Scraping";
 import Integrations from "@/pages/Integrations";
+import GrowthStudio from "@/pages/GrowthStudio";
 
 function Protected({ children }) {
     const { user, loading } = useAuth();
@@ -46,12 +49,16 @@ function App() {
                     <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
                     <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
 
+                    <Route path="/onboarding" element={<Protected><Onboarding /></Protected>} />
+
                     <Route element={<Protected><AppLayout /></Protected>}>
                         <Route path="/dashboard" element={<Dashboard />} />
                         <Route path="/leads" element={<Leads />} />
                         <Route path="/leads/:id" element={<LeadDetail />} />
                         <Route path="/campaigns" element={<Campaigns />} />
                         <Route path="/approvals" element={<Approvals />} />
+                        <Route path="/inbox" element={<Inbox />} />
+                        <Route path="/growth" element={<GrowthStudio />} />
                         <Route path="/scraping" element={<Scraping />} />
                         <Route path="/integrations" element={<Integrations />} />
                         <Route path="/business" element={<Business />} />

@@ -25,7 +25,6 @@ export default function Register() {
             setLoading(false);
         }
     };
-
     return (
         <div className="min-h-screen grid lg:grid-cols-2 bg-white">
             <div className="hidden lg:flex flex-col justify-between p-12 bg-[#002EB8] text-white relative overflow-hidden">

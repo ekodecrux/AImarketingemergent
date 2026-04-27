@@ -1,0 +1,78 @@
+{
+  "summary": "Iteration 3 backend testing of new Growth Studio + P1 hardening features. 18/19 tests pass (1 intermittent failure on PR press-release due to upstream Groq json-mode 400s not caught by backend). Validated: business/auto-fill, market/analyze + latest, SEO (keywords/backlinks/content-gaps), PR (press-release/media-list/outreach-email), 12-month growth-plan generate + latest, Twilio inbound SMS webhook (no-auth, form-encoded, TwiML response, lead linkage, status bump to INTERESTED), communications/inbox (auth-protected), integrations encryption at rest (verified raw mongo doc has Fernet ciphertext for access_token, not plaintext), and regression on auth/login, auth/register, auth/me, dashboard/stats, leads list, briefing/generate.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/pr/press-release (and ALL Groq endpoints using response_format=json_object)",
+        "issue": "Groq server-side JSON-validator returns 400 'json_validate_failed' when the model emits invalid JSON (e.g. unescaped quotes inside fields). The Groq SDK raises BadRequestError, which is NOT caught — FastAPI returns 500 to the caller. Reproduced ~66% of runs on /api/pr/press-release. Same risk on /api/business/auto-fill, /api/market/analyze, /api/briefing/generate, /api/seo/*, /api/pr/*, /api/growth-plan/generate. _groq_json() catches json.loads errors but lets BadRequestError bubble up.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/register",
+        "issue": "Email is silently lowercased server-side. Document this normalisation OR echo back the original-case email. Otherwise clients comparing 'TEST_user@x.com' to /auth/me will mismatch."
+      },
+      {
+        "endpoint": "POST /api/webhooks/twilio/sms",
+        "issue": "Webhook is publicly POSTable with no Twilio signature validation (X-Twilio-Signature). An attacker can forge inbound messages and pollute communications + flip leads to INTERESTED. Should validate the request signature using TWILIO_AUTH_TOKEN before persisting."
+      },
+      {
+        "endpoint": "POST /api/webhooks/twilio/sms",
+        "issue": "Phone-number matching is exact-string equality. If a lead is stored as '+15555550199' but Twilio sends '+1 555-555-0199' or 'tel:+15555550199', the match fails silently and the inbound message is dropped (returns TwiML but does not log to db.communications)."
+      },
+      {
+        "endpoint": "GET /api/communications/inbox",
+        "issue": "N+1 lookup — for each message it does a separate db.leads.find_one. For 50 messages this is 50 round-trips. Use a single $lookup or fetch lead_ids in one batch."
+      },
+      {
+        "endpoint": "POST /api/business/auto-fill",
+        "issue": "Outbound HTTP fetch uses requests.get with no allow-list and no SSRF protection. A malicious user can post 'http://169.254.169.254/...' (cloud metadata), 'http://localhost:27017', or internal k8s service URLs. Add a private-IP / loopback / metadata block-list before fetching."
+      },
+      {
+        "endpoint": "POST /api/growth-plan/generate / /api/market/analyze / /api/briefing/generate",
+        "issue": "Always inserts a new record on every call — no debounce/rate-limit. A misbehaving client can spam Groq + bloat the collection."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_zeromark_growth_studio.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [
+    "Wrap Groq client calls (especially in _groq_json, generate_briefing, market_analyze, auto_fill_business, pr_press_release) in try/except groq.BadRequestError and retry once with a fallback prompt OR return 502 with a clear 'AI provider returned invalid JSON, please retry' message. This is the highest-impact reliability fix.",
+    "Add Twilio request signature validation on /api/webhooks/twilio/sms and /api/webhooks/twilio/whatsapp using TWILIO_AUTH_TOKEN.",
+    "Normalise phone numbers (E.164) on lead create/import AND on webhook lookup so '+1 555…' and '+15551234567' match.",
+    "Add SSRF protection in /api/business/auto-fill: reject loopback/private/link-local/metadata IPs before fetching.",
+    "Replace N+1 lead lookup in /api/communications/inbox with a $lookup or batched find.",
+    "Document email lowercasing or preserve original casing in the response."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~1773 lines — long overdue for a routers/ split (auth, leads, campaigns, ai, integrations, growth_studio, webhooks). Crosses the 700-line threshold by 2.5x.",
+    "Groq client is instantiated per-request inside every _gen() closure. Each call does a fresh TLS handshake + auth. Move to a single module-level Groq() client and reuse.",
+    "json_object response_format on Groq is not foolproof — the upstream model can still emit invalid JSON (observed today on press_release). Always wrap in try/except BadRequestError + json.JSONDecodeError + retry-once. Right now the failure surfaces as a 500 to the user.",
+    "Inbound webhook trusts whoever can reach the URL. Without signature validation, anyone can flip leads to INTERESTED and inject messages into the inbox.",
+    "Auto-fill endpoint allows arbitrary outbound HTTP — an SSRF vector for hitting cloud metadata services or internal k8s endpoints.",
+    "Encryption uses Fernet derived from JWT_SECRET. If JWT_SECRET ever rotates, all encrypted integration tokens become unrecoverable. Either (a) keep an explicit FERNET_KEY in env, or (b) implement a key-rotation strategy with a key id stored alongside ciphertext.",
+    "Webhooks/twilio/whatsapp simply calls twilio_inbound_sms — but the channel is hard-detected from the 'whatsapp:' prefix on From; this works, but make it explicit so the route is self-documenting.",
+    "_groq_json silently returns [] or {} on parse failure — callers (e.g. /seo/keywords) can therefore return empty arrays with HTTP 200, which is indistinguishable from 'no results' on the client side."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_zeromark_growth_studio.py (new)"
+  ],
+  "success_rate": {
+    "backend": "94.7% (18/19) — 1 flaky failure caused by uncaught Groq json_validate_failed 400 on /api/pr/press-release; same root cause threatens all other AI endpoints. Independent re-run confirms ~66% failure rate on /api/pr/press-release.",
+    "frontend": "n/a (skipped per request)"
+  },
+  "test_credentials": "admin@zeromark.ai / admin123 (auto-seeded). Test users created with TEST_/test_iter3_ prefixes.",
+  "seed_data_creation": "TEST_iter3 lead created and deleted within the inbound-webhook test. Admin business profile auto-upserted with ZeroMark AI defaults if missing. Admin LinkedIn integration set with marker access_token (encrypted at rest) — left in place to act as a regression marker for future runs.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use /app/backend/tests/test_zeromark_growth_studio.py for iteration 3 features. KEY GOTCHA: /api/pr/press-release (and any other AI endpoint hitting Groq json_object mode) is FLAKY at ~33% pass rate today because Groq's server-side JSON validator returns 400 when the model produces malformed JSON, and the backend does NOT catch groq.BadRequestError — it surfaces as a 500. Re-run flaky AI tests up to 3 times before declaring failure. ENCRYPTION TEST: requires direct mongo access via MONGO_URL — works only in-container. WEBHOOK TEST: hits POST /api/webhooks/twilio/sms with form-encoded From=+1555…, Body=…; verifies TwiML response AND that db.communications got a matching INBOUND record. Lead status flips NEW→INTERESTED. AI calls take 3-15s each.",
+  "rca of the issue": "ROOT CAUSE — uncaught upstream JSON-mode failure: Groq's chat.completions.create(response_format={'type':'json_object'}) does server-side JSON validation. When the model produces invalid JSON (e.g. an unescaped apostrophe inside a quote field — observed in the failing run: \\\"today's fast-paced...\\\" was emitted but the surrounding quote pair caused the validator to flag json_validate_failed), Groq returns HTTP 400 with code='json_validate_failed'. The Groq Python SDK raises groq.BadRequestError. In server.py none of the AI endpoints (auto_fill_business, market_analyze, generate_briefing, _groq_json, pr_press_release, etc.) wrap this in try/except, so it propagates to FastAPI's default exception handler and returns 500 to the client. _groq_json's existing try/except only covers json.loads (the local Python parser) — it never runs because the failure happens server-side at Groq before _groq_json even receives a payload. REPRODUCTION: run pytest backend/tests/test_zeromark_growth_studio.py::TestPR::test_press_release 3 times; expect ~2 failures with 500 'Internal Server Error' and 1 pass. Backend log shows 'groq.BadRequestError: Error code: 400 ... json_validate_failed'. MITIGATION: in _groq_json (and the inline _gen helpers in auto_fill / market / briefing) catch groq.BadRequestError, log the failed_generation, and either (a) retry once with temperature=0.0 + an explicit 'Output ONLY valid JSON, escape all quotes' instruction, or (b) raise HTTPException(502, 'AI provider returned invalid JSON, please retry')."
+}
