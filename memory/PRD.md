@@ -13,6 +13,21 @@
 
 ## What's been implemented
 
+### Iteration 10 (Feb 2026) — Multi-method authentication: Email + Google + SMS
+**Backend**
+- `POST /api/auth/google/callback` — Emergent-managed Google OAuth: takes `session_id` (from Emergent return URL), calls `https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data`, creates or finds user by email, issues internal JWT, sets `auth_provider="google"` and `picture` URL
+- `POST /api/auth/sms/send-otp` — generates 6-digit OTP, hashes with SHA-256, stores in `db.otp_codes` (10-min TTL, max 3/hour rate limit), sends via existing Twilio SMS. Dev fallback returns OTP in response when `APP_ENV=development`
+- `POST /api/auth/sms/verify-otp` — validates code (5-attempt cap), creates/finds user by phone, issues JWT
+- `serialize_user` extended with `phone`, `picture`, `auth_provider` fields
+- Phone validation: E.164 format enforced, 8–16 chars
+- New `APP_ENV=development` env var enables dev OTP in response (preview only)
+
+**Frontend**
+- `/auth/callback` page handles Google return — reads `#session_id=` from URL hash, exchanges via backend, stores JWT, redirects to `/onboarding` (new) or `/dashboard` (existing). Race-condition-safe with `useRef`
+- New `SmsAuthForm` component — 2-step (phone → 6-digit OTP) with toast showing dev OTP, attempt counter, change-number flow
+- Login + Register both updated with **method tabs (Email | SMS) + Google button** at the top
+- AuthContext gets new `setSession(token, user)` for OAuth/SMS flows
+
 ### Iteration 9 (Feb 2026) — Integrated end-to-end flow + ICP + Setup Checklist + Polish
 - **New**: `POST /api/icp/generate` + `GET /api/icp/latest` — structured Ideal Customer Profile (persona, firmographics with 5 tech signals, 5 buying signals, 10 sample target companies, 4 recommended channels with opening hooks, 5 qualification questions, 3 disqualifiers)
 - **New**: `POST /api/autopilot/kickoff` — one-shot orchestrator that saves lead target → generates ICP → builds 12-month plan → enables forecast alerts (3 AI calls bundled)

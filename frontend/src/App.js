@@ -25,6 +25,7 @@ import LandingPages from "@/pages/LandingPages";
 import LandingPageEditor from "@/pages/LandingPageEditor";
 import PublicLandingPage from "@/pages/PublicLandingPage";
 import Analytics from "@/pages/Analytics";
+import AuthCallback from "@/pages/AuthCallback";
 
 function Protected({ children }) {
     const { user, loading } = useAuth();
@@ -53,6 +54,7 @@ function App() {
                     <Route path="/" element={<Landing />} />
                     <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
                     <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
+                    <Route path="/auth/callback" element={<AuthCallback />} />
 
                     {/* Public landing page (built by users) */}
                     <Route path="/p/:slug" element={<PublicLandingPage />} />

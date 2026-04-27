@@ -6,9 +6,25 @@
 
 ## 1. Sign up (90 seconds)
 
-1. Go to **`/register`** on your preview URL
-2. Enter name, email, password (6+ chars). No credit card required, 14-day Pro trial.
-3. You land on the Onboarding wizard.
+You can sign up **3 ways**:
+
+### Option A — Email + Password
+1. Go to **`/register`** → keep the **Email** tab
+2. Enter first name, last name, email, password (6+ chars)
+3. Click **Create account & start trial**
+
+### Option B — Google (one click)
+1. Click **Sign up with Google** at the top
+2. Authorize the request on Google's page
+3. You're returned to `/auth/callback` and auto-redirected to onboarding (new) or dashboard (existing)
+
+### Option C — SMS / Phone OTP
+1. Click the **SMS** tab on `/register`
+2. Enter first name, last name + your phone in E.164 format (`+14155551234`)
+3. Click **Send OTP** → check SMS inbox (in dev/preview the OTP appears as a toast)
+4. Enter the 6-digit code → **Create account**
+
+All three issue the same internal JWT and unlock the same features. No credit card required, 14-day Pro trial included.
 
 ---
 

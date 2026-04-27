@@ -196,9 +196,12 @@ def create_access_token(user_id: str, email: str) -> str:
 def serialize_user(u: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": u["id"],
-        "email": u["email"],
+        "email": u.get("email"),
+        "phone": u.get("phone"),
         "first_name": u.get("first_name", ""),
         "last_name": u.get("last_name", ""),
+        "picture": u.get("picture"),
+        "auth_provider": u.get("auth_provider", "email"),
         "role": u.get("role", "user"),
         "created_at": iso(u.get("created_at")),
     }
@@ -390,6 +393,183 @@ async def login(payload: LoginIn, request: Request, response: Response):
 async def logout(response: Response):
     response.delete_cookie("access_token", path="/")
     return {"success": True}
+
+
+# ---------- Google OAuth (Emergent-managed) ----------
+class GoogleCallbackIn(BaseModel):
+    session_id: str
+
+
+@api.post("/auth/google/callback")
+async def google_callback(payload: GoogleCallbackIn, response: Response):
+    """Exchange Emergent session_id for our JWT.
+    REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH.
+    """
+    import requests as _rq
+    try:
+        r = _rq.get(
+            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+            headers={"X-Session-ID": payload.session_id},
+            timeout=10,
+        )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Auth service unreachable")
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid Google session")
+    data = r.json() or {}
+    email = (data.get("email") or "").lower().strip()
+    name = (data.get("name") or "").strip()
+    picture = data.get("picture") or ""
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account missing email")
+
+    parts = name.split(" ", 1) if name else [email.split("@")[0], ""]
+    first_name = parts[0] or email.split("@")[0]
+    last_name = parts[1] if len(parts) > 1 else ""
+
+    user = await db.users.find_one({"email": email})
+    is_new = False
+    if not user:
+        user_id = str(uuid.uuid4())
+        user = {
+            "id": user_id,
+            "email": email,
+            "password_hash": "",  # No password for OAuth users
+            "first_name": first_name,
+            "last_name": last_name,
+            "picture": picture,
+            "auth_provider": "google",
+            "role": "user",
+            "workspace_id": user_id,
+            "created_at": now_utc().isoformat(),
+        }
+        await db.users.insert_one(user)
+        await db.subscriptions.insert_one({
+            "id": str(uuid.uuid4()), "user_id": user_id, "plan": "FREE_TRIAL", "status": "ACTIVE",
+            "trial_ends_at": (now_utc() + timedelta(days=14)).isoformat(),
+            "created_at": now_utc().isoformat(),
+        })
+        is_new = True
+    else:
+        # Update with latest Google avatar; keep existing names if already set
+        upd: Dict[str, Any] = {"auth_provider": user.get("auth_provider") or "google", "last_login": now_utc().isoformat()}
+        if picture and not user.get("picture"):
+            upd["picture"] = picture
+        await db.users.update_one({"id": user["id"]}, {"$set": upd})
+
+    token = create_access_token(user["id"], user["email"])
+    response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7 * 24 * 3600, path="/")
+    return {"user": serialize_user(user), "token": token, "is_new": is_new}
+
+
+# ---------- SMS OTP authentication ----------
+class SmsOtpSendIn(BaseModel):
+    phone: str  # E.164 format e.g. +14155551234
+
+
+class SmsOtpVerifyIn(BaseModel):
+    phone: str
+    otp: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+
+def _normalize_phone(p: str) -> str:
+    p = (p or "").strip().replace(" ", "").replace("-", "")
+    if not p:
+        raise HTTPException(status_code=400, detail="Phone is required")
+    if not p.startswith("+"):
+        raise HTTPException(status_code=400, detail="Phone must be in E.164 format (e.g. +14155551234)")
+    if len(p) < 8 or len(p) > 16 or not p[1:].isdigit():
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    return p
+
+
+@api.post("/auth/sms/send-otp")
+async def sms_send_otp(payload: SmsOtpSendIn, request: Request):
+    phone = _normalize_phone(payload.phone)
+    # Rate limit: max 3 OTPs per phone per hour
+    one_hour_ago = (now_utc() - timedelta(hours=1)).isoformat()
+    recent = await db.otp_codes.count_documents({"phone": phone, "created_at": {"$gte": one_hour_ago}})
+    if recent >= 3:
+        raise HTTPException(status_code=429, detail="Too many OTP requests. Try again in an hour.")
+
+    code = "".join(secrets.choice("0123456789") for _ in range(6))
+    await db.otp_codes.insert_one({
+        "id": str(uuid.uuid4()),
+        "phone": phone,
+        "code_hash": hashlib.sha256(code.encode()).hexdigest(),
+        "attempts": 0,
+        "verified": False,
+        "expires_at": (now_utc() + timedelta(minutes=10)).isoformat(),
+        "created_at": now_utc().isoformat(),
+    })
+
+    # Send via Twilio (or fallback dev mode that returns OTP in response if SMS env not set)
+    try:
+        body = f"Your ZeroMark login code: {code}\n\nValid for 10 minutes. Do not share this code."
+        ok = await asyncio.get_event_loop().run_in_executor(None, _send_sms_sync, phone, body)
+        if not ok:
+            raise RuntimeError("Twilio failed")
+    except Exception:
+        # Dev fallback: include OTP in response (only when Twilio is misconfigured)
+        if os.environ.get("APP_ENV", "").lower() in ("dev", "development"):
+            return {"sent": False, "dev_otp": code, "note": "Twilio not configured; dev OTP returned."}
+        raise HTTPException(status_code=503, detail="Could not send SMS. Try email login or contact support.")
+
+    return {"sent": True, "expires_in_minutes": 10}
+
+
+@api.post("/auth/sms/verify-otp")
+async def sms_verify_otp(payload: SmsOtpVerifyIn, response: Response):
+    phone = _normalize_phone(payload.phone)
+    otp = (payload.otp or "").strip()
+    if len(otp) != 6 or not otp.isdigit():
+        raise HTTPException(status_code=400, detail="OTP must be 6 digits")
+    rec = await db.otp_codes.find_one({"phone": phone, "verified": False}, sort=[("created_at", -1)])
+    if not rec:
+        raise HTTPException(status_code=400, detail="No active OTP found. Request a new one.")
+    if datetime.fromisoformat(rec["expires_at"]) < now_utc():
+        raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
+    if rec.get("attempts", 0) >= 5:
+        raise HTTPException(status_code=429, detail="Too many wrong attempts. Request a new OTP.")
+
+    if hashlib.sha256(otp.encode()).hexdigest() != rec["code_hash"]:
+        await db.otp_codes.update_one({"id": rec["id"]}, {"$inc": {"attempts": 1}})
+        raise HTTPException(status_code=401, detail="Invalid OTP")
+
+    await db.otp_codes.update_one({"id": rec["id"]}, {"$set": {"verified": True}})
+
+    # Find or create user by phone
+    user = await db.users.find_one({"phone": phone})
+    is_new = False
+    if not user:
+        user_id = str(uuid.uuid4())
+        user = {
+            "id": user_id,
+            "phone": phone,
+            "email": None,
+            "password_hash": "",
+            "first_name": (payload.first_name or "User").strip()[:50],
+            "last_name": (payload.last_name or "").strip()[:50],
+            "auth_provider": "sms",
+            "role": "user",
+            "workspace_id": user_id,
+            "created_at": now_utc().isoformat(),
+        }
+        await db.users.insert_one(user)
+        await db.subscriptions.insert_one({
+            "id": str(uuid.uuid4()), "user_id": user_id, "plan": "FREE_TRIAL", "status": "ACTIVE",
+            "trial_ends_at": (now_utc() + timedelta(days=14)).isoformat(),
+            "created_at": now_utc().isoformat(),
+        })
+        is_new = True
+    else:
+        await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now_utc().isoformat()}})
+
+    token = create_access_token(user["id"], user.get("email") or f"phone:{phone}")
+    response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7 * 24 * 3600, path="/")
+    return {"user": serialize_user(user), "token": token, "is_new": is_new}
 
 
 @api.get("/auth/me")

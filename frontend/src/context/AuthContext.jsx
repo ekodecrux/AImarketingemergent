@@ -33,6 +33,11 @@ export const AuthProvider = ({ children }) => {
         return r.data.user;
     };
 
+    const setSession = (token, userData) => {
+        localStorage.setItem("zm_token", token);
+        setUser(userData);
+    };
+
     const logout = async () => {
         try { await api.post("/auth/logout"); } catch (_) {}
         localStorage.removeItem("zm_token");
@@ -40,7 +45,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, loading, login, register, logout, setUser }}>
+        <AuthContext.Provider value={{ user, loading, login, register, logout, setUser, setSession }}>
             {children}
         </AuthContext.Provider>
     );
