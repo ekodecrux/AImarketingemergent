@@ -234,34 +234,40 @@ async def register(payload: RegisterIn, response: Response):
 @api.post("/auth/login")
 async def login(payload: LoginIn, request: Request, response: Response):
     email = payload.email.lower()
-    ip = request.client.host if request.client else "unknown"
-    identifier = f"{ip}:{email}"
+    # Real client IP: prefer X-Forwarded-For first hop, fall back to request.client.host
+    fwd = request.headers.get("x-forwarded-for", "")
+    real_ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+    ip_id = f"{real_ip}:{email}"
+    email_id = f"email:{email}"
 
-    # Brute-force lockout: 5 failed attempts -> 15min lock
-    attempts = await db.login_attempts.find_one({"identifier": identifier})
-    if attempts and attempts.get("locked_until"):
-        locked_until = datetime.fromisoformat(attempts["locked_until"])
-        if locked_until > now_utc():
-            mins = int((locked_until - now_utc()).total_seconds() / 60) + 1
-            raise HTTPException(status_code=429, detail=f"Too many failed attempts. Locked for {mins} more minute(s).")
+    # Brute-force lockout: 5 failed attempts -> 15min lock (whichever counter trips first)
+    for ident in (ip_id, email_id):
+        rec = await db.login_attempts.find_one({"identifier": ident})
+        if rec and rec.get("locked_until"):
+            locked_until = datetime.fromisoformat(rec["locked_until"])
+            if locked_until > now_utc():
+                mins = int((locked_until - now_utc()).total_seconds() / 60) + 1
+                raise HTTPException(status_code=429, detail=f"Too many failed attempts. Locked for {mins} more minute(s).")
 
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(payload.password, user["password_hash"]):
-        # Increment failed counter
-        count = (attempts or {}).get("count", 0) + 1
-        update: Dict[str, Any] = {"count": count, "last_attempt": now_utc().isoformat()}
-        if count >= 5:
-            update["locked_until"] = (now_utc() + timedelta(minutes=15)).isoformat()
-            update["count"] = 0
-        await db.login_attempts.update_one(
-            {"identifier": identifier},
-            {"$set": update, "$setOnInsert": {"identifier": identifier}},
-            upsert=True,
-        )
+        # Increment BOTH counters so account always locks at 5 fails regardless of IP
+        for ident in (ip_id, email_id):
+            existing = await db.login_attempts.find_one({"identifier": ident})
+            count = (existing or {}).get("count", 0) + 1
+            update: Dict[str, Any] = {"count": count, "last_attempt": now_utc().isoformat()}
+            if count >= 5:
+                update["locked_until"] = (now_utc() + timedelta(minutes=15)).isoformat()
+                update["count"] = 0
+            await db.login_attempts.update_one(
+                {"identifier": ident},
+                {"$set": update, "$setOnInsert": {"identifier": ident}},
+                upsert=True,
+            )
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Success — clear attempts
-    await db.login_attempts.delete_one({"identifier": identifier})
+    # Success — clear both counters
+    await db.login_attempts.delete_many({"identifier": {"$in": [ip_id, email_id]}})
     token = create_access_token(user["id"], user["email"])
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7 * 24 * 3600, path="/")
     return {"user": serialize_user(user), "token": token}
