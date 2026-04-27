@@ -5,6 +5,7 @@ import {
     Tray, ChartLineUp, UsersThree, Globe, Pulse,
 } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
+import NotificationsBell from "@/components/NotificationsBell";
 
 const sections = [
     {
@@ -92,13 +93,14 @@ export default function AppLayout() {
                 </nav>
 
                 <div className="border-t border-[#EDE5D4] p-4">
-                    <div className="flex items-center justify-between">
-                        <div className="min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
                             <p className="text-sm font-bold truncate" data-testid="user-name">
                                 {user?.first_name} {user?.last_name}
                             </p>
                             <p className="text-xs text-[#71717A] truncate">{user?.email}</p>
                         </div>
+                        <NotificationsBell />
                         <button
                             onClick={handleLogout}
                             data-testid="logout-button"

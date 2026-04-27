@@ -13,7 +13,22 @@
 
 ## What's been implemented
 
-### Iteration 6 (Feb 2026) — Paid/Organic AI Plan + Guaranteed Leads + Real-time Analytics + Unbounce theme
+### Iteration 7 (Feb 2026) — Forecast Alerts (Slack/Email/In-app + AI suggestions)
+**Backend**
+- `GET/POST /api/alerts/preferences` — channel toggles (email/slack/in-app), cadence (daily silent + weekly Monday digest), `hour_utc`, configurable `at_risk_threshold_pct` (default 80%), `slack_webhook_url` validated to start with `https://hooks.slack.com/`
+- `POST /api/alerts/test` — on-demand send via all configured channels with a Groq-generated corrective action (e.g. "Add $500 to Google Ads, expecting 5 additional leads")
+- `GET /api/alerts/history` — last 50 sent alerts with delivery status per channel
+- `GET /api/notifications` (with `unread_count`) / `POST /api/notifications/{id}/read` / `POST /api/notifications/mark-all-read`
+- New APScheduler job `_send_forecast_alerts_tick` — hourly cron at minute :05; fires daily silent check (only if at-risk vs threshold) AND weekly digest (every Monday) per user's preferred hour
+- Email body: branded HTML with bar visualization + AI suggestion + CTA button to /analytics
+- Slack body: blocks API with header + suggestion + Open-Analytics button
+- Lead targets, channel distribution, business profile all feed the AI prompt for context-aware suggestions
+
+**Frontend**
+- New `NotificationsBell` in sidebar footer — orange unread badge, dropdown panel with severity icons (high=at-risk, info=on-track), 60s auto-poll
+- New "Forecast Alerts" card on `/team` page — channel toggles (email/Slack/in-app), Slack webhook URL input (only when Slack on), cadence toggles, hour + threshold dropdowns, "Send test alert now" button
+
+### Iteration 6 — Paid/Organic AI Plan + Guaranteed Leads + Real-time Analytics + Unbounce theme
 **Backend (12/12 tests pass)**
 - `POST /api/growth-plan/generate` — AI plan now includes `channel_distribution[]` (paid + organic mix), `monthly_lead_target`, `monthly_budget_usd`, `avg_deal_value_usd`
 - `POST /api/growth-plan/channels` — user override for channel distribution + targets, persisted to growth_plans collection

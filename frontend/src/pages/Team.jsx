@@ -3,7 +3,7 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import { useAuth } from "@/context/AuthContext";
-import { UserPlus, Crown, Trash, Envelope, Bell } from "@phosphor-icons/react";
+import { UserPlus, Crown, Trash, Envelope, Bell, ShieldCheck, PaperPlaneTilt, SlackLogo } from "@phosphor-icons/react";
 
 export default function Team() {
     const { user } = useAuth();
@@ -15,12 +15,16 @@ export default function Team() {
     const [tempPassword, setTempPassword] = useState(null);
     const [briefPref, setBriefPref] = useState({ daily_email: false, hour_utc: 8 });
     const [savingPref, setSavingPref] = useState(false);
+    const [alertPref, setAlertPref] = useState(null);
+    const [savingAlert, setSavingAlert] = useState(false);
+    const [testingAlert, setTestingAlert] = useState(false);
 
     const load = () => {
         setLoading(true);
         Promise.all([
             api.get("/team/members").then((r) => setMembers(r.data.members)),
             api.get("/briefing/preferences").then((r) => setBriefPref(r.data)),
+            api.get("/alerts/preferences").then((r) => setAlertPref(r.data.preferences)),
         ]).finally(() => setLoading(false));
     };
     useEffect(() => { load(); }, []);
@@ -64,6 +68,33 @@ export default function Team() {
             toast.success("Preferences saved");
         } catch { toast.error("Save failed"); }
         finally { setSavingPref(false); }
+    };
+
+    const saveAlertPref = async (next) => {
+        setSavingAlert(true);
+        const updated = { ...alertPref, ...next };
+        setAlertPref(updated);
+        try {
+            await api.post("/alerts/preferences", updated);
+            toast.success("Alert settings saved");
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Save failed");
+            // Reload to revert optimistic update on validation failure
+            api.get("/alerts/preferences").then((r) => setAlertPref(r.data.preferences));
+        } finally { setSavingAlert(false); }
+    };
+
+    const sendTestAlert = async () => {
+        setTestingAlert(true);
+        const t = toast.loading("Computing forecast & sending test alert…");
+        try {
+            const r = await api.post("/alerts/test");
+            const d = r.data.delivered || {};
+            const channels = [d.email && "Email", d.slack && "Slack", d.inapp && "In-app"].filter(Boolean).join(" + ");
+            toast.success(`Test sent · ${channels || "in-app only"}`, { id: t });
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Test failed", { id: t });
+        } finally { setTestingAlert(false); }
     };
 
     const isOwner = members.find((m) => m.id === user?.id)?.is_owner;
@@ -188,8 +219,114 @@ export default function Team() {
                             Email replies sent to <span className="font-mono text-[#0E0F11]">{process.env.REACT_APP_SUPPORT_EMAIL || "your Gmail address"}</span> are auto-polled every 3 minutes via IMAP and routed to the matching lead in your Inbox.
                         </p>
                     </div>
+
+                    {/* Forecast Alerts */}
+                    {alertPref && (
+                        <div className="zm-card p-6" data-testid="alert-prefs">
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                    <ShieldCheck size={16} weight="fill" className="text-[#FF562D]" />
+                                    <h3 className="font-display text-lg font-bold tracking-tight">Forecast Alerts</h3>
+                                </div>
+                                <span className="zm-badge bg-[#FFE6DC] text-[#FF562D]">PROACTIVE</span>
+                            </div>
+                            <p className="text-xs text-[#71717A] mb-4 leading-relaxed">
+                                Get pinged when your monthly lead forecast falls below your threshold — with an AI-suggested budget shift to recover the gap.
+                            </p>
+
+                            {/* Channels */}
+                            <p className="zm-label">Channels</p>
+                            <div className="space-y-2 mb-4">
+                                <Toggle label="Email" icon={Envelope} checked={alertPref.email_enabled} onChange={(v) => saveAlertPref({ email_enabled: v })} disabled={savingAlert} testid="alert-email" />
+                                <Toggle label="Slack webhook" icon={SlackLogo} checked={alertPref.slack_enabled} onChange={(v) => saveAlertPref({ slack_enabled: v })} disabled={savingAlert} testid="alert-slack" />
+                                <Toggle label="In-app bell" icon={Bell} checked={alertPref.inapp_enabled} onChange={(v) => saveAlertPref({ inapp_enabled: v })} disabled={savingAlert} testid="alert-inapp" />
+                            </div>
+                            {alertPref.slack_enabled && (
+                                <div className="mb-4">
+                                    <label className="zm-label">Slack incoming-webhook URL</label>
+                                    <input
+                                        className="zm-input font-mono text-xs"
+                                        placeholder="https://hooks.slack.com/services/T0…"
+                                        value={alertPref.slack_webhook_url || ""}
+                                        onChange={(e) => setAlertPref({ ...alertPref, slack_webhook_url: e.target.value })}
+                                        onBlur={(e) => saveAlertPref({ slack_webhook_url: e.target.value })}
+                                        data-testid="alert-slack-url"
+                                    />
+                                </div>
+                            )}
+
+                            {/* Cadence */}
+                            <p className="zm-label">Cadence</p>
+                            <div className="space-y-2 mb-4">
+                                <Toggle label="Daily silent check (only sends if at risk)" checked={alertPref.daily_check} onChange={(v) => saveAlertPref({ daily_check: v })} disabled={savingAlert} testid="alert-daily" />
+                                <Toggle label="Weekly digest (every Monday)" checked={alertPref.weekly_digest} onChange={(v) => saveAlertPref({ weekly_digest: v })} disabled={savingAlert} testid="alert-weekly" />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 mb-4">
+                                <div>
+                                    <label className="zm-label">Send hour (UTC)</label>
+                                    <select
+                                        value={alertPref.hour_utc}
+                                        onChange={(e) => saveAlertPref({ hour_utc: Number(e.target.value) })}
+                                        disabled={savingAlert}
+                                        className="zm-input"
+                                        data-testid="alert-hour"
+                                    >
+                                        {[...Array(24).keys()].map((h) => (
+                                            <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="zm-label">At-risk threshold</label>
+                                    <select
+                                        value={alertPref.at_risk_threshold_pct}
+                                        onChange={(e) => saveAlertPref({ at_risk_threshold_pct: Number(e.target.value) })}
+                                        disabled={savingAlert}
+                                        className="zm-input"
+                                        data-testid="alert-threshold"
+                                    >
+                                        {[100, 90, 80, 70, 60, 50].map((p) => (
+                                            <option key={p} value={p}>&lt; {p}% of target</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={sendTestAlert}
+                                disabled={testingAlert || savingAlert}
+                                className="zm-btn-secondary w-full text-xs"
+                                data-testid="alert-test"
+                            >
+                                <PaperPlaneTilt size={12} weight="bold" />
+                                {testingAlert ? "Sending test…" : "Send test alert now"}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
+    );
+}
+
+function Toggle({ label, icon: Icon, checked, onChange, disabled, testid }) {
+    return (
+        <button
+            type="button"
+            onClick={() => !disabled && onChange(!checked)}
+            disabled={disabled}
+            className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-[#EDE5D4] bg-white hover:border-[#0E0F11] disabled:opacity-50 transition-colors text-left"
+            data-testid={testid}
+            aria-pressed={checked}
+        >
+            <span className="flex items-center gap-2 text-sm font-semibold">
+                {Icon && <Icon size={14} weight="bold" className="text-[#52525B]" />}
+                {label}
+            </span>
+            <span className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${checked ? "bg-[#FF562D]" : "bg-[#EDE5D4]"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${checked ? "translate-x-4" : ""}`}></span>
+            </span>
+        </button>
     );
 }
