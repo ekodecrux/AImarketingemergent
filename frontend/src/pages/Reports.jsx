@@ -74,9 +74,9 @@ export default function Reports() {
                         className="zm-input w-auto"
                         data-testid="report-period"
                     >
-                        <option value={7}>Last 7 days</option>
-                        <option value={30}>Last 30 days</option>
-                        <option value={90}>Last 90 days</option>
+                        <option value={7}>±7 days (this week)</option>
+                        <option value={30}>±30 days (this month)</option>
+                        <option value={90}>±90 days (this quarter)</option>
                     </select>
                     {metrics?.is_synthetic && (
                         <span className="text-[11px] text-[#94A3B8] italic ml-1" data-testid="metrics-synthetic-note">

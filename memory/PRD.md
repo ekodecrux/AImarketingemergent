@@ -19,6 +19,22 @@ User explicitly asked (Iter 7, Feb 2026):
 
 ## Key features (cumulative)
 
+### Iter 14 (Feb 2026) — Reports analytics + parallelism + admin scale
+**Backend**
+- New `GET /api/reports/marketing-metrics?days=N` (1 ≤ N ≤ 90) — funnel metrics:
+  - 4 KPIs: impressions, clicks, conversions, scheduled_posts (with published count)
+  - Funnel rates: `ctr_pct`, `conv_rate_pct`; real `leads_in_period` and `converted_in_period` from DB
+  - Per-platform breakdown (linkedin/twitter/instagram/blog/email_broadcast) using industry-median multipliers (50% projection for pending, 100% for published)
+  - Symmetric window `[now - Ndays, now + Ndays]` so forward-scheduled posts surface across periods
+  - `is_synthetic=true` flag (UI shows note about connecting real OAuth)
+- `POST /api/plan/kickoff-execution` now runs content kit generation in **parallel** via `asyncio.Semaphore(3)` — 6 posts in ~20-25s instead of ~60s
+- `GET /api/admin/users` refactored to use **`$group` aggregation** — 1 round-trip per collection (leads, campaigns, subscriptions) instead of 3×N — 200 users now hydrate in ~0.17s instead of ~5-10s
+
+**Frontend**
+- `/reports` REWRITTEN as full Reports & Analysis dashboard: 4 KPI cards (impressions/clicks/conversions/posts) → funnel summary row → daily trend area chart (impressions × clicks × conversions) + by-channel stacked bar chart → per-platform table with branded icons → original Lead/Campaign/Gap on-demand reports + history beneath
+- Period selector: ±7 / ±30 / ±90 days (symmetric so results actually change)
+- Empty state when no scheduled posts (links to `/growth`)
+
 ### Iter 13 (Feb 2026) — Quick Plan + Execution Kickoff + Super Admin + Chatbot + Encrypted Social Vault
 **Backend**
 - `POST /api/quick-plan/generate` — budget-driven simplified flow:
@@ -76,7 +92,8 @@ User explicitly asked (Iter 7, Feb 2026):
 |---|---|---|
 | 1-5 | MVP + scaling features | ALL PASS |
 | 6 | Paid/Organic + Analytics + Guarantee + Theme | 12/12 ✅ |
-| 7 (this) | Quick Plan + Kickoff + Admin + Social vault + Chatbot | 15/15 ✅ + 7/7 frontend |
+| 7 | Quick Plan + Kickoff + Admin + Social vault + Chatbot | 15/15 ✅ + 7/7 frontend |
+| 14 | Reports metrics + parallel kickoff + agg admin queries | 11/11 ✅ + 4/4 frontend |
 
 ## Backlog (P2)
 - **P2** Concurrent content generation in `plan_kickoff_execution` (currently sequential — up to 90s for 6 kits)

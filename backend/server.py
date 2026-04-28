@@ -1151,18 +1151,22 @@ _PLATFORM_METRICS = {
 
 @api.get("/reports/marketing-metrics")
 async def reports_marketing_metrics(days: int = 30, user=Depends(get_current_user)):
-    """Funnel metrics for content scheduled+published in the last N days.
+    """Funnel metrics for content scheduled+published in a +/- N day window centered on now.
     Computes per-platform impressions/clicks/conversions and returns a daily
     time-series for charting. Real lead counts replace synthetic conversions
     where leads.created_at falls inside the period."""
     days = max(1, min(days, 90))
     period_start = now_utc() - timedelta(days=days)
+    period_end = now_utc() + timedelta(days=days)
     period_iso = period_start.isoformat()
+    period_end_iso = period_end.isoformat()
 
     # Pull all scheduled+published items for the workspace in window
+    # (window spans both past N days AND next N days so that forward-scheduled
+    # content shows different totals at each Period selection)
     schedules = await db.content_schedules.find({
         "user_id": ws(user),
-        "scheduled_at": {"$gte": period_iso},
+        "scheduled_at": {"$gte": period_iso, "$lte": period_end_iso},
     }, {"_id": 0}).to_list(2000)
 
     per_platform: Dict[str, Dict[str, float]] = {p: {
