@@ -15,6 +15,7 @@ import asyncio
 import secrets
 import hmac
 import hashlib
+import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -4167,13 +4168,41 @@ async def admin_overview(user=Depends(get_current_user)):
 
 
 @api.get("/admin/users")
-async def admin_users(user=Depends(get_current_user)):
+async def admin_users(
+    page: int = 1,
+    limit: int = 25,
+    q: Optional[str] = None,
+    user=Depends(get_current_user),
+):
     _require_admin(user)
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).limit(200).to_list(200)
-    if not users:
-        return {"users": []}
+    page = max(1, page)
+    limit = max(1, min(limit, 100))
+    skip = (page - 1) * limit
 
-    # Workspace IDs to aggregate over
+    # Build query
+    mongo_q: Dict[str, Any] = {}
+    if q:
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        mongo_q["$or"] = [
+            {"email": rx},
+            {"phone": rx},
+            {"first_name": rx},
+            {"last_name": rx},
+        ]
+
+    total = await db.users.count_documents(mongo_q)
+    users = await db.users.find(mongo_q, {"_id": 0, "password_hash": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+
+    if not users:
+        return {
+            "users": [],
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit if total else 0,
+        }
+
+    # Workspace IDs to aggregate over (for current page only)
     wids = list({(u.get("workspace_id") or u["id"]) for u in users})
 
     # Single $group aggregation per collection — O(1) round-trips instead of O(N)
@@ -4200,7 +4229,13 @@ async def admin_users(user=Depends(get_current_user)):
             "campaign_count": camps_by_wid.get(wid, 0),
             "subscription": subs_by_wid.get(wid),
         })
-    return {"users": enriched}
+    return {
+        "users": enriched,
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "total_pages": (total + limit - 1) // limit if total else 0,
+    }
 
 
 # ====================================================================

@@ -19,6 +19,20 @@ User explicitly asked (Iter 7, Feb 2026):
 
 ## Key features (cumulative)
 
+### Iter 15 (Feb 2026) — Admin Users pagination + search
+**Backend**
+- `GET /api/admin/users?page=N&limit=L&q=search` — full pagination + case-insensitive search across `email`, `phone`, `first_name`, `last_name` (regex-escaped)
+- Response shape: `{users[], page, limit, total, total_pages}`
+- `limit` clamped to `[1, 100]`, `page` clamped to `>= 1`
+- Aggregation hydration (leads/campaigns/subs) now runs only on the current page's user set — O(page_size) instead of O(all_users)
+
+**Frontend**
+- `/admin` page Users table now has:
+  - Top-right search box (debounced 350ms) + page-size selector (10/25/50/100)
+  - Bottom pagination footer with "Page X of Y" + Prev/Next + numbered buttons (compact ellipsis when >7 pages)
+  - "Showing N–M" range indicator
+  - Empty state (no results / no users yet)
+
 ### Iter 14 (Feb 2026) — Reports analytics + parallelism + admin scale
 **Backend**
 - New `GET /api/reports/marketing-metrics?days=N` (1 ≤ N ≤ 90) — funnel metrics:
