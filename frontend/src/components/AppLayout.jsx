@@ -4,13 +4,15 @@ import {
     SquaresFour, Users, Megaphone, CheckSquare, Buildings,
     ChartBar, Receipt, SignOut, Sparkle, Compass, Plugs,
     Tray, ChartLineUp, UsersThree, Globe, Pulse, Article, CalendarBlank, List, X,
+    Crown, Lightning, Question,
 } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import NotificationsBell from "@/components/NotificationsBell";
+import ChatbotWidget from "@/components/ChatbotWidget";
 
-const sections = [
+const baseSections = [
     {
-        title: "Workspace",
+        title: "Run",
         items: [
             { to: "/dashboard", label: "Dashboard", icon: SquaresFour, testid: "nav-dashboard" },
             { to: "/analytics", label: "Live Analytics", icon: Pulse, testid: "nav-analytics", badge: "LIVE" },
@@ -19,29 +21,39 @@ const sections = [
         ],
     },
     {
-        title: "Pipeline",
+        title: "Strategy",
         items: [
-            { to: "/leads", label: "Leads", icon: Users, testid: "nav-leads" },
-            { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns" },
+            { to: "/business", label: "Business Profile", icon: Buildings, testid: "nav-business" },
+            { to: "/growth", label: "Growth Studio", icon: ChartLineUp, testid: "nav-growth" },
+        ],
+    },
+    {
+        title: "Execution Engine",
+        items: [
+            { to: "/leads", label: "Leads (CRM)", icon: Users, testid: "nav-leads" },
             { to: "/scraping", label: "Lead Discovery", icon: Compass, testid: "nav-scraping" },
+            { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns" },
             { to: "/landing-pages", label: "Landing Pages", icon: Globe, testid: "nav-landing-pages" },
         ],
     },
     {
-        title: "Growth",
+        title: "Posts & Content",
         items: [
-            { to: "/growth", label: "Growth Studio", icon: ChartLineUp, testid: "nav-growth" },
             { to: "/content", label: "Content Studio", icon: Article, testid: "nav-content" },
-            { to: "/schedule", label: "Schedule", icon: CalendarBlank, testid: "nav-schedule", badge: "AUTO" },
-            { to: "/reports", label: "Reports", icon: ChartBar, testid: "nav-reports" },
+            { to: "/schedule", label: "Auto-publish", icon: CalendarBlank, testid: "nav-schedule", badge: "AUTO" },
+        ],
+    },
+    {
+        title: "Reports",
+        items: [
+            { to: "/reports", label: "Reports & Analysis", icon: ChartBar, testid: "nav-reports" },
         ],
     },
     {
         title: "Settings",
         items: [
-            { to: "/business", label: "Business Profile", icon: Buildings, testid: "nav-business" },
             { to: "/integrations", label: "Integrations", icon: Plugs, testid: "nav-integrations" },
-            { to: "/team", label: "Team", icon: UsersThree, testid: "nav-team" },
+            { to: "/team", label: "Team & Alerts", icon: UsersThree, testid: "nav-team" },
             { to: "/billing", label: "Billing", icon: Receipt, testid: "nav-billing" },
         ],
     },
@@ -62,6 +74,17 @@ export default function AppLayout() {
         document.body.style.overflow = open ? "hidden" : "";
         return () => { document.body.style.overflow = ""; };
     }, [open]);
+
+    // Add admin section if user is admin
+    const sections = [...baseSections];
+    if ((user?.role || "user") === "admin") {
+        sections.push({
+            title: "Admin",
+            items: [
+                { to: "/admin", label: "Super Admin", icon: Crown, testid: "nav-admin", badge: "PRO" },
+            ],
+        });
+    }
 
     const Sidebar = (
         <>
@@ -157,6 +180,7 @@ export default function AppLayout() {
             <main className="flex-1 min-w-0 overflow-x-hidden pt-14 lg:pt-0">
                 <Outlet />
             </main>
+            <ChatbotWidget />
         </div>
     );
 }

@@ -1,195 +1,201 @@
 import { Link } from "react-router-dom";
 import {
-    Sparkle, ArrowRight, Lightning, Megaphone, ChartLineUp,
-    Users, CheckCircle, Robot, Target, Globe,
+    Sparkle, ArrowRight, CheckCircle, Robot, Target, Globe, Lightning,
+    ChartLineUp, Megaphone, RocketLaunch,
 } from "@phosphor-icons/react";
+import {
+    AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
+} from "recharts";
+
+const GROWTH_DATA = [
+    { m: "Jan", leads: 12, revenue: 4 },
+    { m: "Feb", leads: 19, revenue: 6 },
+    { m: "Mar", leads: 28, revenue: 11 },
+    { m: "Apr", leads: 42, revenue: 18 },
+    { m: "May", leads: 61, revenue: 28 },
+    { m: "Jun", leads: 83, revenue: 41 },
+    { m: "Jul", leads: 112, revenue: 58 },
+    { m: "Aug", leads: 148, revenue: 79 },
+    { m: "Sep", leads: 186, revenue: 104 },
+];
 
 export default function Landing() {
     return (
-        <div className="min-h-screen bg-[#F8FAFC]">
+        <div className="min-h-screen bg-white">
             {/* Nav */}
-            <header className="bg-[#F8FAFC]">
-                <div className="max-w-7xl mx-auto px-6 lg:px-12 py-5 flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 bg-[#0F172A] flex items-center justify-center rounded-xl">
-                            <Sparkle size={18} weight="fill" className="text-[#2563EB]" />
+            <header className="border-b border-[#E2E8F0]">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-4 flex items-center justify-between">
+                    <Link to="/" className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 bg-[#0F172A] flex items-center justify-center rounded-md">
+                            <Sparkle size={16} weight="fill" className="text-[#2563EB]" />
                         </div>
-                        <span className="font-display text-2xl font-black tracking-tight">ZeroMark</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <Link to="/login" className="text-sm font-semibold text-[#0F172A] hover:text-[#2563EB] px-3 py-2" data-testid="landing-login">Sign in</Link>
-                        <Link to="/register" className="zm-btn-primary" data-testid="landing-register">
+                        <span className="font-display text-xl font-black tracking-tight">ZeroMark</span>
+                    </Link>
+                    <div className="flex items-center gap-2 sm:gap-3">
+                        <Link to="/login" className="text-sm font-semibold text-[#0F172A] hover:text-[#2563EB] px-2 sm:px-3 py-2" data-testid="landing-login">Sign in</Link>
+                        <Link to="/register" className="zm-btn-primary text-xs sm:text-sm" data-testid="landing-register">
                             Start free <ArrowRight size={14} weight="bold" />
                         </Link>
                     </div>
                 </div>
             </header>
 
-            {/* Hero */}
-            <section className="relative overflow-hidden">
-                <div className="max-w-7xl mx-auto px-6 lg:px-12 py-16 lg:py-24 grid lg:grid-cols-12 gap-12 items-center relative">
-                    {/* Decorative blob */}
-                    <div className="absolute top-10 right-0 w-[500px] h-[500px] rounded-full bg-[#DBEAFE] blur-3xl opacity-70 -z-0"></div>
-                    <div className="absolute bottom-0 left-1/3 w-[300px] h-[300px] rounded-full bg-[#E0E7FF] blur-3xl opacity-50 -z-0"></div>
-
-                    <div className="lg:col-span-7 relative z-10">
-                        <span className="zm-tag-pill mb-6"><Sparkle size={11} weight="fill" className="text-[#2563EB] mr-1" /> AI Marketing OS</span>
-                        <h1 className="font-display text-5xl md:text-7xl lg:text-[88px] font-black tracking-[-0.035em] leading-[1.0] mt-6">
-                            Convert more with<br />
-                            marketing that <span className="text-[#2563EB]">actually</span><br />
-                            works.
+            {/* Hero — tight, growth-chart-led */}
+            <section className="bg-gradient-to-b from-[#F8FAFC] to-white">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-12 lg:py-16 grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+                    <div>
+                        <span className="zm-tag-pill mb-4">// AI Marketing OS · Guaranteed Leads</span>
+                        <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-[1.05] mt-4">
+                            The marketing engine that <span className="text-[#2563EB]">guarantees</span> your monthly leads.
                         </h1>
-                        <p className="text-base md:text-lg text-[#3F3F46] mt-8 max-w-xl leading-relaxed">
-                            Build landing pages, capture leads, automate outreach across every channel — and let AI distribute your budget between paid &amp; organic for guaranteed pipeline.
+                        <p className="text-base text-[#475569] mt-5 max-w-xl leading-relaxed">
+                            Set your goal — AI builds your 12-month plan, identifies your ideal customer, drafts content daily, auto-publishes across channels, and forecasts when you're behind so you never miss a quota.
                         </p>
-                        <div className="flex flex-wrap gap-3 mt-10">
-                            <Link to="/register" className="zm-btn-primary text-base px-7 py-3.5" data-testid="hero-cta-primary">
+                        <div className="flex flex-wrap gap-2 sm:gap-3 mt-7">
+                            <Link to="/register" className="zm-btn-primary text-sm sm:text-base px-6 py-3" data-testid="hero-cta-primary">
                                 Start 14-day trial <ArrowRight size={16} weight="bold" />
                             </Link>
-                            <Link to="/login" className="zm-btn-secondary text-base px-7 py-3.5" data-testid="hero-cta-secondary">
+                            <Link to="/login" className="zm-btn-secondary text-sm sm:text-base px-6 py-3" data-testid="hero-cta-secondary">
                                 Watch demo
                             </Link>
                         </div>
-                        <div className="flex flex-wrap items-center gap-6 mt-8 text-xs text-[#52525B] font-semibold">
+                        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-6 text-xs text-[#64748B] font-semibold">
                             <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> No credit card</span>
+                            <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> 49 countries</span>
                             <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> Setup in 2 min</span>
-                            <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> Cancel anytime</span>
                         </div>
                     </div>
-                    <div className="lg:col-span-5 relative z-10">
-                        <div className="relative">
-                            {/* Mock dashboard card stack */}
-                            <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-lg shadow-[#2563EB]/5">
-                                <div className="flex items-center justify-between mb-4">
-                                    <span className="zm-section-label">Live · Last 24h</span>
-                                    <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse"></span>
-                                </div>
-                                <div className="font-display text-5xl font-black tracking-tighter">+$48.2K</div>
-                                <p className="text-xs text-[#71717A] mt-1 font-semibold">REVENUE THIS MONTH</p>
-                                <div className="mt-5 space-y-2.5">
-                                    {[
-                                        ["Google Ads", "Paid", 32, "#2563EB"],
-                                        ["SEO", "Organic", 24, "#10B981"],
-                                        ["Cold Email", "Organic", 18, "#0F172A"],
-                                        ["LinkedIn", "Paid", 14, "#F59E0B"],
-                                    ].map(([n, t, p, c]) => (
-                                        <div key={n}>
-                                            <div className="flex justify-between text-xs mb-1 font-semibold">
-                                                <span>{n} <span className="text-[#A1A1AA] uppercase tracking-wider text-[9px] ml-1">{t}</span></span>
-                                                <span>{p} leads</span>
-                                            </div>
-                                            <div className="h-2 bg-[#F8FAFC] rounded-full overflow-hidden">
-                                                <div className="h-full rounded-full" style={{ width: `${p * 2.5}%`, background: c }}></div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+
+                    {/* Growth chart visual */}
+                    <div className="zm-card p-5 sm:p-7 shadow-lg shadow-[#2563EB]/5">
+                        <div className="flex items-start justify-between mb-4">
+                            <div>
+                                <p className="zm-section-label">// Live customer · 9 months</p>
+                                <h3 className="font-display text-2xl font-black tracking-tight mt-1">+1,400% growth</h3>
+                                <p className="text-xs text-[#64748B] mt-0.5">12 leads → 186 leads / month</p>
                             </div>
-                            <div className="absolute -bottom-5 -left-5 bg-[#0F172A] text-white px-5 py-3 rounded-xl shadow-lg hidden md:block">
-                                <p className="font-display text-2xl font-black tracking-tight"><span className="text-[#2563EB]">87%</span> on track</p>
-                                <p className="text-[10px] uppercase tracking-[0.2em] font-bold opacity-80">Monthly target</p>
-                            </div>
+                            <span className="zm-badge bg-[#10B981] text-white">ON TRACK</span>
+                        </div>
+                        <ResponsiveContainer width="100%" height={180}>
+                            <AreaChart data={GROWTH_DATA}>
+                                <defs>
+                                    <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#2563EB" stopOpacity={0.4} />
+                                        <stop offset="100%" stopColor="#2563EB" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
+                                <XAxis dataKey="m" tick={{ fontSize: 10, fill: "#64748B" }} stroke="#E2E8F0" />
+                                <YAxis tick={{ fontSize: 10, fill: "#64748B" }} stroke="#E2E8F0" />
+                                <Tooltip contentStyle={{ background: "#0F172A", border: "none", borderRadius: 8, fontSize: 12, color: "#fff" }} />
+                                <Area type="monotone" dataKey="leads" stroke="#2563EB" strokeWidth={2.5} fill="url(#growthGrad)" />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                        <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-[#E2E8F0]">
+                            <Stat label="Pipeline" v="$104K" delta="+89%" />
+                            <Stat label="Conversions" v="34" delta="+22%" />
+                            <Stat label="CPL" v="-41%" delta="vs Q1" />
                         </div>
                     </div>
                 </div>
             </section>
 
-            {/* Logos / Social proof strip */}
-            <section className="border-y border-[#E2E8F0] bg-white">
-                <div className="max-w-7xl mx-auto px-6 lg:px-12 py-10">
-                    <p className="text-center text-xs uppercase tracking-[0.25em] font-bold text-[#71717A] mb-6">Trusted by 1000+ growth teams</p>
-                    <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-4 opacity-60">
-                        {["ACME", "STELLA", "OUTPOST", "PHOENIX", "VECTRA", "NORTH&CO"].map((n) => (
-                            <span key={n} className="font-display text-2xl font-black tracking-tighter text-[#0F172A]">{n}</span>
+            {/* Customer happiness strip */}
+            <section className="bg-[#0F172A] text-white">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-10 lg:py-12">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6 lg:gap-10">
+                        {[
+                            { v: "1,400%", l: "Avg lead growth" },
+                            { v: "3.4×", l: "ROI in 6 mo" },
+                            { v: "97%", l: "Customers hit target" },
+                            { v: "48h", l: "Avg setup → first lead" },
+                        ].map((s) => (
+                            <div key={s.l}>
+                                <p className="font-display text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#2563EB]">{s.v}</p>
+                                <p className="text-[10px] uppercase tracking-[0.2em] text-white/70 mt-1.5 font-bold">{s.l}</p>
+                            </div>
                         ))}
                     </div>
                 </div>
             </section>
 
             {/* Features grid */}
-            <section className="max-w-7xl mx-auto px-6 lg:px-12 py-24">
-                <div className="grid md:grid-cols-12 gap-8 mb-14 items-end">
+            <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-14 lg:py-20">
+                <div className="grid md:grid-cols-12 gap-6 mb-10 items-end">
                     <div className="md:col-span-7">
-                        <span className="zm-tag-pill mb-4">// Built for growth</span>
-                        <h2 className="font-display text-4xl md:text-6xl font-black tracking-tighter leading-[1.0] mt-5">
-                            One platform.<br />
-                            Every <span className="text-[#2563EB]">growth</span> step.
+                        <span className="zm-tag-pill mb-3">// One platform</span>
+                        <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-[1.05] mt-4">
+                            Replace 7 tools with <span className="text-[#2563EB]">one</span> growth engine.
                         </h2>
                     </div>
-                    <p className="md:col-span-5 text-base text-[#3F3F46] leading-relaxed">
-                        From landing pages to lead capture to multi-channel outreach with AI-distributed budgets — replace five tools and the manual ops between them.
+                    <p className="md:col-span-5 text-sm text-[#475569] leading-relaxed">
+                        From URL to qualified leads — AI runs the whole funnel, with you in the loop.
                     </p>
                 </div>
 
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {[
-                        { icon: Globe, title: "Landing Page Builder", desc: "AI-generated copy, drag-and-drop sections, instant publish on a hosted URL.", c: "#2563EB" },
-                        { icon: Robot, title: "AI Copywriting", desc: "Groq-powered drafting tuned to your business profile, channel and tone.", c: "#10B981" },
-                        { icon: Target, title: "Paid + Organic Mix", desc: "AI distributes budgets between Google Ads, SEO, content & cold outreach.", c: "#F59E0B" },
-                        { icon: Megaphone, title: "6 Channels", desc: "Email, SMS, WhatsApp, Facebook, Instagram, LinkedIn — from one composer.", c: "#2563EB" },
-                        { icon: ChartLineUp, title: "Real-time Analytics", desc: "Live revenue, pipeline value, target progress — all updated by the second.", c: "#0F172A" },
-                        { icon: CheckCircle, title: "Guaranteed Leads", desc: "Set monthly lead targets, track pace and forecast in one dashboard.", c: "#10B981" },
+                        { icon: Target, title: "Ideal Customer Profile", desc: "Persona, firmographics, sample target companies — country-aware." },
+                        { icon: ChartLineUp, title: "12-Month Growth Plan", desc: "Editable channel mix: paid + organic, budget-distributed." },
+                        { icon: Globe, title: "Landing Pages", desc: "AI-generated copy, hosted at /p/{slug} — instant publish." },
+                        { icon: Robot, title: "Daily Content Studio", desc: "Blog + meta + social posts + SEO keywords every day." },
+                        { icon: Megaphone, title: "Multi-channel Send", desc: "Email · SMS · WhatsApp · LinkedIn · X · Instagram." },
+                        { icon: Lightning, title: "Auto-publish Queue", desc: "Drag onto a 7-day calendar — system posts on time." },
+                        { icon: RocketLaunch, title: "Forecast + Recovery", desc: "Real-time pace; auto-schedules extra content if behind." },
+                        { icon: CheckCircle, title: "Guaranteed Leads", desc: "Set monthly target — system flags risk before month-end." },
                     ].map((f, i) => (
-                        <div key={i} className="zm-card p-7 hover:shadow-md hover:-translate-y-0.5 transition-all">
-                            <div className="w-12 h-12 flex items-center justify-center mb-5 rounded-2xl" style={{ background: f.c }}>
-                                <f.icon size={22} weight="fill" className="text-white" />
+                        <div key={i} className="zm-card p-6 hover:shadow-md transition-all">
+                            <div className="w-10 h-10 rounded-md bg-[#DBEAFE] flex items-center justify-center mb-3">
+                                <f.icon size={18} weight="bold" className="text-[#2563EB]" />
                             </div>
-                            <h3 className="font-display text-2xl font-black tracking-tight mb-2">{f.title}</h3>
-                            <p className="text-sm text-[#52525B] leading-relaxed">{f.desc}</p>
-                        </div>
-                    ))}
-                </div>
-            </section>
-
-            {/* Stats strip */}
-            <section className="bg-[#0F172A] text-white">
-                <div className="max-w-7xl mx-auto px-6 lg:px-12 py-16 grid grid-cols-2 md:grid-cols-4 gap-8">
-                    {[
-                        ["6×", "Channels"],
-                        ["3.4×", "Avg ROI"],
-                        ["48h", "Avg setup"],
-                        ["$0", "To get started"],
-                    ].map(([v, l]) => (
-                        <div key={l}>
-                            <p className="font-display text-5xl md:text-7xl font-black tracking-tighter text-[#2563EB]">{v}</p>
-                            <p className="text-[10px] uppercase tracking-[0.25em] text-white/70 mt-2 font-bold">{l}</p>
+                            <h3 className="font-display text-lg font-bold tracking-tight mb-1">{f.title}</h3>
+                            <p className="text-sm text-[#64748B] leading-relaxed">{f.desc}</p>
                         </div>
                     ))}
                 </div>
             </section>
 
             {/* CTA */}
-            <section className="bg-[#F8FAFC] py-24">
-                <div className="max-w-4xl mx-auto px-6 text-center">
-                    <span className="zm-tag-pill mb-6">// Ready when you are</span>
-                    <h2 className="font-display text-5xl md:text-7xl font-black tracking-tighter mb-6 leading-[1.0] mt-6">
-                        Marketing,<br />minus the <span className="text-[#2563EB]">noise</span>.
+            <section className="border-t border-[#E2E8F0] bg-[#F8FAFC] py-14 lg:py-20">
+                <div className="max-w-3xl mx-auto px-4 sm:px-6 text-center">
+                    <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-[1.05] mb-4">
+                        Marketing,<br className="sm:hidden" /> minus the <span className="text-[#2563EB]">noise</span>.
                     </h2>
-                    <p className="text-base md:text-lg text-[#3F3F46] max-w-xl mx-auto mb-10">
-                        Try every feature for 14 days. No credit card. Cancel from the billing page in two clicks.
+                    <p className="text-base text-[#475569] mb-7">
+                        Try every feature for 14 days. No card. Cancel in two clicks.
                     </p>
                     <div className="flex flex-wrap gap-3 justify-center">
-                        <Link to="/register" className="zm-btn-primary text-base px-8 py-4" data-testid="cta-bottom">
+                        <Link to="/register" className="zm-btn-primary text-base px-7 py-3" data-testid="cta-bottom">
                             Start free trial <ArrowRight size={16} weight="bold" />
                         </Link>
-                        <Link to="/login" className="zm-btn-secondary text-base px-8 py-4">Sign in</Link>
+                        <Link to="/login" className="zm-btn-secondary text-base px-7 py-3">Sign in</Link>
                     </div>
                 </div>
             </section>
 
-            <footer className="bg-[#0F172A] text-white">
-                <div className="max-w-7xl mx-auto px-6 lg:px-12 py-10 flex flex-col md:flex-row items-center justify-between gap-4">
+            <footer className="bg-[#0F172A] text-white py-8">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 flex flex-col md:flex-row items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 bg-[#2563EB] flex items-center justify-center rounded-xl">
-                            <Sparkle size={14} weight="fill" className="text-white" />
+                        <div className="w-7 h-7 bg-[#2563EB] flex items-center justify-center rounded-md">
+                            <Sparkle size={12} weight="fill" className="text-white" />
                         </div>
-                        <span className="font-display text-xl font-black tracking-tight">ZeroMark</span>
+                        <span className="font-display text-lg font-black tracking-tight">ZeroMark</span>
                     </div>
                     <p className="text-[10px] uppercase tracking-[0.2em] text-white/50 font-bold">
                         © {new Date().getFullYear()} ZeroMark AI · All rights reserved
                     </p>
                 </div>
             </footer>
+        </div>
+    );
+}
+
+function Stat({ label, v, delta }) {
+    return (
+        <div>
+            <p className="font-display text-lg font-black tracking-tight">{v}</p>
+            <p className="text-[9px] uppercase tracking-[0.12em] text-[#10B981] font-bold">{delta}</p>
+            <p className="text-[10px] text-[#64748B] uppercase tracking-wider font-bold mt-0.5">{label}</p>
         </div>
     );
 }

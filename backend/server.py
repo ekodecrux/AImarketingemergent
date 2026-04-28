@@ -2344,15 +2344,19 @@ async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
 
     # Lookup OAuth tokens (placeholder — real OAuth flow stores these on db.oauth_tokens)
     tokens_doc = await db.oauth_tokens.find_one({"user_id": sched["user_id"]}, {"_id": 0}) or {}
+    def _tok(plat):
+        rec = tokens_doc.get(plat) or {}
+        enc = rec.get("access_token")
+        return _dec(enc) if enc else None
     delivery: Dict[str, Any] = {}
     for plat in sched["platforms"]:
         try:
             if plat == "linkedin":
-                delivery[plat] = await _publish_to_linkedin(content, tokens_doc.get("linkedin"))
+                delivery[plat] = await _publish_to_linkedin(content, _tok("linkedin"))
             elif plat == "twitter":
-                delivery[plat] = await _publish_to_twitter(content, tokens_doc.get("twitter"))
+                delivery[plat] = await _publish_to_twitter(content, _tok("twitter"))
             elif plat == "instagram":
-                delivery[plat] = await _publish_to_instagram(content, tokens_doc.get("instagram"))
+                delivery[plat] = await _publish_to_instagram(content, _tok("instagram"))
             elif plat == "blog":
                 delivery[plat] = await _publish_to_blog(content, user_doc)
             elif plat == "email_broadcast":
@@ -3759,6 +3763,180 @@ async def mark_notification_read(nid: str, user=Depends(get_current_user)):
 async def mark_all_notifications_read(user=Depends(get_current_user)):
     res = await db.notifications.update_many({"user_id": ws(user), "read": False}, {"$set": {"read": True}})
     return {"success": True, "updated": res.modified_count}
+
+
+# ====================================================================
+# ---------- Super Admin ----------
+# ====================================================================
+
+def _require_admin(user):
+    if (user.get("role") or "user") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@api.get("/admin/overview")
+async def admin_overview(user=Depends(get_current_user)):
+    _require_admin(user)
+    total_users = await db.users.count_documents({})
+    total_workspaces = len(await db.users.distinct("workspace_id"))
+    total_leads = await db.leads.count_documents({})
+    total_campaigns = await db.campaigns.count_documents({})
+    total_content = await db.content_kits.count_documents({})
+    total_landing = await db.landing_pages.count_documents({})
+    week_ago = (now_utc() - timedelta(days=7)).isoformat()
+    new_users_7d = await db.users.count_documents({"created_at": {"$gte": week_ago}})
+    active_7d = await db.users.count_documents({"last_login": {"$gte": week_ago}})
+    by_provider_pipe = [
+        {"$group": {"_id": {"$ifNull": ["$auth_provider", "email"]}, "count": {"$sum": 1}}},
+    ]
+    providers = [{"provider": d["_id"], "count": d["count"]} async for d in db.users.aggregate(by_provider_pipe)]
+    by_plan_pipe = [
+        {"$group": {"_id": {"$ifNull": ["$plan", "FREE_TRIAL"]}, "count": {"$sum": 1}}},
+    ]
+    plans = [{"plan": d["_id"], "count": d["count"]} async for d in db.subscriptions.aggregate(by_plan_pipe)]
+    return {
+        "totals": {
+            "users": total_users, "workspaces": total_workspaces,
+            "leads": total_leads, "campaigns": total_campaigns,
+            "content_kits": total_content, "landing_pages": total_landing,
+        },
+        "growth": {"new_users_7d": new_users_7d, "active_7d": active_7d},
+        "by_provider": providers,
+        "by_plan": plans,
+    }
+
+
+@api.get("/admin/users")
+async def admin_users(user=Depends(get_current_user)):
+    _require_admin(user)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).limit(200).to_list(200)
+    # Hydrate: leads + campaigns counts per workspace
+    enriched = []
+    for u in users:
+        wid = u.get("workspace_id") or u["id"]
+        leads = await db.leads.count_documents({"user_id": wid})
+        camps = await db.campaigns.count_documents({"user_id": wid})
+        sub = await db.subscriptions.find_one({"user_id": wid}, {"_id": 0})
+        enriched.append({**u, "lead_count": leads, "campaign_count": camps, "subscription": sub})
+    return {"users": enriched}
+
+
+# ====================================================================
+# ---------- AI Chatbot Assistant ----------
+# ====================================================================
+
+class ChatIn(BaseModel):
+    message: str
+    history: List[Dict[str, str]] = []  # [{role, content}, ...]
+
+
+@api.post("/assistant/chat")
+async def assistant_chat(payload: ChatIn, user=Depends(get_current_user)):
+    """In-app guidance chatbot. Knows the platform's pages and the user's setup status."""
+    await check_ai_rate_limit(user)
+    # Snapshot user state
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    leads_count = await db.leads.count_documents({"user_id": ws(user)})
+    campaigns_count = await db.campaigns.count_documents({"user_id": ws(user)})
+    target = await db.lead_targets.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    icp = await db.icps.find_one({"user_id": ws(user)}, {"_id": 0})
+    plan = await db.growth_plans.find_one({"user_id": ws(user)}, {"_id": 0})
+
+    state = (
+        f"USER STATE: {leads_count} leads · {campaigns_count} campaigns · "
+        f"profile {'YES' if profile.get('business_name') else 'MISSING'} · "
+        f"ICP {'YES' if icp else 'NO'} · "
+        f"12-month plan {'YES' if plan else 'NO'} · "
+        f"monthly target {target.get('monthly_lead_target', 'not set')} · "
+        f"country {(profile.get('country_code') or 'US')}.\n"
+    )
+
+    system = (
+        "You are ZeroMark's in-app guide. Be CONCISE (max 4 sentences). "
+        "Always link the user to a specific page using markdown link syntax like [Open Analytics](/analytics). "
+        "Available pages: /dashboard, /analytics, /leads, /campaigns, /approvals, /inbox, /scraping, "
+        "/landing-pages, /growth (Growth Studio), /content (Content Studio), /schedule (Auto-publish), "
+        "/business (Business Profile), /integrations, /team, /reports, /billing. "
+        "If the user mentions setup, point them at /onboarding. "
+        "Never apologise. Never say 'as an AI'. If unsure, give them the 1 next concrete step."
+    )
+
+    msgs = [{"role": "system", "content": system + "\n\n" + state}]
+    for h in payload.history[-8:]:
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            msgs.append({"role": h["role"], "content": str(h["content"])[:1000]})
+    msgs.append({"role": "user", "content": payload.message[:1500]})
+
+    try:
+        from groq import Groq as _G
+        client = _G(api_key=os.environ["GROQ_API_KEY"])
+        r = client.chat.completions.create(
+            model="llama-3.3-70b-versatile", messages=msgs, max_tokens=400, temperature=0.6,
+        )
+        reply = r.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error("Assistant chat failed: %s", e)
+        reply = "I had trouble reaching the AI just now. Try [Dashboard](/dashboard) — your setup checklist there shows the next concrete step."
+    return {"reply": reply}
+
+
+# ====================================================================
+# ---------- Social Media OAuth-style credential vault ----------
+# ====================================================================
+
+class SocialCredsIn(BaseModel):
+    platform: str  # 'linkedin' | 'twitter' | 'instagram' | 'facebook'
+    access_token: str
+    refresh_token: Optional[str] = None
+    account_handle: Optional[str] = None  # @user, page id, etc.
+    expires_at: Optional[str] = None
+
+
+@api.get("/integrations/social")
+async def get_social_creds(user=Depends(get_current_user)):
+    rec = await db.oauth_tokens.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    out = {}
+    for plat in ("linkedin", "twitter", "instagram", "facebook"):
+        info = rec.get(plat) or {}
+        if info:
+            out[plat] = {
+                "connected": True,
+                "handle": info.get("account_handle"),
+                "expires_at": info.get("expires_at"),
+                "updated_at": info.get("updated_at"),
+            }
+        else:
+            out[plat] = {"connected": False}
+    return {"platforms": out}
+
+
+@api.post("/integrations/social")
+async def save_social_creds(payload: SocialCredsIn, user=Depends(get_current_user)):
+    if payload.platform not in ("linkedin", "twitter", "instagram", "facebook"):
+        raise HTTPException(status_code=400, detail="Unsupported platform")
+    if not payload.access_token or len(payload.access_token) < 10:
+        raise HTTPException(status_code=400, detail="Access token looks invalid")
+    info = {
+        "access_token": _enc(payload.access_token),  # stored encrypted at rest
+        "refresh_token": _enc(payload.refresh_token) if payload.refresh_token else None,
+        "account_handle": payload.account_handle,
+        "expires_at": payload.expires_at,
+        "updated_at": now_utc().isoformat(),
+    }
+    await db.oauth_tokens.update_one(
+        {"user_id": ws(user)},
+        {"$set": {payload.platform: info, "user_id": ws(user)}},
+        upsert=True,
+    )
+    return {"success": True, "platform": payload.platform, "connected": True}
+
+
+@api.delete("/integrations/social/{platform}")
+async def disconnect_social(platform: str, user=Depends(get_current_user)):
+    if platform not in ("linkedin", "twitter", "instagram", "facebook"):
+        raise HTTPException(status_code=400, detail="Unsupported platform")
+    await db.oauth_tokens.update_one({"user_id": ws(user)}, {"$unset": {platform: ""}})
+    return {"success": True}
 
 
 # Register router
