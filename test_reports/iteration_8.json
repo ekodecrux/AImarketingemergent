@@ -1,0 +1,39 @@
+{
+  "summary": "Iter14 review: NEW /api/reports/marketing-metrics, parallelised /api/plan/kickoff-execution (asyncio.Semaphore=3), $group-aggregation /api/admin/users. Backend pytest: 11/11 PASS in /app/backend/tests/test_iter14_marketing_metrics.py (4.8s wall — kickoff with 3 parallel kits returned in <30s; aggregated /admin/users returned in <0.5s; sum-of-by_platform == totals validated; days clamping to [1,90] verified). Frontend /reports admin view shows: 4 KPI cards Impressions=57,000 / Clicks=1,845 / Conversions=145 / Posts=63 (3 LIVE), Funnel row CTR=3.24% / Conv=7.86% / RealLeads=38 / Converted=0, Daily impressions×clicks×conversions area chart with X-axis dates & 3 series, By-channel stacked bar with linkedin/twitter/blog visible, full Channel breakdown table with all 5 platform rows (LinkedIn/X/Instagram/Blog/Email_broadcast), period selector with 'Estimated · connect real OAuth in Integrations for live data' note, and the 3 legacy On-demand reports cards (Lead/Campaign/Gap) still visible BELOW. Period switcher 7d/30d/90d re-fetches successfully — values appear identical because all admin posts are FORWARD-scheduled (so they always satisfy scheduled_at >= now-Ndays); backend test confirms r90.scheduled_posts >= r7.scheduled_posts and period_days echo is correct. Empty-state: signed up fresh user TEST_iter14_<ts>@example.com → /reports shows '0/0/0/0' KPIs + 'No content scheduled yet' panel with link to /growth, and trend/bar/table sections correctly hidden.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reports — Daily trend area chart", "issues": ["Only the Impressions series uses the gradient fill (impGrad); Clicks and Conversions use fill='transparent'. Since Clicks/Conversions values are 1-2 orders of magnitude smaller than Impressions, both lines are visually flattened against the X-axis and the legend underneath is the only way the user knows they exist. Consider a secondary right-axis or a log scale, or render Clicks/Conversions on a separate small-multiples chart."]},
+      {"screen": "Reports — Period selector x KPI for forward-scheduled posts", "issues": ["When ALL scheduled posts lie in the future (typical right after kickoff), the 7d/30d/90d KPIs show identical numbers because the filter is scheduled_at >= now-Ndays. From a user's POV, switching period and seeing zero change is confusing. Either filter to a [now-Ndays, now+Ndays] window or label as 'Last & next N days' / 'Forecast horizon'."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter14_marketing_metrics.py",
+    "/app/test_reports/pytest/iter14_results.xml"
+  ],
+  "action_items": [
+    "[LOW-COSMETIC] Daily trend chart: use a secondary axis or split Clicks/Conversions into their own mini-chart so they're not visually flattened by the much larger Impressions line.",
+    "[LOW-UX] Reports period selector: clarify that the window is forward-looking (since most posts are future-scheduled) — e.g. 'Forecast: next 30 days' — or make filter symmetric around now.",
+    "[FROM-ITER7-STILL-OPEN] /reports + /growth still hardcode '$' as currency symbol; backend already returns guarantee.currency=INR for IN profiles."
+  ],
+  "critical_code_review_comments": [
+    "marketing_metrics (server.py L1152-1264) — filter is 'scheduled_at >= period_start' (i.e. > now - Ndays) without any upper bound, so a workspace whose posts are all forward-scheduled gets identical totals for 7/30/90 days. Confusing for users.",
+    "marketing_metrics — 'days = max(1, min(days, 90))' silently clamps without any indication in the response that a clamp happened. Echoing period_days is OK, but consider returning a 'requested_days' field too so the UI can warn.",
+    "kickoff_execution (L2225-2320) — total_posts capped at 6 (line 2237) is now 'soft' silent: response has no 'capped:true' or 'requested_posts' field. Reviewer flagged this in iter7 critical comments and it was NOT addressed in iter14.",
+    "admin_users (L4165-4199) — $group aggregation is correct, but it does NOT $project to drop _id, instead relies on enrich loop. Tiny win: add {$project:{_id:0,user_id:'$_id',count:1}} for clarity. Also the function still loads max 200 users; a future scale-out should add pagination.",
+    "_PLATFORM_METRICS dict (L1143) is module-level and shared — fine for synthetic data but the 'real OAuth' switch has no feature flag; would benefit from a `IS_SYNTHETIC_REPORTS` env var so the plumbing is explicit.",
+    "MarketingMetricsPanel (Reports.jsx L154-312) — 158 lines in a single inline function inside Reports.jsx; should be extracted to /components/MarketingMetricsPanel.jsx for testability and code-splitting. Reports.jsx would then drop from 313 → ~150 lines.",
+    "server.py is now 4,611 lines (was 4,445 in iter7). Refactor to routers/ is overdue (flagged in every iteration since iter4)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter14_marketing_metrics.py (NEW — 11 tests, 11/11 pass)"
+  ],
+  "success_rate": {"backend": "100% (11/11 iter14 tests pass)", "frontend": "100% on all 4 reviewer items: KPI cards + funnel row + area chart + bar chart + breakdown table populated for admin; period selector switches and re-fetches; synthetic-note tooltip visible; empty state on fresh user shows 'No content scheduled yet' with /growth link."},
+  "test_credentials": "admin@zeromark.ai / admin123 (admin); auto-created TEST_iter14_<ts>@example.com / Pass1234! for empty-state verification.",
+  "seed_data_creation": "1 fresh non-admin email/password user created via /api/auth/register for empty-state proof. Iter14 kickoff tests added 9 more content kits + 9 schedules to admin workspace (3 + 6 capped) — admin /reports KPI grew from iter7's 51 posts to 63 posts = expected.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter14 regression suite: /app/backend/tests/test_iter14_marketing_metrics.py (11 tests, ~5s, fast because admin already has growth_plan + scheduled posts from prior iterations). Run: `set -a; source /app/backend/.env; set +a; export REACT_APP_BACKEND_URL=https://instant-ship-2.preview.emergentagent.com; pytest /app/backend/tests/test_iter14_marketing_metrics.py -v`. Note: kickoff parallelism finishing in ~2s suggests the AI provider (Groq) is very fast OR content_generate is cached/short-circuited under load — wall time was much faster than reviewer's stated 19.45s baseline; assertions still validate kits_created==3 and schedules_created==3 so functional correctness holds. Frontend Reports.jsx data-testids: marketing-metrics, metric-{impressions,clicks,conversions,posts}, metrics-trend, metrics-platforms, metrics-table, metric-row-{linkedin,twitter,instagram,blog,email_broadcast}, metrics-empty, metrics-synthetic-note, report-period."
+}
