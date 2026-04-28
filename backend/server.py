@@ -2123,19 +2123,25 @@ async def quick_plan_generate(payload: QuickPlanIn, user=Depends(get_current_use
     )
 
     prompt = (
-        f"You are a senior growth marketer for the {country_name} market. The user has ONE constraint: "
-        f"a monthly marketing budget of {cur} {int(payload.monthly_budget)}. "
+        f"You are a senior growth marketer for the {country_name} market who BELIEVES IN ORGANIC-FIRST GROWTH. "
+        f"The user has ONE constraint: a monthly marketing budget of {cur} {int(payload.monthly_budget)}. "
         f"Build the OPTIMAL channel mix for THIS exact budget — do NOT exceed it. Use REAL {country_name} CPL benchmarks.\n\n"
+        f"PHILOSOPHY: Always prefer ORGANIC channels (SEO blog, LinkedIn organic, Twitter/X organic, Instagram organic, "
+        f"YouTube SEO, email outreach, content collaborations, community engagement, referral programs, PR) "
+        f"over PAID channels. Only allocate budget to PAID (Google Ads, Meta Ads, LinkedIn Ads) when the user "
+        f"specifically needs fast results AND organic alone cannot reach the target. Aim for AT LEAST 60% organic budget split. "
+        f"Treat the budget for organic channels as 'tools + freelance content + email tools' (Ahrefs, ConvertKit, "
+        f"Canva Pro, freelance writers/designers, PR retainer) — NOT ad spend.\n\n"
         f"Output STRICT JSON (no preamble, no markdown wrapping) with these EXACT keys:\n"
         f"  channels: array of 3-6 channels — each {{name, type ('paid'|'organic'), "
         f"     monthly_budget_usd (integer in {cur}, all channels combined MUST sum to <= {int(payload.monthly_budget)}), "
-        f"     expected_leads_per_month (integer based on real {country_name} CPL), "
+        f"     expected_leads_per_month (integer based on real {country_name} CPL — organic lead-cost is typically 60-80% lower than paid), "
         f"     expected_cpl_usd (integer in {cur}), priority ('high'|'medium'|'low'), "
         f"     rationale (1 sentence — why this channel for this budget)}}.\n"
-        f"  optimal_split: {{paid_pct (0-100), organic_pct (0-100, paid+organic=100)}}.\n"
+        f"  optimal_split: {{paid_pct (0-100), organic_pct (0-100, paid+organic=100; aim for organic_pct >= 60)}}.\n"
         f"  raw_predicted_leads_per_month: integer — total expected leads/month (sum of channel leads).\n"
-        f"  ai_rationale: 2 sentences explaining the strategy.\n"
-        f"  recommended_first_action: 1 sentence — the very first thing to do this week.\n\n"
+        f"  ai_rationale: 2 sentences explaining the strategy and why organic-first saves money.\n"
+        f"  recommended_first_action: 1 sentence — the very first thing to do this week (should be ORGANIC).\n\n"
         f"BUSINESS CONTEXT:\n{biz_ctx}"
     )
 
@@ -4202,6 +4208,14 @@ async def wallet_topup_create_order(payload: WalletTopupIn, user=Depends(get_cur
 @api.post("/wallet/topup/verify")
 async def wallet_topup_verify(payload: WalletTopupVerifyIn, user=Depends(get_current_user)):
     """Verifies Razorpay signature and credits the wallet."""
+    # Idempotency guard: same payment id must never credit the wallet twice
+    existing = await db.wallet_transactions.find_one(
+        {"razorpay_payment_id": payload.razorpay_payment_id, "user_id": ws(user)},
+        {"_id": 0},
+    )
+    if existing:
+        w = await _get_or_create_wallet(ws(user))
+        return {"success": True, "balance": w["balance"], "transaction": existing, "duplicate": True}
     try:
         rzp = razorpay.Client(auth=(os.environ["RAZORPAY_KEY_ID"], os.environ["RAZORPAY_KEY_SECRET"]))
         rzp.utility.verify_payment_signature({
@@ -4768,12 +4782,18 @@ async def assistant_chat(payload: ChatIn, user=Depends(get_current_user)):
     )
 
     system = (
-        "You are ZeroMark's in-app guide. Be CONCISE (max 4 sentences). "
+        "You are ZeroMark's friendly in-app guide for SMALL BUSINESS OWNERS who are NOT marketers. "
+        "Use SIMPLE everyday language — no marketing jargon (no 'CTR', 'CPL', 'ICP' unless you also explain it). "
+        "Be encouraging and warm. Max 4 short sentences. Always end with ONE concrete next step. "
         "Always link the user to a specific page using markdown link syntax like [Open Analytics](/analytics). "
+        "ZeroMark is ORGANIC-FIRST: prefer SEO blogs, social posts, email outreach, landing pages BEFORE recommending paid ads. "
+        "Mention paid ads ([Ad Campaigns](/ad-campaigns)) only if the user explicitly asks or is far behind their forecast. "
         "Available pages: /dashboard, /analytics, /leads, /campaigns, /approvals, /inbox, /scraping, "
-        "/landing-pages, /growth (Growth Studio), /content (Content Studio), /schedule (Auto-publish), "
-        "/business (Business Profile), /integrations, /team, /reports, /billing. "
-        "If the user mentions setup, point them at /onboarding. "
+        "/landing-pages, /growth (Growth Studio — start here for new users with the Quick Plan tab), "
+        "/content (Content Studio), /schedule (Auto-publish), "
+        "/business (Business Profile), /integrations, /ad-campaigns (paid ads), "
+        "/team, /reports, /billing (Wallet + plans). "
+        "If the user mentions setup or 'getting started', point them at [Quick Plan](/growth) or [Onboarding](/onboarding). "
         "Never apologise. Never say 'as an AI'. If unsure, give them the 1 next concrete step."
     )
 
@@ -5083,6 +5103,16 @@ async def on_startup():
         pass
     try:
         await db.oauth_states.create_index("created_at", expireAfterSeconds=600)
+    except Exception:
+        pass
+    # Wallet + Ad Platform indexes (idempotency + uniqueness)
+    try:
+        await db.wallets.create_index("user_id", unique=True)
+        await db.wallet_transactions.create_index("razorpay_payment_id", unique=True, sparse=True)
+        await db.wallet_transactions.create_index([("user_id", 1), ("created_at", -1)])
+        await db.ad_accounts.create_index([("user_id", 1), ("platform", 1), ("ad_account_id", 1)], unique=True)
+        await db.ad_campaigns.create_index([("user_id", 1), ("created_at", -1)])
+        await db.ad_campaigns.create_index("status")
     except Exception:
         pass
 

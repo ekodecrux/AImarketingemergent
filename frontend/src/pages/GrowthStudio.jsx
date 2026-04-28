@@ -153,12 +153,12 @@ function QuickPlanTab() {
             {/* Form */}
             <div className="zm-card p-6 sm:p-8 border-l-2 border-l-[#2563EB]">
                 <div className="flex items-start gap-3 mb-5">
-                    <div className="w-10 h-10 rounded-md bg-[#DBEAFE] flex items-center justify-center shrink-0">
-                        <Lightning size={18} weight="fill" className="text-[#2563EB]" />
+                    <div className="w-10 h-10 rounded-md bg-[#10B981]/15 flex items-center justify-center shrink-0">
+                        <Lightning size={18} weight="fill" className="text-[#10B981]" />
                     </div>
                     <div>
-                        <h3 className="font-display text-xl font-bold tracking-tight">Tell us your budget — we'll guarantee the leads.</h3>
-                        <p className="text-sm text-[#64748B] mt-1">Set monthly budget + how long you want this plan to run. AI distributes the spend across the best channels and gives you a conservative lead guarantee.</p>
+                        <h3 className="font-display text-xl font-bold tracking-tight">Tell us your budget — we'll guarantee the leads, organic-first.</h3>
+                        <p className="text-sm text-[#64748B] mt-1">AI builds an <strong className="text-[#10B981]">organic-first</strong> mix (SEO, social, email, content) that costs <strong>60–80% less than paid ads</strong>. Paid ads only when you really need them.</p>
                     </div>
                 </div>
 

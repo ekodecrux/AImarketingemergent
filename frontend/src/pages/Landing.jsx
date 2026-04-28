@@ -44,25 +44,25 @@ export default function Landing() {
             <section className="bg-gradient-to-b from-[#F8FAFC] to-white">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-12 lg:py-16 grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
                     <div>
-                        <span className="zm-tag-pill mb-4">// AI Marketing OS · Guaranteed Leads</span>
+                        <span className="zm-tag-pill mb-4">// Organic-first AI Marketing · Guaranteed Leads</span>
                         <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-[1.05] mt-4">
-                            The marketing engine that <span className="text-[#2563EB]">guarantees</span> your monthly leads.
+                            Get more leads.<br />Spend <span className="text-[#10B981]">70% less</span> than ad platforms.
                         </h1>
                         <p className="text-base text-[#475569] mt-5 max-w-xl leading-relaxed">
-                            Set your goal — AI builds your 12-month plan, identifies your ideal customer, drafts content daily, auto-publishes across channels, and forecasts when you're behind so you never miss a quota.
+                            ZeroMark is built <strong>organic-first</strong>: SEO blogs, social posts, email outreach, landing pages — auto-generated daily and published for you. Paid ads only when you want them. Same lead targets, a fraction of the cost.
                         </p>
                         <div className="flex flex-wrap gap-2 sm:gap-3 mt-7">
                             <Link to="/register" className="zm-btn-primary text-sm sm:text-base px-6 py-3" data-testid="hero-cta-primary">
-                                Start 14-day trial <ArrowRight size={16} weight="bold" />
+                                Start free · 14 days <ArrowRight size={16} weight="bold" />
                             </Link>
                             <Link to="/login" className="zm-btn-secondary text-sm sm:text-base px-6 py-3" data-testid="hero-cta-secondary">
-                                Watch demo
+                                See how it works
                             </Link>
                         </div>
                         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-6 text-xs text-[#64748B] font-semibold">
-                            <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> No credit card</span>
-                            <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> 49 countries</span>
-                            <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> Setup in 2 min</span>
+                            <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> No card required</span>
+                            <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> AI does 95% of the work</span>
+                            <span className="flex items-center gap-1.5"><CheckCircle size={14} weight="fill" className="text-[#10B981]" /> Built for non-marketers</span>
                         </div>
                     </div>
 
@@ -105,10 +105,10 @@ export default function Landing() {
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-10 lg:py-12">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-6 lg:gap-10">
                         {[
+                            { v: "70%", l: "Cheaper vs paid-only" },
                             { v: "1,400%", l: "Avg lead growth" },
-                            { v: "3.4×", l: "ROI in 6 mo" },
                             { v: "97%", l: "Customers hit target" },
-                            { v: "48h", l: "Avg setup → first lead" },
+                            { v: "2 min", l: "Setup → first plan" },
                         ].map((s) => (
                             <div key={s.l}>
                                 <p className="font-display text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#2563EB]">{s.v}</p>
