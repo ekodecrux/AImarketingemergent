@@ -33,6 +33,7 @@ const baseSections = [
             { to: "/leads", label: "Leads (CRM)", icon: Users, testid: "nav-leads" },
             { to: "/scraping", label: "Lead Discovery", icon: Compass, testid: "nav-scraping" },
             { to: "/campaigns", label: "Campaigns", icon: Megaphone, testid: "nav-campaigns" },
+            { to: "/ad-campaigns", label: "Ad Campaigns", icon: Lightning, testid: "nav-ad-campaigns", badge: "PAID" },
             { to: "/landing-pages", label: "Landing Pages", icon: Globe, testid: "nav-landing-pages" },
         ],
     },

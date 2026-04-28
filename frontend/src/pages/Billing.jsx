@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
+import WalletPanel from "@/components/WalletPanel";
 import { Check, Crown } from "@phosphor-icons/react";
 
 function loadRazorpay() {
@@ -72,8 +73,13 @@ export default function Billing() {
                 title="Billing & Plans"
                 subtitle={sub ? `Current plan: ${sub.plan} · Status ${sub.status}` : ""}
             />
-            <div className="px-4 sm:px-6 lg:px-8 py-6">
-                <div className="grid md:grid-cols-3 gap-0 zm-card" data-testid="plans">
+            <div className="px-4 sm:px-6 lg:px-8 py-6 space-y-8">
+                {/* ZeroMark wallet — for AI generations, hosted pages, email/SMS */}
+                <WalletPanel />
+
+                <div>
+                    <h2 className="font-display text-2xl font-bold tracking-tight mb-3">Subscription plans</h2>
+                    <div className="grid md:grid-cols-3 gap-0 zm-card" data-testid="plans">
                     {plans.map((p, i) => {
                         const isCurrent = sub?.plan?.toLowerCase() === p.id;
                         const isFeatured = p.id === "pro";
@@ -121,6 +127,7 @@ export default function Billing() {
                         Razorpay is in test mode. Use test card <span className="font-mono text-[#0F172A]">4111 1111 1111 1111</span>,
                         any future expiry, any CVV. UPI test: <span className="font-mono text-[#0F172A]">success@razorpay</span>.
                     </p>
+                </div>
                 </div>
             </div>
         </div>

@@ -29,6 +29,7 @@ import AuthCallback from "@/pages/AuthCallback";
 import Content from "@/pages/Content";
 import Schedule from "@/pages/Schedule";
 import Admin from "@/pages/Admin";
+import AdCampaigns from "@/pages/AdCampaigns";
 
 function Protected({ children }) {
     const { user, loading } = useAuth();
@@ -77,6 +78,7 @@ function App() {
                         <Route path="/growth" element={<GrowthStudio />} />
                         <Route path="/content" element={<Content />} />
                         <Route path="/schedule" element={<Schedule />} />
+                        <Route path="/ad-campaigns" element={<AdCampaigns />} />
                         <Route path="/admin" element={<Admin />} />
                         <Route path="/scraping" element={<Scraping />} />
                         <Route path="/integrations" element={<Integrations />} />

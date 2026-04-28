@@ -4127,6 +4127,505 @@ async def mark_all_notifications_read(user=Depends(get_current_user)):
 
 
 # ====================================================================
+# ---------- Wallet (ZeroMark balance + auto-recharge via Razorpay) ----------
+# ====================================================================
+
+class WalletTopupIn(BaseModel):
+    amount: float  # in user's currency (INR by default)
+
+
+class WalletTopupVerifyIn(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+class AutoRechargeIn(BaseModel):
+    enabled: bool = False
+    threshold: Optional[float] = None       # if balance drops below this, auto top-up
+    top_up_amount: Optional[float] = None   # how much to add each time
+
+
+async def _get_or_create_wallet(workspace_id: str) -> Dict[str, Any]:
+    w = await db.wallets.find_one({"user_id": workspace_id}, {"_id": 0})
+    if w:
+        return w
+    profile = await db.business_profiles.find_one({"user_id": workspace_id}, {"_id": 0}) or {}
+    cur = (profile.get("currency_code") or "INR").upper()
+    doc = {
+        "user_id": workspace_id,
+        "balance": 0.0,
+        "currency": cur,
+        "auto_recharge_enabled": False,
+        "auto_recharge_threshold": 0.0,
+        "auto_recharge_amount": 0.0,
+        "created_at": now_utc().isoformat(),
+        "updated_at": now_utc().isoformat(),
+    }
+    await db.wallets.insert_one(dict(doc))
+    return doc
+
+
+@api.get("/wallet")
+async def wallet_get(user=Depends(get_current_user)):
+    w = await _get_or_create_wallet(ws(user))
+    return {"wallet": w}
+
+
+@api.post("/wallet/topup")
+async def wallet_topup_create_order(payload: WalletTopupIn, user=Depends(get_current_user)):
+    """Creates a Razorpay order for wallet top-up. Frontend opens Razorpay checkout
+    using the returned order_id + key_id. Then calls /wallet/topup/verify on success."""
+    if payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+    if payload.amount > 1_000_000:
+        raise HTTPException(status_code=400, detail="Amount too large")
+    w = await _get_or_create_wallet(ws(user))
+    try:
+        rzp = razorpay.Client(auth=(os.environ["RAZORPAY_KEY_ID"], os.environ["RAZORPAY_KEY_SECRET"]))
+        order = rzp.order.create({
+            "amount": int(payload.amount * 100),  # paise
+            "currency": w["currency"],
+            "receipt": f"wallet_{ws(user)[:8]}_{int(now_utc().timestamp())}",
+            "notes": {"workspace_id": ws(user), "purpose": "wallet_topup"},
+        })
+    except KeyError:
+        raise HTTPException(status_code=500, detail="Razorpay not configured")
+    return {
+        "order_id": order["id"],
+        "amount": payload.amount,
+        "currency": w["currency"],
+        "key_id": os.environ["RAZORPAY_KEY_ID"],
+    }
+
+
+@api.post("/wallet/topup/verify")
+async def wallet_topup_verify(payload: WalletTopupVerifyIn, user=Depends(get_current_user)):
+    """Verifies Razorpay signature and credits the wallet."""
+    try:
+        rzp = razorpay.Client(auth=(os.environ["RAZORPAY_KEY_ID"], os.environ["RAZORPAY_KEY_SECRET"]))
+        rzp.utility.verify_payment_signature({
+            "razorpay_order_id": payload.razorpay_order_id,
+            "razorpay_payment_id": payload.razorpay_payment_id,
+            "razorpay_signature": payload.razorpay_signature,
+        })
+    except razorpay.errors.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Signature verification failed")
+    # Fetch payment to get authoritative amount
+    payment = rzp.payment.fetch(payload.razorpay_payment_id)
+    amount = float(payment.get("amount", 0)) / 100.0
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Payment amount invalid")
+    w = await _get_or_create_wallet(ws(user))
+    new_balance = float(w.get("balance") or 0) + amount
+    await db.wallets.update_one(
+        {"user_id": ws(user)},
+        {"$set": {"balance": new_balance, "updated_at": now_utc().isoformat()}},
+    )
+    txn = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "type": "TOPUP",
+        "amount": amount,
+        "currency": w["currency"],
+        "balance_after": new_balance,
+        "razorpay_order_id": payload.razorpay_order_id,
+        "razorpay_payment_id": payload.razorpay_payment_id,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.wallet_transactions.insert_one(dict(txn))
+    txn.pop("_id", None)
+    return {"success": True, "balance": new_balance, "transaction": txn}
+
+
+@api.put("/wallet/auto-recharge")
+async def wallet_set_auto_recharge(payload: AutoRechargeIn, user=Depends(get_current_user)):
+    if payload.enabled:
+        if not payload.threshold or payload.threshold < 0:
+            raise HTTPException(status_code=400, detail="Threshold must be > 0 when auto-recharge is enabled")
+        if not payload.top_up_amount or payload.top_up_amount <= 0:
+            raise HTTPException(status_code=400, detail="Top-up amount must be > 0")
+    await db.wallets.update_one(
+        {"user_id": ws(user)},
+        {"$set": {
+            "auto_recharge_enabled": payload.enabled,
+            "auto_recharge_threshold": float(payload.threshold or 0),
+            "auto_recharge_amount": float(payload.top_up_amount or 0),
+            "updated_at": now_utc().isoformat(),
+        }},
+        upsert=True,
+    )
+    w = await _get_or_create_wallet(ws(user))
+    return {"success": True, "wallet": w}
+
+
+@api.get("/wallet/transactions")
+async def wallet_transactions(page: int = 1, limit: int = 20, user=Depends(get_current_user)):
+    page = max(1, page)
+    limit = max(1, min(limit, 100))
+    skip = (page - 1) * limit
+    total = await db.wallet_transactions.count_documents({"user_id": ws(user)})
+    items = await db.wallet_transactions.find(
+        {"user_id": ws(user)}, {"_id": 0},
+    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {
+        "transactions": items, "page": page, "limit": limit, "total": total,
+        "total_pages": (total + limit - 1) // limit if total else 0,
+    }
+
+
+# ====================================================================
+# ---------- Ad Platform: connect ad accounts + launch budget-capped campaigns ----------
+# ====================================================================
+
+AD_PLATFORMS = ("meta", "google", "linkedin")
+META_API_BASE = "https://graph.facebook.com/v19.0"
+META_MOCK_MODE = os.environ.get("META_ADS_MOCK_MODE", "true").lower() == "true"
+
+
+class AdAccountConnectIn(BaseModel):
+    platform: str  # meta | google | linkedin
+    access_token: str
+    ad_account_id: str  # e.g. 'act_1234567890' for Meta, 'customers/1234' for Google, etc.
+    ad_account_name: Optional[str] = None
+    business_name: Optional[str] = None
+
+
+class LaunchPlanIn(BaseModel):
+    weeks: int = 4               # plan window
+    auto_pause_at_cap: bool = True
+    platforms: Optional[List[str]] = None  # subset of connected platforms; default = all
+
+
+def _meta_headers() -> Dict[str, str]:
+    return {"Content-Type": "application/json"}
+
+
+def _meta_post(path: str, token: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """POST to Meta Marketing API. Raises HTTPException with the platform error on failure."""
+    if META_MOCK_MODE or token.startswith("mock_"):
+        return {"id": f"mock_{uuid.uuid4().hex[:12]}", "_mock": True}
+    try:
+        r = _http.post(
+            f"{META_API_BASE}{path}",
+            params={"access_token": token},
+            json=body, timeout=15,
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Meta API: {r.text[:300]}")
+        return r.json()
+    except _http.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Meta API unreachable: {e}")
+
+
+def _meta_get(path: str, token: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if META_MOCK_MODE or token.startswith("mock_"):
+        # Return a synthetic insights row
+        return {
+            "data": [{
+                "spend": "0", "impressions": "0", "clicks": "0",
+                "actions": [{"action_type": "lead", "value": "0"}],
+            }],
+            "_mock": True,
+        }
+    p = dict(params or {})
+    p["access_token"] = token
+    try:
+        r = _http.get(f"{META_API_BASE}{path}", params=p, timeout=15)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Meta API: {r.text[:300]}")
+        return r.json()
+    except _http.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Meta API unreachable: {e}")
+
+
+@api.get("/ad-platform/accounts")
+async def list_connected_ad_accounts(user=Depends(get_current_user)):
+    """Returns connected ad accounts grouped by platform."""
+    rows = await db.ad_accounts.find({"user_id": ws(user)}, {"_id": 0, "access_token_enc": 0}).to_list(50)
+    by_platform: Dict[str, List[Dict[str, Any]]] = {p: [] for p in AD_PLATFORMS}
+    for r in rows:
+        plat = r.get("platform")
+        if plat in by_platform:
+            by_platform[plat].append(r)
+    return {"accounts": by_platform, "mock_mode": META_MOCK_MODE}
+
+
+@api.post("/ad-platform/accounts")
+async def connect_ad_account(payload: AdAccountConnectIn, user=Depends(get_current_user)):
+    if payload.platform not in AD_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {payload.platform}")
+    if not payload.access_token or len(payload.access_token) < 8:
+        raise HTTPException(status_code=400, detail="Access token looks invalid")
+    if not payload.ad_account_id:
+        raise HTTPException(status_code=400, detail="ad_account_id is required")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "platform": payload.platform,
+        "ad_account_id": payload.ad_account_id,
+        "ad_account_name": payload.ad_account_name or payload.ad_account_id,
+        "business_name": payload.business_name,
+        "access_token_enc": _enc(payload.access_token),
+        "connected_at": now_utc().isoformat(),
+    }
+    # Upsert: one ad-account-id per workspace+platform
+    await db.ad_accounts.update_one(
+        {"user_id": ws(user), "platform": payload.platform, "ad_account_id": payload.ad_account_id},
+        {"$set": {k: v for k, v in doc.items() if k != "id"}, "$setOnInsert": {"id": doc["id"]}},
+        upsert=True,
+    )
+    return {"success": True, "platform": payload.platform, "ad_account_id": payload.ad_account_id}
+
+
+@api.delete("/ad-platform/accounts/{aid}")
+async def disconnect_ad_account(aid: str, user=Depends(get_current_user)):
+    res = await db.ad_accounts.delete_one({"user_id": ws(user), "id": aid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Ad account not found")
+    return {"success": True}
+
+
+def _channel_to_platform(name: str, ctype: str) -> Optional[str]:
+    n = (name or "").lower()
+    if any(k in n for k in ("meta", "facebook", "instagram", "fb ads")):
+        return "meta"
+    if "google" in n:
+        return "google"
+    if "linkedin" in n:
+        return "linkedin"
+    return None
+
+
+@api.post("/ad-platform/launch-plan")
+async def ad_platform_launch_plan(payload: LaunchPlanIn, user=Depends(get_current_user)):
+    """Reads the latest growth plan, picks paid channels mapped to a connected ad account,
+    and creates one campaign + ad set per platform with a daily_budget cap. Campaigns
+    are created in PAUSED status — user reviews & resumes manually for safety."""
+    plan_rec = await db.growth_plans.find_one({"user_id": ws(user)}, sort=[("generated_at", -1)])
+    if not plan_rec:
+        raise HTTPException(status_code=404, detail="No growth plan found")
+    plan = (plan_rec.get("plan") or {})
+    channels = plan.get("channel_distribution") or []
+    paid = [c for c in channels if (c.get("type") or "").lower() == "paid"]
+    if not paid:
+        raise HTTPException(status_code=400, detail="No paid channels in plan to launch")
+
+    # Connected accounts by platform
+    accounts = {}
+    async for a in db.ad_accounts.find({"user_id": ws(user)}):
+        accounts[a["platform"]] = a
+
+    weeks = max(1, min(payload.weeks, 12))
+    today = now_utc().date()
+    end_date = today + timedelta(days=weeks * 7)
+
+    created: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+
+    for ch in paid:
+        plat = _channel_to_platform(ch.get("name", ""), ch.get("type", ""))
+        if not plat:
+            skipped.append({"channel": ch.get("name"), "reason": "Cannot map to a supported ad platform"})
+            continue
+        if payload.platforms and plat not in payload.platforms:
+            continue
+        acct = accounts.get(plat)
+        if not acct:
+            skipped.append({"channel": ch.get("name"), "platform": plat, "reason": "No connected ad account"})
+            continue
+
+        monthly_budget = float(ch.get("monthly_budget_usd") or 0)
+        if monthly_budget <= 0:
+            skipped.append({"channel": ch.get("name"), "platform": plat, "reason": "Zero budget"})
+            continue
+        daily_budget = round(monthly_budget / 30.0, 2)
+        token = _dec(acct["access_token_enc"]) or ""
+
+        if plat == "meta":
+            # Create campaign + ad set on Meta. Paused by default.
+            camp_resp = _meta_post(
+                f"/{acct['ad_account_id']}/campaigns", token,
+                {
+                    "name": f"ZM · {ch.get('name')} · {today.isoformat()}",
+                    "objective": "OUTCOME_LEADS",
+                    "status": "PAUSED",
+                    "special_ad_categories": [],
+                },
+            )
+            ext_campaign_id = camp_resp.get("id")
+            adset_resp = _meta_post(
+                f"/{acct['ad_account_id']}/adsets", token,
+                {
+                    "name": f"ZM AdSet · {ch.get('name')}",
+                    "campaign_id": ext_campaign_id,
+                    "daily_budget": int(daily_budget * 100),  # cents-equivalent (paise for INR)
+                    "billing_event": "IMPRESSIONS",
+                    "optimization_goal": "LEAD_GENERATION",
+                    "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                    "start_time": now_utc().isoformat(),
+                    "end_time": (now_utc() + timedelta(days=weeks * 7)).isoformat(),
+                    "targeting": {"geo_locations": {"countries": [(plan_rec.get("country_code") or "IN")[:2]]}},
+                    "status": "PAUSED",
+                },
+            )
+            ext_adset_id = adset_resp.get("id")
+            doc = {
+                "id": str(uuid.uuid4()),
+                "user_id": ws(user),
+                "platform": plat,
+                "ad_account_id": acct["ad_account_id"],
+                "channel_name": ch.get("name"),
+                "ext_campaign_id": ext_campaign_id,
+                "ext_adset_id": ext_adset_id,
+                "objective": "OUTCOME_LEADS",
+                "status": "PAUSED",
+                "daily_budget": daily_budget,
+                "monthly_budget": monthly_budget,
+                "spend_cap": monthly_budget * weeks / 4.0,
+                "currency": (await _get_or_create_wallet(ws(user)))["currency"],
+                "auto_pause_at_cap": payload.auto_pause_at_cap,
+                "is_mock": bool(camp_resp.get("_mock") or adset_resp.get("_mock")),
+                "spend_actual": 0.0,
+                "impressions": 0,
+                "clicks": 0,
+                "leads": 0,
+                "start_date": today.isoformat(),
+                "end_date": end_date.isoformat(),
+                "created_at": now_utc().isoformat(),
+                "last_synced_at": None,
+            }
+            await db.ad_campaigns.insert_one(dict(doc))
+            doc.pop("_id", None)
+            created.append(doc)
+        else:
+            # Google / LinkedIn: stored as draft (mock) until full integration
+            doc = {
+                "id": str(uuid.uuid4()),
+                "user_id": ws(user),
+                "platform": plat,
+                "ad_account_id": acct["ad_account_id"],
+                "channel_name": ch.get("name"),
+                "ext_campaign_id": f"mock_{uuid.uuid4().hex[:10]}",
+                "status": "PAUSED",
+                "daily_budget": daily_budget,
+                "monthly_budget": monthly_budget,
+                "spend_cap": monthly_budget * weeks / 4.0,
+                "currency": (await _get_or_create_wallet(ws(user)))["currency"],
+                "auto_pause_at_cap": payload.auto_pause_at_cap,
+                "is_mock": True,
+                "spend_actual": 0.0,
+                "impressions": 0,
+                "clicks": 0,
+                "leads": 0,
+                "start_date": today.isoformat(),
+                "end_date": end_date.isoformat(),
+                "created_at": now_utc().isoformat(),
+                "last_synced_at": None,
+            }
+            await db.ad_campaigns.insert_one(dict(doc))
+            doc.pop("_id", None)
+            created.append(doc)
+
+    if created:
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()), "user_id": ws(user),
+            "title": f"{len(created)} ad campaign(s) created",
+            "body": f"Created in PAUSED state on {', '.join(sorted({c['platform'] for c in created}))}. Review in Ad Campaigns and resume to start spend.",
+            "severity": "info", "read": False, "created_at": now_utc().isoformat(),
+        })
+    return {"success": True, "created": created, "skipped": skipped}
+
+
+@api.get("/ad-platform/campaigns")
+async def list_ad_campaigns(user=Depends(get_current_user)):
+    items = await db.ad_campaigns.find({"user_id": ws(user)}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"campaigns": items}
+
+
+@api.post("/ad-platform/campaigns/{cid}/pause")
+async def pause_ad_campaign(cid: str, user=Depends(get_current_user)):
+    return await _set_campaign_status(cid, "PAUSED", user)
+
+
+@api.post("/ad-platform/campaigns/{cid}/resume")
+async def resume_ad_campaign(cid: str, user=Depends(get_current_user)):
+    return await _set_campaign_status(cid, "ACTIVE", user)
+
+
+async def _set_campaign_status(cid: str, new_status: str, user) -> Dict[str, Any]:
+    rec = await db.ad_campaigns.find_one({"id": cid, "user_id": ws(user)})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if rec.get("platform") == "meta" and not rec.get("is_mock"):
+        acct = await db.ad_accounts.find_one({"user_id": ws(user), "platform": "meta", "ad_account_id": rec["ad_account_id"]})
+        if not acct:
+            raise HTTPException(status_code=400, detail="Ad account no longer connected")
+        token = _dec(acct["access_token_enc"]) or ""
+        _meta_post(f"/{rec['ext_campaign_id']}", token, {"status": new_status})
+    await db.ad_campaigns.update_one(
+        {"id": cid, "user_id": ws(user)},
+        {"$set": {"status": new_status, "updated_at": now_utc().isoformat()}},
+    )
+    return {"success": True, "status": new_status}
+
+
+async def _sync_one_campaign(rec: Dict[str, Any]) -> None:
+    """Refresh insights from the platform; auto-pause if cap crossed."""
+    if rec.get("platform") == "meta" and not rec.get("is_mock"):
+        acct = await db.ad_accounts.find_one(
+            {"user_id": rec["user_id"], "platform": "meta", "ad_account_id": rec["ad_account_id"]}
+        )
+        if not acct:
+            return
+        token = _dec(acct["access_token_enc"]) or ""
+        ins = _meta_get(f"/{rec['ext_campaign_id']}/insights", token, {"fields": "spend,impressions,clicks,actions"})
+        row = (ins.get("data") or [{}])[0]
+        spend = float(row.get("spend") or 0)
+        impressions = int(row.get("impressions") or 0)
+        clicks = int(row.get("clicks") or 0)
+        leads = sum(int(a.get("value", 0)) for a in (row.get("actions") or []) if a.get("action_type") == "lead")
+    else:
+        # Mock: simulate ~daily progress proportional to days since start
+        days = max(1, (now_utc().date() - datetime.fromisoformat(rec["start_date"]).date()).days)
+        proj_spend = min(rec.get("daily_budget", 0) * days, rec.get("spend_cap", 0))
+        spend = round(proj_spend * 0.85, 2)
+        impressions = int(spend * 25)  # ~25 imp per currency unit
+        clicks = int(impressions * 0.025)
+        leads = int(clicks * 0.05)
+    upd: Dict[str, Any] = {
+        "spend_actual": spend, "impressions": impressions, "clicks": clicks, "leads": leads,
+        "last_synced_at": now_utc().isoformat(),
+    }
+    if rec.get("auto_pause_at_cap") and rec.get("spend_cap") and spend >= rec["spend_cap"] and rec.get("status") != "PAUSED":
+        upd["status"] = "PAUSED"
+        upd["auto_paused_reason"] = f"Spend cap reached: {spend} ≥ {rec['spend_cap']}"
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()), "user_id": rec["user_id"],
+            "title": "Ad campaign auto-paused",
+            "body": f"{rec.get('channel_name','Campaign')} hit its spend cap and was paused.",
+            "severity": "high", "read": False, "created_at": now_utc().isoformat(),
+        })
+    await db.ad_campaigns.update_one({"id": rec["id"]}, {"$set": upd})
+
+
+async def _sync_ad_spend_tick():
+    try:
+        active = await db.ad_campaigns.find({"status": "ACTIVE"}, {"_id": 0}).to_list(500)
+        # Bounded concurrency=4 for external API politeness
+        sem = asyncio.Semaphore(4)
+        async def _wrap(rec):
+            async with sem:
+                try:
+                    await _sync_one_campaign(rec)
+                except Exception as e:
+                    logger.error("Ad sync failed for %s: %s", rec.get("id"), e)
+        await asyncio.gather(*[_wrap(r) for r in active])
+    except Exception as e:
+        logger.error("Ad spend cron failed: %s", e)
+
+
+# ====================================================================
 # ---------- Super Admin ----------
 # ====================================================================
 
@@ -4605,6 +5104,7 @@ async def on_startup():
     scheduler.add_job(_send_forecast_alerts_tick, "cron", minute=5, id="forecast_alerts", replace_existing=True)
     scheduler.add_job(_publish_due_schedules_tick, "interval", minutes=5, id="auto_publish", replace_existing=True)
     scheduler.add_job(_daily_auto_content_tick, "cron", minute=10, id="auto_daily_content", replace_existing=True)
+    scheduler.add_job(_sync_ad_spend_tick, "interval", minutes=15, id="ad_spend_sync", replace_existing=True)
     scheduler.start()
     logger.info("APScheduler started: daily_briefings + imap_poll + forecast_alerts + auto_publish + auto_daily_content")
     # Seed admin
