@@ -1955,6 +1955,218 @@ async def growth_plan_latest(user=Depends(get_current_user)):
     return {"plan": rec}
 
 
+# ---------- Quick Plan: budget-driven, guaranteed leads (50% buffer) ----------
+class QuickPlanIn(BaseModel):
+    monthly_budget: float
+    duration_months: int = 12  # 3 | 6 | 9 | 12
+    avg_deal_value: Optional[float] = None
+    goal: Optional[str] = None  # free-text user objective
+
+
+@api.post("/quick-plan/generate")
+async def quick_plan_generate(payload: QuickPlanIn, user=Depends(get_current_user)):
+    """Simplified flow: user enters budget + duration. AI builds optimal channel mix
+    for THIS exact budget; we apply a 50% conservative buffer to the predicted leads
+    and present them as a guarantee. Persists as both a growth_plan and a lead_target."""
+    if payload.monthly_budget <= 0:
+        raise HTTPException(status_code=400, detail="Monthly budget must be greater than 0")
+    if payload.duration_months not in (3, 6, 9, 12):
+        raise HTTPException(status_code=400, detail="Duration must be 3, 6, 9, or 12 months")
+    await check_ai_rate_limit(user)
+
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    cc = (profile.get("country_code") or "US").upper()
+    cur = (profile.get("currency_code") or "USD").upper()
+    country_name = COUNTRY_CURRENCY.get(cc, {}).get("name", "United States")
+
+    biz_ctx = (
+        f"Business: {profile.get('business_name','(not set)')}\n"
+        f"Industry: {profile.get('industry','(not set)')}\n"
+        f"Target audience: {profile.get('target_audience','(not set)')}\n"
+        f"Description: {profile.get('description','')}\n"
+        f"Country: {country_name} ({cc}) | Currency: {cur}\n"
+        f"User goal (optional): {payload.goal or 'maximise leads for the budget'}\n"
+        f"MONTHLY BUDGET (hard cap): {cur} {int(payload.monthly_budget)}\n"
+        f"Duration: {payload.duration_months} months"
+    )
+
+    prompt = (
+        f"You are a senior growth marketer for the {country_name} market. The user has ONE constraint: "
+        f"a monthly marketing budget of {cur} {int(payload.monthly_budget)}. "
+        f"Build the OPTIMAL channel mix for THIS exact budget — do NOT exceed it. Use REAL {country_name} CPL benchmarks.\n\n"
+        f"Output STRICT JSON (no preamble, no markdown wrapping) with these EXACT keys:\n"
+        f"  channels: array of 3-6 channels — each {{name, type ('paid'|'organic'), "
+        f"     monthly_budget_usd (integer in {cur}, all channels combined MUST sum to <= {int(payload.monthly_budget)}), "
+        f"     expected_leads_per_month (integer based on real {country_name} CPL), "
+        f"     expected_cpl_usd (integer in {cur}), priority ('high'|'medium'|'low'), "
+        f"     rationale (1 sentence — why this channel for this budget)}}.\n"
+        f"  optimal_split: {{paid_pct (0-100), organic_pct (0-100, paid+organic=100)}}.\n"
+        f"  raw_predicted_leads_per_month: integer — total expected leads/month (sum of channel leads).\n"
+        f"  ai_rationale: 2 sentences explaining the strategy.\n"
+        f"  recommended_first_action: 1 sentence — the very first thing to do this week.\n\n"
+        f"BUSINESS CONTEXT:\n{biz_ctx}"
+    )
+
+    try:
+        ai = await _groq_json(prompt, max_tokens=1800)
+    except Exception as e:
+        logger.error("Quick plan AI failed: %s", e)
+        raise HTTPException(status_code=502, detail="AI is busy — please try again in a moment")
+
+    channels = ai.get("channels") or []
+    raw_predicted = int(ai.get("raw_predicted_leads_per_month") or 0)
+    if raw_predicted <= 0:
+        # Fallback: sum from channels
+        raw_predicted = sum(int(c.get("expected_leads_per_month") or 0) for c in channels)
+    raw_predicted = max(raw_predicted, 1)
+
+    # 50% conservative buffer (we promise less than predicted, so we can over-deliver)
+    guaranteed_per_month = max(1, int(raw_predicted * 0.5))
+    total_guaranteed = guaranteed_per_month * payload.duration_months
+
+    avg_deal = float(payload.avg_deal_value) if payload.avg_deal_value else 100.0
+    revenue_target = guaranteed_per_month * avg_deal
+
+    plan_doc = {
+        "vision": f"Maximise leads within a {cur} {int(payload.monthly_budget)}/mo budget over {payload.duration_months} months.",
+        "north_star_metric": f"{guaranteed_per_month} guaranteed leads / month",
+        "monthly_lead_target": guaranteed_per_month,
+        "monthly_budget_usd": int(payload.monthly_budget),
+        "avg_deal_value_usd": int(avg_deal),
+        "duration_months": payload.duration_months,
+        "channel_distribution": channels,
+        "optimal_split": ai.get("optimal_split") or {},
+        "ai_rationale": ai.get("ai_rationale") or "",
+        "recommended_first_action": ai.get("recommended_first_action") or "",
+        "raw_predicted_leads_per_month": raw_predicted,
+        "guaranteed_leads_per_month": guaranteed_per_month,
+        "total_guaranteed_leads": total_guaranteed,
+        "buffer_pct": 50,
+    }
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "plan": plan_doc,
+        "source": "quick_plan",
+        "generated_at": now_utc().isoformat(),
+    }
+    await db.growth_plans.insert_one(record)
+    record.pop("_id", None)
+
+    # Upsert lead target with the conservative guarantee
+    await db.lead_targets.update_one(
+        {"user_id": ws(user)},
+        {"$set": {
+            "user_id": ws(user),
+            "monthly_lead_target": guaranteed_per_month,
+            "avg_deal_value_usd": avg_deal,
+            "revenue_target_usd": revenue_target,
+            "duration_months": payload.duration_months,
+            "guarantee_enabled": True,
+            "guarantee_terms": (
+                f"Guaranteed {guaranteed_per_month} qualified leads/month for "
+                f"{payload.duration_months} months ({total_guaranteed} total) "
+                f"within a {cur} {int(payload.monthly_budget)}/month budget."
+            ),
+            "updated_at": now_utc().isoformat(),
+        }},
+        upsert=True,
+    )
+
+    return {
+        "plan": record,
+        "guarantee": {
+            "monthly_leads": guaranteed_per_month,
+            "total_leads": total_guaranteed,
+            "duration_months": payload.duration_months,
+            "monthly_budget": int(payload.monthly_budget),
+            "currency": cur,
+            "buffer_pct": 50,
+            "raw_predicted_per_month": raw_predicted,
+            "revenue_target": revenue_target,
+        },
+    }
+
+
+# ---------- Plan → Execution Engine: kickoff content generation + schedule ----------
+class PlanKickoffIn(BaseModel):
+    weeks: int = 2  # how many weeks of content to schedule
+    posts_per_week: int = 3
+    platforms: List[str] = ["linkedin", "twitter", "blog"]
+
+
+@api.post("/plan/kickoff-execution")
+async def plan_kickoff_execution(payload: PlanKickoffIn, user=Depends(get_current_user)):
+    """Bridges Growth Plan → Execution Engine. Generates N content kits and schedules them
+    across the next N weeks at common business hours. Caps at 6 posts to respect AI rate limits."""
+    plan = await db.growth_plans.find_one({"user_id": ws(user)}, sort=[("generated_at", -1)])
+    if not plan:
+        raise HTTPException(status_code=404, detail="No growth plan found — generate a plan first")
+    bad = [p for p in payload.platforms if p not in SUPPORTED_PLATFORMS]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Unsupported platforms: {bad}")
+
+    total_posts = max(1, min(payload.weeks * payload.posts_per_week, 6))
+    posts_per_week = max(1, min(payload.posts_per_week, 5))
+    kits_created: List[str] = []
+    schedules_created: List[str] = []
+    errors: List[str] = []
+    now = now_utc()
+
+    for i in range(total_posts):
+        try:
+            r = await content_generate(ContentGenerateIn(), user)
+            kit = r["content"]
+            kits_created.append(kit["id"])
+        except HTTPException as he:
+            errors.append(f"AI gen {i + 1}: {he.detail}")
+            break
+        except Exception as e:
+            errors.append(f"AI gen {i + 1}: {str(e)[:80]}")
+            break
+
+        # Spread across weeks: 1 post on day (week*7 + slot*2 + 1) at 10:00 + slot*2h UTC
+        week = i // posts_per_week
+        slot = i % posts_per_week
+        day_offset = week * 7 + slot * 2 + 1
+        hour = 10 + (slot % 3) * 2  # 10, 12, 14
+        sched_when = (now + timedelta(days=day_offset)).replace(hour=hour, minute=0, second=0, microsecond=0)
+        sched_doc = {
+            "id": str(uuid.uuid4()),
+            "user_id": ws(user),
+            "content_id": kit["id"],
+            "scheduled_at": sched_when.isoformat(),
+            "platforms": payload.platforms,
+            "status": "PENDING",
+            "delivery": {p: {"status": "pending"} for p in payload.platforms},
+            "created_at": now_utc().isoformat(),
+            "source": "plan_kickoff",
+        }
+        await db.content_schedules.insert_one(sched_doc)
+        schedules_created.append(sched_doc["id"])
+        # Mark kit as scheduled
+        await db.content_kits.update_one({"id": kit["id"], "user_id": ws(user)}, {"$set": {"status": "SCHEDULED"}})
+
+    # In-app notification
+    if schedules_created:
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": ws(user),
+            "title": "Execution Engine activated",
+            "body": f"{len(schedules_created)} posts scheduled across {payload.weeks} week(s) on {', '.join(payload.platforms)}.",
+            "severity": "info",
+            "read": False,
+            "created_at": now_utc().isoformat(),
+        })
+
+    return {
+        "success": True,
+        "kits_created": len(kits_created),
+        "schedules_created": len(schedules_created),
+        "errors": errors,
+    }
+
+
 # ---------- ICP (Ideal Customer Profile) ----------
 @api.post("/icp/generate")
 async def icp_generate(user=Depends(get_current_user)):

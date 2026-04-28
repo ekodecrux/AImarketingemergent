@@ -1,22 +1,25 @@
 import { useState, useEffect } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
 import {
     ChartLineUp, MagnifyingGlass, Newspaper, Calendar, Target,
-    Sparkle, ArrowRight, ArrowsClockwise,
+    Sparkle, ArrowRight, ArrowsClockwise, Lightning, CurrencyDollar, RocketLaunch, CheckCircle,
 } from "@phosphor-icons/react";
+import { formatCurrency, currencySymbol, getCachedLocale } from "@/lib/locale";
 
 const TABS = [
+    { id: "quick", label: "Quick Plan", icon: Lightning, badge: "EASY" },
     { id: "icp", label: "Ideal Customer", icon: Target },
     { id: "market", label: "Market Analysis", icon: ChartLineUp },
     { id: "seo", label: "SEO Toolkit", icon: MagnifyingGlass },
     { id: "pr", label: "PR & Outreach", icon: Newspaper },
-    { id: "plan", label: "12-Month Plan", icon: Calendar },
+    { id: "plan", label: "Full Growth Plan", icon: Calendar },
 ];
 
 export default function GrowthStudio() {
-    const [tab, setTab] = useState("icp");
+    const [tab, setTab] = useState("quick");
     return (
         <div>
             <PageHeader
@@ -37,10 +40,14 @@ export default function GrowthStudio() {
                             }`}
                         >
                             <t.icon size={14} weight="bold" /> {t.label}
+                            {t.badge && (
+                                <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${tab === t.id ? "bg-[#2563EB] text-white" : "bg-[#DBEAFE] text-[#1D4ED8]"}`}>{t.badge}</span>
+                            )}
                         </button>
                     ))}
                 </div>
 
+                {tab === "quick" && <QuickPlanTab />}
                 {tab === "icp" && <ICPTab />}
                 {tab === "market" && <MarketTab />}
                 {tab === "seo" && <SEOTab />}
@@ -50,6 +57,282 @@ export default function GrowthStudio() {
         </div>
     );
 }
+
+/* ---------- Quick Plan: budget-driven simple flow ---------- */
+function QuickPlanTab() {
+    const navigate = useNavigate();
+    const [budget, setBudget] = useState(5000);
+    const [duration, setDuration] = useState(6);
+    const [avgDeal, setAvgDeal] = useState("");
+    const [goal, setGoal] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [result, setResult] = useState(null);
+    const [kickoffLoading, setKickoffLoading] = useState(false);
+    const [locale, setLocale] = useState(getCachedLocale());
+    const sym = currencySymbol(locale);
+
+    // Refresh locale from /locale/me so currency symbol matches user's country
+    useEffect(() => {
+        if (!locale) {
+            api.get("/locale/me").then((r) => setLocale(r.data || null)).catch(() => {});
+        }
+    }, [locale]);
+
+    // Load any existing plan that came from quick-plan
+    useEffect(() => {
+        api.get("/growth-plan/latest").then((r) => {
+            const p = r.data.plan;
+            if (p && p.source === "quick_plan") {
+                setResult({ plan: p, guarantee: {
+                    monthly_leads: p.plan?.guaranteed_leads_per_month || 0,
+                    total_leads: p.plan?.total_guaranteed_leads || 0,
+                    duration_months: p.plan?.duration_months || 12,
+                    monthly_budget: p.plan?.monthly_budget_usd || 0,
+                    currency: locale?.currency || "USD",
+                    buffer_pct: 50,
+                    raw_predicted_per_month: p.plan?.raw_predicted_leads_per_month || 0,
+                }});
+                setBudget(p.plan?.monthly_budget_usd || 5000);
+                setDuration(p.plan?.duration_months || 6);
+                setAvgDeal(p.plan?.avg_deal_value_usd || "");
+            }
+        }).catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const generate = async () => {
+        if (!budget || budget <= 0) { toast.error("Enter a monthly budget"); return; }
+        setLoading(true);
+        const t = toast.loading("Optimising your budget…");
+        try {
+            const r = await api.post("/quick-plan/generate", {
+                monthly_budget: Number(budget),
+                duration_months: Number(duration),
+                avg_deal_value: avgDeal ? Number(avgDeal) : undefined,
+                goal: goal || undefined,
+            });
+            setResult(r.data);
+            toast.success(`We can guarantee ${r.data.guarantee.monthly_leads} leads/mo`, { id: t });
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Generation failed", { id: t });
+        } finally { setLoading(false); }
+    };
+
+    const kickoff = async () => {
+        setKickoffLoading(true);
+        const t = toast.loading("Activating Execution Engine — generating & scheduling content…");
+        try {
+            const r = await api.post("/plan/kickoff-execution", {
+                weeks: 2, posts_per_week: 3, platforms: ["linkedin", "twitter", "blog"],
+            });
+            toast.success(`Scheduled ${r.data.schedules_created} posts across LinkedIn, X & Blog`, { id: t });
+            setTimeout(() => navigate("/schedule"), 800);
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Kickoff failed", { id: t });
+        } finally { setKickoffLoading(false); }
+    };
+
+    const plan = result?.plan?.plan;
+    const guarantee = result?.guarantee;
+    const channels = plan?.channel_distribution || [];
+
+    return (
+        <div className="space-y-6" data-testid="quick-plan-tab">
+            {/* Form */}
+            <div className="zm-card p-6 sm:p-8 border-l-2 border-l-[#2563EB]">
+                <div className="flex items-start gap-3 mb-5">
+                    <div className="w-10 h-10 rounded-md bg-[#DBEAFE] flex items-center justify-center shrink-0">
+                        <Lightning size={18} weight="fill" className="text-[#2563EB]" />
+                    </div>
+                    <div>
+                        <h3 className="font-display text-xl font-bold tracking-tight">Tell us your budget — we'll guarantee the leads.</h3>
+                        <p className="text-sm text-[#64748B] mt-1">Set monthly budget + how long you want this plan to run. AI distributes the spend across the best channels and gives you a conservative lead guarantee.</p>
+                    </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                    <div>
+                        <label className="zm-label">Monthly marketing budget</label>
+                        <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-[#64748B]">{sym}</span>
+                            <input
+                                type="number" min="100" step="100"
+                                value={budget}
+                                onChange={(e) => setBudget(e.target.value)}
+                                className="zm-input pl-8 text-base font-semibold"
+                                placeholder="5000"
+                                data-testid="quick-budget-input"
+                            />
+                        </div>
+                        <p className="text-[11px] text-[#94A3B8] mt-1">Per month, all channels combined.</p>
+                    </div>
+                    <div>
+                        <label className="zm-label">Plan duration</label>
+                        <div className="grid grid-cols-4 gap-2">
+                            {[3, 6, 9, 12].map((m) => (
+                                <button
+                                    key={m}
+                                    type="button"
+                                    onClick={() => setDuration(m)}
+                                    className={`px-3 py-2 text-xs font-bold uppercase tracking-[0.1em] rounded-xl border transition-colors ${
+                                        duration === m
+                                            ? "bg-[#0F172A] text-white border-[#0F172A]"
+                                            : "bg-white text-[#475569] border-[#E2E8F0] hover:border-[#2563EB] hover:text-[#2563EB]"
+                                    }`}
+                                    data-testid={`quick-duration-${m}`}
+                                >
+                                    {m} mo
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-[11px] text-[#94A3B8] mt-1">Editable anytime. Default 6 months.</p>
+                    </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                    <div>
+                        <label className="zm-label">Avg. deal value <span className="text-[#94A3B8] font-normal">(optional)</span></label>
+                        <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-[#64748B]">{sym}</span>
+                            <input
+                                type="number" min="0"
+                                value={avgDeal}
+                                onChange={(e) => setAvgDeal(e.target.value)}
+                                className="zm-input pl-8"
+                                placeholder="100"
+                                data-testid="quick-avg-deal"
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="zm-label">Goal <span className="text-[#94A3B8] font-normal">(optional)</span></label>
+                        <input
+                            value={goal}
+                            onChange={(e) => setGoal(e.target.value)}
+                            className="zm-input"
+                            placeholder="e.g. demo bookings, app installs, footfall"
+                            data-testid="quick-goal"
+                        />
+                    </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 mt-6 pt-5 border-t border-[#E2E8F0]">
+                    <button onClick={generate} disabled={loading} className="zm-btn-primary" data-testid="quick-generate">
+                        {loading ? <ArrowsClockwise size={14} weight="bold" className="animate-spin" /> : <Sparkle size={14} weight="fill" />}
+                        {loading ? "Optimising…" : (result ? "Re-optimise plan" : "Generate guaranteed plan")}
+                    </button>
+                    <p className="text-xs text-[#64748B]">
+                        <CheckCircle size={11} weight="fill" className="inline text-[#10B981] mr-1" />
+                        We hold a 50% safety buffer — you typically get more leads than guaranteed.
+                    </p>
+                </div>
+            </div>
+
+            {/* Result */}
+            {guarantee && plan && (
+                <div className="space-y-5" data-testid="quick-plan-result">
+                    {/* Guarantee headline card */}
+                    <div className="zm-card bg-gradient-to-br from-[#0F172A] via-[#1E293B] to-[#0F172A] text-white border-0 p-7 sm:p-9">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-white/60 font-bold mb-2">// Lead guarantee</p>
+                        <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
+                            <div>
+                                <p className="font-display text-5xl sm:text-6xl font-black tracking-tight text-[#2563EB]" data-testid="guarantee-monthly">
+                                    {guarantee.monthly_leads}
+                                </p>
+                                <p className="text-xs text-white/70 font-semibold mt-1">leads / month, guaranteed</p>
+                            </div>
+                            <div>
+                                <p className="font-display text-3xl font-black tracking-tight text-white" data-testid="guarantee-total">
+                                    {guarantee.total_leads}
+                                </p>
+                                <p className="text-xs text-white/70 font-semibold mt-1">total over {guarantee.duration_months} months</p>
+                            </div>
+                            <div>
+                                <p className="font-display text-2xl font-black tracking-tight text-[#10B981]">
+                                    {formatCurrency(guarantee.monthly_budget, locale)}
+                                </p>
+                                <p className="text-xs text-white/70 font-semibold mt-1">monthly budget</p>
+                            </div>
+                            {guarantee.raw_predicted_per_month > guarantee.monthly_leads && (
+                                <div className="ml-auto">
+                                    <span className="zm-badge bg-[#10B981] text-white">UPSIDE: ~{guarantee.raw_predicted_per_month}/mo</span>
+                                </div>
+                            )}
+                        </div>
+                        {plan.ai_rationale && (
+                            <p className="text-sm text-white/80 mt-5 pt-4 border-t border-white/10 leading-relaxed max-w-3xl">
+                                {plan.ai_rationale}
+                            </p>
+                        )}
+                        <button onClick={kickoff} disabled={kickoffLoading} className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors" data-testid="quick-kickoff">
+                            {kickoffLoading ? <ArrowsClockwise size={14} weight="bold" className="animate-spin" /> : <RocketLaunch size={14} weight="fill" />}
+                            {kickoffLoading ? "Activating…" : "Activate Execution Engine"} <ArrowRight size={14} weight="bold" />
+                        </button>
+                        <p className="text-[11px] text-white/50 mt-2">→ Auto-generates 6 posts, schedules them across the next 2 weeks on LinkedIn, X & your blog.</p>
+                    </div>
+
+                    {/* Channels */}
+                    {channels.length > 0 && (
+                        <div className="zm-card overflow-hidden">
+                            <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-wrap gap-3 items-center justify-between">
+                                <p className="zm-section-label">// Optimal channel mix</p>
+                                <div className="flex gap-3 text-xs">
+                                    {plan.optimal_split?.paid_pct != null && (
+                                        <>
+                                            <span><strong className="text-[#2563EB]">{plan.optimal_split.paid_pct}%</strong> paid</span>
+                                            <span className="text-[#94A3B8]">·</span>
+                                            <span><strong className="text-[#10B981]">{plan.optimal_split.organic_pct}%</strong> organic</span>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="border-b border-[#E2E8F0] bg-white">
+                                            <th className="text-left px-5 py-3 zm-section-label">Channel</th>
+                                            <th className="text-left px-3 py-3 zm-section-label">Type</th>
+                                            <th className="text-right px-3 py-3 zm-section-label">Budget /mo</th>
+                                            <th className="text-right px-3 py-3 zm-section-label">Leads /mo</th>
+                                            <th className="text-right px-3 py-3 zm-section-label">CPL</th>
+                                            <th className="text-left px-5 py-3 zm-section-label">Why</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {channels.map((c, i) => (
+                                            <tr key={i} className="border-b border-[#E2E8F0] last:border-b-0 hover:bg-[#F8FAFC]" data-testid={`quick-channel-${i}`}>
+                                                <td className="px-5 py-3 font-bold">{c.name}</td>
+                                                <td className="px-3 py-3">
+                                                    <span className={`zm-badge ${c.type === "paid" ? "bg-[#DBEAFE] text-[#1D4ED8]" : "bg-[#D1FAE5] text-[#065F46]"}`}>{c.type}</span>
+                                                </td>
+                                                <td className="px-3 py-3 text-right font-mono">{formatCurrency(c.monthly_budget_usd || 0, locale)}</td>
+                                                <td className="px-3 py-3 text-right font-mono font-bold">{c.expected_leads_per_month || 0}</td>
+                                                <td className="px-3 py-3 text-right font-mono">{formatCurrency(c.expected_cpl_usd || 0, locale)}</td>
+                                                <td className="px-5 py-3 text-xs text-[#64748B] max-w-[280px]">{c.rationale}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* First action recommendation */}
+                    {plan.recommended_first_action && (
+                        <div className="zm-card p-5 border-l-2 border-l-[#F59E0B] flex items-start gap-3">
+                            <CurrencyDollar size={20} weight="fill" className="text-[#F59E0B] mt-0.5 shrink-0" />
+                            <div>
+                                <p className="zm-section-label mb-1">// Recommended first action</p>
+                                <p className="text-sm font-semibold text-[#0F172A]">{plan.recommended_first_action}</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 
 /* ---------- ICP ---------- */
 function ICPTab() {
@@ -646,9 +929,11 @@ function OutreachComposer() {
 
 /* ---------- 12-Month Plan ---------- */
 function PlanTab() {
+    const navigate = useNavigate();
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [savingChannels, setSavingChannels] = useState(false);
+    const [kickoffLoading, setKickoffLoading] = useState(false);
 
     // Load latest plan if exists
     useEffect(() => {
@@ -666,6 +951,20 @@ function PlanTab() {
             toast.success("12-month plan ready", { id: t });
         } catch { toast.error("Failed", { id: t }); }
         finally { setLoading(false); }
+    };
+
+    const kickoff = async () => {
+        setKickoffLoading(true);
+        const t = toast.loading("Activating Execution Engine…");
+        try {
+            const r = await api.post("/plan/kickoff-execution", {
+                weeks: 2, posts_per_week: 3, platforms: ["linkedin", "twitter", "blog"],
+            });
+            toast.success(`Scheduled ${r.data.schedules_created} posts on LinkedIn, X & Blog`, { id: t });
+            setTimeout(() => navigate("/schedule"), 800);
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Kickoff failed", { id: t });
+        } finally { setKickoffLoading(false); }
     };
 
     const updateChannel = (idx, patch) => {
@@ -727,6 +1026,11 @@ function PlanTab() {
                                 <KpiBlock label="Avg deal" value={data.avg_deal_value_usd ? `$${data.avg_deal_value_usd}` : "—"} />
                             </div>
                         </div>
+                        <button onClick={kickoff} disabled={kickoffLoading} className="mt-6 inline-flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors" data-testid="plan-kickoff">
+                            {kickoffLoading ? <ArrowsClockwise size={14} weight="bold" className="animate-spin" /> : <RocketLaunch size={14} weight="fill" />}
+                            {kickoffLoading ? "Activating…" : "Activate Execution Engine"} <ArrowRight size={14} weight="bold" />
+                        </button>
+                        <p className="text-[11px] text-white/50 mt-2">→ Auto-generates 6 posts and schedules them across the next 2 weeks.</p>
                     </div>
 
                     {/* CHANNEL DISTRIBUTION (paid vs organic, editable) */}
