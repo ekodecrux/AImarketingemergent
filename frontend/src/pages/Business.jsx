@@ -70,7 +70,7 @@ export default function Business() {
                     </button>
                 }
             />
-            <div className="px-8 py-6 max-w-3xl">
+            <div className="px-4 sm:px-6 lg:px-8 py-6 max-w-3xl">
                 <form onSubmit={submit} className="zm-card p-8 space-y-5" data-testid="business-form">
                     {loading && <p className="text-sm text-[#A1A1AA]">Loading…</p>}
                     <div>

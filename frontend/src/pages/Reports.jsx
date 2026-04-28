@@ -38,7 +38,7 @@ export default function Reports() {
     return (
         <div>
             <PageHeader eyebrow="// Insights" title="Reports" subtitle="On-demand performance and gap analysis reports." />
-            <div className="px-8 py-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6">
                 <div className="flex items-center gap-3 mb-6">
                     <span className="zm-section-label">Period</span>
                     <select value={periodDays} onChange={(e) => setPeriodDays(Number(e.target.value))} className="zm-input w-auto" data-testid="report-period">

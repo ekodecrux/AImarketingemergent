@@ -52,7 +52,7 @@ export default function Dashboard() {
                 title="Dashboard"
                 subtitle={`${data.stats.subscription_tier} plan${data.stats.trial_days_left ? ` · ${data.stats.trial_days_left} trial days left` : ""}`}
             />
-            <div className="px-8 pb-12">
+            <div className="px-4 sm:px-6 lg:px-8 pb-12">
                 {/* Setup checklist — shows until everything is done */}
                 {setupIncomplete && <SetupChecklist setup={setup} />}
 

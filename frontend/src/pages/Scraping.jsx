@@ -20,7 +20,7 @@ export default function Scraping() {
                 subtitle={`${jobs.length} job${jobs.length === 1 ? "" : "s"} executed`}
                 action={<button className="zm-btn-secondary" onClick={load} data-testid="refresh-jobs"><ArrowsClockwise size={14} weight="bold"/> Refresh</button>}
             />
-            <div className="px-8 py-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6">
                 <div className="bg-white border border-[#E2E8F0] p-6 mb-6 border-l-2 border-l-[#2563EB]">
                     <p className="zm-section-label mb-2">// How it works</p>
                     <p className="text-sm text-[#71717A] leading-relaxed">

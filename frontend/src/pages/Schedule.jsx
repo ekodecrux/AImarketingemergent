@@ -126,7 +126,7 @@ export default function Schedule() {
                     </div>
                 }
             />
-            <div className="px-8 py-6 space-y-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
                 {/* Auto-mode banner */}
                 {autoOpts && (
                     <div className="zm-card p-5 bg-gradient-to-r from-[#2563EB] to-[#1D4ED8] text-white" data-testid="auto-options">

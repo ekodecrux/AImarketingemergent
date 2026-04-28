@@ -23,7 +23,7 @@ export default function Inbox() {
                 title="Inbox"
                 subtitle="Inbound replies from leads, auto-routed via Twilio webhooks."
             />
-            <div className="px-8 py-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6">
                 <div className="bg-white border border-[#E2E8F0] border-l-2 border-l-[#2563EB] p-4 mb-6 text-xs text-[#71717A]">
                     <span className="font-bold text-[#0F172A] uppercase tracking-[0.15em]">// Set up: </span>
                     Point your Twilio phone-number SMS webhook to{" "}

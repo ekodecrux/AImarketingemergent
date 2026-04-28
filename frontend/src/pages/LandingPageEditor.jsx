@@ -132,7 +132,7 @@ export default function LandingPageEditor() {
                     </div>
                 }
             />
-            <div className="px-8 py-6 grid lg:grid-cols-[300px_1fr_360px] gap-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6 grid lg:grid-cols-[300px_1fr_360px] gap-6">
                 {/* LEFT: Section list */}
                 <div className="space-y-3">
                     <div className="zm-card p-3">

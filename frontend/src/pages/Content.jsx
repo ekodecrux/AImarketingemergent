@@ -77,7 +77,7 @@ export default function Content() {
                 }
             />
 
-            <div className="px-8 py-6 grid lg:grid-cols-[300px_1fr] gap-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6 grid lg:grid-cols-[300px_1fr] gap-6">
                 {/* List sidebar */}
                 <div className="zm-card overflow-hidden h-fit" data-testid="content-list">
                     <div className="px-4 py-3 border-b border-[#E2E8F0] bg-[#F8FAFC]">

@@ -86,7 +86,7 @@ export default function Integrations() {
                 title="Integrations"
                 subtitle="Connect your social, email and messaging accounts to run real campaigns."
             />
-            <div className="px-8 py-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6">
                 <div className="bg-white border border-[#E2E8F0] border-l-2 border-l-[#F59E0B] p-6 mb-6">
                     <p className="zm-section-label mb-2">// Heads up</p>
                     <p className="text-sm text-[#71717A] leading-relaxed">

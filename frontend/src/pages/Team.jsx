@@ -111,7 +111,7 @@ export default function Team() {
                     </button>
                 )}
             />
-            <div className="px-8 py-6 grid lg:grid-cols-3 gap-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6 grid lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
                     {showInvite && (
                         <div className="zm-card p-6">

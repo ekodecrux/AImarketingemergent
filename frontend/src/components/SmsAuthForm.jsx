@@ -13,6 +13,7 @@ export default function SmsAuthForm({ mode = "login", onCancel }) {
     const [firstName, setFirstName] = useState("");
     const [lastName, setLastName] = useState("");
     const [otp, setOtp] = useState("");
+    const [devOtp, setDevOtp] = useState(null);
     const [loading, setLoading] = useState(false);
 
     const sendOtp = async (e) => {
@@ -25,8 +26,10 @@ export default function SmsAuthForm({ mode = "login", onCancel }) {
         try {
             const r = await api.post("/auth/sms/send-otp", { phone });
             if (r.data.dev_otp) {
-                toast.success(`Dev OTP: ${r.data.dev_otp}`, { duration: 8000 });
+                setDevOtp(r.data.dev_otp);
+                toast.success("Dev OTP shown below (Twilio rejected this number — use a real phone for real SMS).", { duration: 6000 });
             } else {
+                setDevOtp(null);
                 toast.success("OTP sent — check your SMS");
             }
             setStep("otp");
@@ -85,7 +88,7 @@ export default function SmsAuthForm({ mode = "login", onCancel }) {
                                 data-testid="sms-phone-input"
                             />
                         </div>
-                        <p className="text-[11px] text-[#94A3B8] mt-1">E.164 format · Standard SMS rates apply</p>
+                        <p className="text-[11px] text-[#94A3B8] mt-1">E.164 format · Use your <strong>real mobile number</strong> · Test numbers (+1555…) won't deliver and will fall back to a dev OTP shown on screen.</p>
                     </div>
                     <button type="submit" disabled={loading} className="zm-btn-primary w-full" data-testid="sms-send-otp">
                         {loading ? "Sending OTP…" : "Send OTP"}
@@ -104,6 +107,18 @@ export default function SmsAuthForm({ mode = "login", onCancel }) {
                     <p className="text-xs text-[#64748B]">
                         Enter the 6-digit code sent to <span className="font-mono text-[#0F172A]">{phone}</span>
                     </p>
+
+                    {devOtp && (
+                        <div className="bg-[#F59E0B]/10 border border-[#F59E0B] rounded-md p-3" data-testid="dev-otp-banner">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#92400E] mb-1">Dev mode — Twilio rejected this number</p>
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="font-mono text-2xl font-black tracking-[0.3em] text-[#0F172A]">{devOtp}</p>
+                                <button type="button" onClick={() => setOtp(devOtp)} className="text-xs font-bold text-[#2563EB] hover:underline" data-testid="autofill-otp">Auto-fill</button>
+                            </div>
+                            <p className="text-[10px] text-[#92400E] mt-1">Use a real mobile number to receive an actual SMS.</p>
+                        </div>
+                    )}
+
                     <div>
                         <label className="zm-label">Verification code</label>
                         <input
@@ -123,7 +138,7 @@ export default function SmsAuthForm({ mode = "login", onCancel }) {
                         {loading ? "Verifying…" : (mode === "register" ? "Create account" : "Sign in")}
                         <ArrowRight size={14} weight="bold" />
                     </button>
-                    <button type="button" onClick={() => { setStep("phone"); setOtp(""); }} className="text-xs text-[#64748B] hover:text-[#0F172A] w-full text-center font-semibold pt-1 flex items-center justify-center gap-1" data-testid="sms-back">
+                    <button type="button" onClick={() => { setStep("phone"); setOtp(""); setDevOtp(null); }} className="text-xs text-[#64748B] hover:text-[#0F172A] w-full text-center font-semibold pt-1 flex items-center justify-center gap-1" data-testid="sms-back">
                         <ArrowLeft size={12} weight="bold" /> Change phone number
                     </button>
                 </form>

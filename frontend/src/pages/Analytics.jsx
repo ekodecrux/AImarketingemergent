@@ -79,7 +79,7 @@ export default function Analytics() {
                     </button>
                 }
             />
-            <div className="px-8 py-6 space-y-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
                 {/* Live counters */}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4" data-testid="live-counters">
                     <Counter icon={Pulse} label="Last hour" value={live.live.leads_last_hour} sub="leads" color="#2563EB" highlight />

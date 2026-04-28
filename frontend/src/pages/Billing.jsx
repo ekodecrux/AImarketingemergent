@@ -72,7 +72,7 @@ export default function Billing() {
                 title="Billing & Plans"
                 subtitle={sub ? `Current plan: ${sub.plan} · Status ${sub.status}` : ""}
             />
-            <div className="px-8 py-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6">
                 <div className="grid md:grid-cols-3 gap-0 zm-card" data-testid="plans">
                     {plans.map((p, i) => {
                         const isCurrent = sub?.plan?.toLowerCase() === p.id;

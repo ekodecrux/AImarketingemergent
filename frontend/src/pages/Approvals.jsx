@@ -40,7 +40,7 @@ export default function Approvals() {
                 title="Approval Queue"
                 subtitle={`${items.length} pending review`}
             />
-            <div className="px-8 py-6">
+            <div className="px-4 sm:px-6 lg:px-8 py-6">
                 {loading ? (
                     <p className="text-sm text-[#A1A1AA] p-12 zm-card">Loading…</p>
                 ) : items.length === 0 ? (

@@ -43,7 +43,7 @@ export default function PublicLandingPage() {
     return (
         <div className="min-h-screen bg-white">
             <LandingPagePreview page={page} isPublic={true} onSubmit={submit} />
-            <footer className="px-8 py-6 text-center bg-[#0F172A] text-white/60 text-xs uppercase tracking-[0.2em] font-semibold">
+            <footer className="px-4 sm:px-6 lg:px-8 py-6 text-center bg-[#0F172A] text-white/60 text-xs uppercase tracking-[0.2em] font-semibold">
                 Built with ZeroMark AI
             </footer>
         </div>
