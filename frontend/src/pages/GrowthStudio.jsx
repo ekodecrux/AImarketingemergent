@@ -9,6 +9,13 @@ import {
 } from "@phosphor-icons/react";
 import { formatCurrency, currencySymbol, getCachedLocale } from "@/lib/locale";
 
+const SYMBOL_FOR_CCY = {
+    USD: "$", INR: "₹", EUR: "€", GBP: "£", JPY: "¥", CNY: "¥", KRW: "₩",
+    CAD: "C$", AUD: "A$", NZD: "NZ$", SGD: "S$", HKD: "HK$", CHF: "CHF",
+    SEK: "kr", NOK: "kr", DKK: "kr", PLN: "zł", MXN: "Mex$", BRL: "R$",
+    ZAR: "R", NGN: "₦", AED: "AED", SAR: "SAR", ILS: "₪",
+};
+
 const TABS = [
     { id: "quick", label: "Quick Plan", icon: Lightning, badge: "EASY" },
     { id: "icp", label: "Ideal Customer", icon: Target },
@@ -69,14 +76,19 @@ function QuickPlanTab() {
     const [result, setResult] = useState(null);
     const [kickoffLoading, setKickoffLoading] = useState(false);
     const [locale, setLocale] = useState(getCachedLocale());
-    const sym = currencySymbol(locale);
 
     // Refresh locale from /locale/me so currency symbol matches user's country
     useEffect(() => {
         if (!locale) {
-            api.get("/locale/me").then((r) => setLocale(r.data || null)).catch(() => {});
+            api.get("/locale/me").then((r) => setLocale(r.data?.locale || null)).catch(() => {});
         }
     }, [locale]);
+
+    // Derive locale from backend response if cached locale missing (safety net)
+    const effLocale = locale || (result?.guarantee?.currency
+        ? { currency: result.guarantee.currency, symbol: SYMBOL_FOR_CCY[result.guarantee.currency] || "$", locale: "en-US" }
+        : null);
+    const sym = currencySymbol(effLocale);
 
     // Load any existing plan that came from quick-plan
     useEffect(() => {
@@ -249,7 +261,7 @@ function QuickPlanTab() {
                             </div>
                             <div>
                                 <p className="font-display text-2xl font-black tracking-tight text-[#10B981]">
-                                    {formatCurrency(guarantee.monthly_budget, locale)}
+                                    {formatCurrency(guarantee.monthly_budget, effLocale)}
                                 </p>
                                 <p className="text-xs text-white/70 font-semibold mt-1">monthly budget</p>
                             </div>
@@ -305,9 +317,9 @@ function QuickPlanTab() {
                                                 <td className="px-3 py-3">
                                                     <span className={`zm-badge ${c.type === "paid" ? "bg-[#DBEAFE] text-[#1D4ED8]" : "bg-[#D1FAE5] text-[#065F46]"}`}>{c.type}</span>
                                                 </td>
-                                                <td className="px-3 py-3 text-right font-mono">{formatCurrency(c.monthly_budget_usd || 0, locale)}</td>
+                                                <td className="px-3 py-3 text-right font-mono">{formatCurrency(c.monthly_budget_usd || 0, effLocale)}</td>
                                                 <td className="px-3 py-3 text-right font-mono font-bold">{c.expected_leads_per_month || 0}</td>
-                                                <td className="px-3 py-3 text-right font-mono">{formatCurrency(c.expected_cpl_usd || 0, locale)}</td>
+                                                <td className="px-3 py-3 text-right font-mono">{formatCurrency(c.expected_cpl_usd || 0, effLocale)}</td>
                                                 <td className="px-5 py-3 text-xs text-[#64748B] max-w-[280px]">{c.rationale}</td>
                                             </tr>
                                         ))}

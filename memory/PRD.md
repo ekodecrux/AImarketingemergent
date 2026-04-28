@@ -1,175 +1,117 @@
 # ZeroMark AI — Product Requirements Document
 
 ## Original problem statement
-> Build full-stack AI marketing SaaS. Iterations 1–5 covered: MVP, AI Lead Scoring + Mini-CRM, Growth Studio (Market/SEO/PR/12mo Plan), reliability hardening, Team workspaces + per-user AI rate limits + real SEO API adapters + Social OAuth + IMAP email reply parsing + cron'd daily briefing emails + Landing Page Builder backend.
->
-> **Iteration 6 (Feb 2026):** Unbounce-style design overhaul, **Guaranteed Leads** tracking + revenue calc, real-time analytics dashboard, AI marketing plan that distributes between **paid + organic** channels with user override.
+Build an end-to-end AI marketing automation platform that:
+- Takes a business profile + objective; performs market analysis; builds a 12-month paid+organic plan
+- Predicts GUARANTEED leads given a budget; tracks via Mini-CRM
+- Auto-generates daily SEO/social content; auto-schedules and publishes
+- Provides Super Admin panel, in-app Chatbot, multi-method auth (Google/SMS/Email)
+- Forecast alerts via Slack/Email/in-app; encrypted social media credentials
+
+User explicitly asked (Iter 7, Feb 2026):
+> simplify overall user flow to ensure normal users can use with few clicks and market their product. If I give 5000 INR as budget, it should figure best way to utilize and give guaranteed leads prediction (50% buffer is OK). Growth Studio 12-month plan duration should be editable by user. Plan and Execution Engine should link seamlessly.
 
 ## Architecture
-- **Backend**: FastAPI + Motor (MongoDB), JWT auth + brute-force lockout, Fernet-encrypted secrets, APScheduler in-process cron
-- **Frontend**: React 19 + Tailwind, Source Sans 3 (body) + **Fraunces** (display headings, Unbounce-inspired)
-- **Theme**: cream `#FAF7F2` bg, coral `#FF562D` primary, ink `#0E0F11` accents, pill (full-rounded) buttons, generous whitespace, rounded-2xl cards
-- **Integrations**: Groq, Twilio, Gmail SMTP+IMAP, Razorpay, optional DataForSEO/SerpAPI/LinkedIn/Facebook/Twitter OAuth
+- **Backend**: FastAPI + Motor MongoDB, JWT auth + brute-force lockout, Fernet-encrypted secrets, APScheduler in-process cron (5 jobs)
+- **Frontend**: React 19 + Tailwind, Source Sans 3, professional Blue/White theme (`#2563EB` primary, `#F8FAFC` bg, `#0F172A` ink)
+- **Integrations**: Groq (LLM), Twilio (SMS+WA), Gmail SMTP+IMAP, Razorpay, Emergent Google Auth, optional LinkedIn/FB/Twitter OAuth
+- **Encryption**: Fernet (`_enc`/`_dec`) for social-media access tokens at rest
 
-## What's been implemented
+## Key features (cumulative)
 
-### Iteration 12 (Feb 2026) — Auto-publish queue + Daily auto-content + Recovery loop
+### Iter 13 (Feb 2026) — Quick Plan + Execution Kickoff + Super Admin + Chatbot + Encrypted Social Vault
 **Backend**
-- New `/api/schedule` POST/GET/PUT/DELETE — content_id × scheduled_at × platforms[]; supports linkedin/twitter/instagram/blog/email_broadcast
-- `/api/schedule/{id}/publish-now` — manual force-publish
-- Publishing dispatcher with 5 platform handlers:
-  - `_publish_to_blog` — actually publishes content as a hosted landing page at `/p/{slug}` with full meta tags + JSON-LD schema attached
-  - `_publish_to_email_broadcast` — emails the article to all CONTACTED+INTERESTED+NEW leads via existing Gmail SMTP
-  - `_publish_to_linkedin/twitter/instagram` — calls real API if OAuth token present in `db.oauth_tokens`, otherwise returns `mock_published` with preview text + clear "connect OAuth" message (NOT lying about success)
-- New APScheduler jobs:
-  - `_publish_due_schedules_tick` — every 5 min: pick up `status=PENDING` schedules whose `scheduled_at <= now`, dispatch them
-  - `_daily_auto_content_tick` — hourly: for each user with `auto_daily_content=True` whose preferred hour matches, generate 1 content kit (skips if one already exists today)
-- **Recovery loop**: when forecast alert fires for an at-risk workspace AND `auto_publish_when_at_risk=True`, `_auto_schedule_recovery_content` automatically schedules 3 most-recent draft content kits across the next 7 days (LinkedIn + Twitter + Blog), then sends an in-app notification
-- New `AlertPreferencesIn` fields: `auto_daily_content`, `auto_publish_when_at_risk`
-- All schedule lifecycle events fire in-app notifications
-- `delete_content` cascades to delete its scheduled posts
+- `POST /api/quick-plan/generate` — budget-driven simplified flow:
+  - Inputs: `monthly_budget` (numeric), `duration_months` (3/6/9/12 only), optional `avg_deal_value`, `goal`
+  - AI builds OPTIMAL channel mix for THIS exact budget using country-specific CPL benchmarks
+  - Applies **50% conservative buffer**: `guaranteed_per_month = floor(raw_predicted * 0.5)`
+  - Persists as `growth_plans` (with `source='quick_plan'`) AND upserts `lead_targets` with `guarantee_enabled=true` + descriptive `guarantee_terms`
+  - Returns guarantee block: `{monthly_leads, total_leads, duration_months, monthly_budget, currency, buffer_pct, raw_predicted_per_month, revenue_target}`
+- `POST /api/plan/kickoff-execution` — bridges Plan → Execution Engine:
+  - Generates up to 6 content kits sequentially (cap to respect AI rate limits)
+  - Schedules them across `weeks` × `posts_per_week` slots at staggered hours
+  - Marks kits as `SCHEDULED`, fires in-app notification
+  - Default platforms: `[linkedin, twitter, blog]`
+- `GET /api/admin/overview` + `GET /api/admin/users` — admin-only platform stats (total users, workspaces, leads, growth, by_provider, by_plan, recent users)
+- `POST /api/assistant/chat` — in-app guidance chatbot via Groq, knows the user's setup state
+- `GET/POST /api/integrations/social` + `DELETE /api/integrations/social/{platform}` — encrypted (Fernet) credential vault for LinkedIn/Twitter/Instagram/Facebook
 
 **Frontend**
-- New `/schedule` page — 7-day weekly calendar grid (Mon→Sun), prev/today/next nav, click any day's "+ Schedule" → modal with date/time picker + content kit dropdown + 5 platform multi-select
-- ScheduleCard shows time + title + platform icons + status (PENDING blue / PUBLISHED green / FAILED red) + remove (X) + "Publish now →"
-- Top "Autopilot" gradient banner with 2 toggles for daily auto-gen + at-risk auto-recovery
-- Sidebar: new **Schedule** entry with "AUTO" badge under Growth section
-- `LandingPagePreview` now supports `rich_text` section type with simple Markdown-ish renderer (paragraphs / H2-H3 / bullet lists) so auto-published blog posts render properly at `/p/{slug}`
+- New "Quick Plan" tab in Growth Studio (`/growth`) — FIRST tab, marked "EASY":
+  - Big budget input with currency-aware prefix (₹/$/€/£)
+  - Duration pills: 3 / 6 / 9 / 12 months (default 6)
+  - Optional avg deal + goal
+  - On generate: gradient hero card with "X leads/month, guaranteed", "Y total over N months", monthly budget formatted, AI rationale, "UPSIDE: ~Z/MO" badge
+  - Channel mix table (paid/organic chips, budgets, CPL)
+  - **"Activate Execution Engine" button** → calls kickoff endpoint, schedules 6 posts across LinkedIn/X/Blog over next 2 weeks, redirects to `/schedule`
+- Existing 12-Month Plan tab (`Full Growth Plan`) also gets the same "Activate Execution Engine" button
+- Sidebar (per user request): RUN (Dashboard, Live Analytics, Inbox, Approvals), STRATEGY (Business Profile, Growth Studio), EXECUTION ENGINE (Leads (CRM), Lead Discovery, Campaigns, Landing Pages), POSTS & CONTENT (Content Studio, Auto-publish), REPORTS (Reports & Analysis), SETTINGS (Integrations, Team & Alerts, Billing), ADMIN (Super Admin, admin-only)
+- New `/admin` page — Platform Overview with 6 stat cards, Growth panel, Auth provider mix, Subscription mix, Recent users table
+- `ChatbotWidget` mounted globally in AppLayout — floating bubble bottom-right, conversational guide with markdown link support to in-app pages
+- Landing page (`/`) — tight hero with recharts area chart visualizing 9-month +1,400% growth, dark stats strip, features grid, CTA
 
-### Iteration 11 (Feb 2026) — Currency-agnostic + Content Studio + AI commentary stripped
-**Backend**
-- 49-country `COUNTRY_CURRENCY` map (ISO 3166 + 4217 + Intl locale strings) covering all major SaaS markets
-- `BusinessProfileIn` + DB now store `country_code` + `currency_code` (auto-derived from country)
-- New `GET /api/locale/countries`, `GET /api/locale/me` endpoints
-- All AI prompts (Market Analysis, ICP, 12-Month Plan, Corrective Actions, Content Kit) **inject country + currency context** so generated competitors, revenue bands, sample companies, CPL benchmarks reflect local market — not US averages
-- ICP prompt requires REAL companies operating in the user's country
-- Plan prompt names country-specific channels (Naver/KakaoTalk for KR, Baidu/WeChat for CN, JustDial/ShareChat for IN, Yahoo Japan/LINE for JP, etc.)
-- `analytics_realtime` and `setup_status` return `locale` block with `currency`, `symbol`, `locale` for frontend formatters
-- `_groq_json` hardened — strips Markdown code fences, AI preambles, trailing commentary; system prompt enforces "STRICT JSON ONLY, no AI disclaimers"
+### Iter 12 (Feb 2026) — Auto-publish queue + Daily auto-content + Recovery loop
+- 5-platform schedule dispatcher (linkedin/twitter/instagram/blog/email_broadcast)
+- Hourly cron auto-content + every-5-min publish dispatcher
+- Recovery loop: at-risk forecast auto-schedules 3 recent draft kits over 7 days
 
-**Content Studio (NEW page)**
-- `POST /api/content/generate` — country-aware daily kit: SEO-optimised blog post (700-1000 words MD), full meta tag set (title/desc/OG/Twitter/canonical/keywords with character counters), JSON-LD Article schema, 3 social posts (LinkedIn/Twitter/Instagram with hashtags + platform char limits), 5 SEO keywords (intent + difficulty + monthly searches), CTA recommendation linking back to user's funnel
-- `GET /api/content`, `GET /api/content/{id}`, `PUT /api/content/{id}/status`, `DELETE /api/content/{id}`
-- Frontend `/content` page — library sidebar + detail panel with copy-to-clipboard for body MD, meta HTML block, individual social posts, JSON-LD schema, status pill (DRAFT/PUBLISHED/SCHEDULED/ARCHIVED)
-- New "Content Studio" entry under Growth section in sidebar
+### Iter 11 — Currency-agnostic + Content Studio
+- 49-country COUNTRY_CURRENCY map; AI prompts inject country+currency context
+- Content Studio generates daily kits (blog + meta + 3 social posts + 5 SEO keywords)
 
-**Frontend currency**
-- `lib/locale.js` — `setLocaleCache`, `getCachedLocale`, `formatCurrency` (uses `Intl.NumberFormat`), `formatCurrencyCompact`, `currencySymbol`
-- Onboarding step 2 has country dropdown (49 options); auto-derives currency
-- Forecast preview in onboarding shows correct symbol (₹/€/£/$)
-- Analytics page reads `live.locale` and renders all amounts via `formatCurrency` (Indian admin shows ₹500.00, ₹10,500 etc.)
-- Dashboard caches locale on first load via `setLocaleCache` (used by all subsequent currency renders)
+### Iter 10 — Multi-method auth: Email + Google (Emergent) + SMS-OTP (Twilio)
 
-### Iteration 10 (Feb 2026) — Multi-method authentication: Email + Google + SMS
-**Backend**
-- `POST /api/auth/google/callback` — Emergent-managed Google OAuth: takes `session_id` (from Emergent return URL), calls `https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data`, creates or finds user by email, issues internal JWT, sets `auth_provider="google"` and `picture` URL
-- `POST /api/auth/sms/send-otp` — generates 6-digit OTP, hashes with SHA-256, stores in `db.otp_codes` (10-min TTL, max 3/hour rate limit), sends via existing Twilio SMS. Dev fallback returns OTP in response when `APP_ENV=development`
-- `POST /api/auth/sms/verify-otp` — validates code (5-attempt cap), creates/finds user by phone, issues JWT
-- `serialize_user` extended with `phone`, `picture`, `auth_provider` fields
-- Phone validation: E.164 format enforced, 8–16 chars
-- New `APP_ENV=development` env var enables dev OTP in response (preview only)
+### Iter 9 — Onboarding wizard, Setup checklist, ICP generator, Autopilot kickoff
 
-**Frontend**
-- `/auth/callback` page handles Google return — reads `#session_id=` from URL hash, exchanges via backend, stores JWT, redirects to `/onboarding` (new) or `/dashboard` (existing). Race-condition-safe with `useRef`
-- New `SmsAuthForm` component — 2-step (phone → 6-digit OTP) with toast showing dev OTP, attempt counter, change-number flow
-- Login + Register both updated with **method tabs (Email | SMS) + Google button** at the top
-- AuthContext gets new `setSession(token, user)` for OAuth/SMS flows
+### Iter 8 — Theme switch to professional Blue/White
 
-### Iteration 9 (Feb 2026) — Integrated end-to-end flow + ICP + Setup Checklist + Polish
-- **New**: `POST /api/icp/generate` + `GET /api/icp/latest` — structured Ideal Customer Profile (persona, firmographics with 5 tech signals, 5 buying signals, 10 sample target companies, 4 recommended channels with opening hooks, 5 qualification questions, 3 disqualifiers)
-- **New**: `POST /api/autopilot/kickoff` — one-shot orchestrator that saves lead target → generates ICP → builds 12-month plan → enables forecast alerts (3 AI calls bundled)
-- **New**: `GET /api/setup/status` — drives the dashboard checklist (7 steps: profile, target, ICP, plan, leads, campaign, sent), returns next_step + completion %
-- **Fix**: `create_lead`, `import_leads`, `create_campaign` now use `ws(user)` for workspace invariant (P2 from iter6 closed)
-- **Frontend**: Re-built Onboarding wizard (4-step: URL → profile → goal → autopilot summary) with progress bar
-- **Frontend**: `SetupChecklist` hero on Dashboard — gradient blue card with progress bar, 7-step grid, prominent "Next: X" CTA. Auto-redirects to `/onboarding` if profile missing
-- **Frontend**: Cleaned-up Login + Register — split layout with feature list (no more dark image panel). More professional SaaS feel
-- **Frontend**: Growth Studio gets new **"Ideal Customer"** tab as the *first* tab — buyer persona card, firmographics, sample companies list, recommended channels with opening hooks
-- **Docs**: `/app/USER_GUIDE.md` — comprehensive step-by-step user guide
+### Iter 7 — Forecast Alerts (Slack/Email/in-app + AI suggestions) + Notifications bell
 
-### Iteration 8 (Feb 2026) — Theme switch: Professional Blue + White
-- Replaced Unbounce coral/cream/Fraunces palette with a clean SaaS blue + white theme:
-  - Primary `#2563EB` (blue-600), hover `#1D4ED8`, light tint `#DBEAFE`
-  - Background `#F8FAFC` (slate-50), card border `#E2E8F0` (slate-200), ink `#0F172A` (slate-900)
-  - Success `#10B981`, amber accent `#F59E0B`
-- Reverted Fraunces serif → Source Sans 3 throughout for cleaner SaaS look
-- Removed playful "ink-drop shadow" + rotated cards on landing; cleaner shadow-md and editorial italics removed
-- Bulk find/replace across all 25+ pages/components — zero coral/cream remaining
+### Iter 6 — Paid/Organic AI Plan + Guaranteed Leads + Real-time Analytics (12/12 tests)
 
-### Iteration 7 (Feb 2026) — Forecast Alerts (Slack/Email/In-app + AI suggestions)
-**Backend**
-- `GET/POST /api/alerts/preferences` — channel toggles (email/slack/in-app), cadence (daily silent + weekly Monday digest), `hour_utc`, configurable `at_risk_threshold_pct` (default 80%), `slack_webhook_url` validated to start with `https://hooks.slack.com/`
-- `POST /api/alerts/test` — on-demand send via all configured channels with a Groq-generated corrective action (e.g. "Add $500 to Google Ads, expecting 5 additional leads")
-- `GET /api/alerts/history` — last 50 sent alerts with delivery status per channel
-- `GET /api/notifications` (with `unread_count`) / `POST /api/notifications/{id}/read` / `POST /api/notifications/mark-all-read`
-- New APScheduler job `_send_forecast_alerts_tick` — hourly cron at minute :05; fires daily silent check (only if at-risk vs threshold) AND weekly digest (every Monday) per user's preferred hour
-- Email body: branded HTML with bar visualization + AI suggestion + CTA button to /analytics
-- Slack body: blocks API with header + suggestion + Open-Analytics button
-- Lead targets, channel distribution, business profile all feed the AI prompt for context-aware suggestions
-
-**Frontend**
-- New `NotificationsBell` in sidebar footer — orange unread badge, dropdown panel with severity icons (high=at-risk, info=on-track), 60s auto-poll
-- New "Forecast Alerts" card on `/team` page — channel toggles (email/Slack/in-app), Slack webhook URL input (only when Slack on), cadence toggles, hour + threshold dropdowns, "Send test alert now" button
-
-### Iteration 6 — Paid/Organic AI Plan + Guaranteed Leads + Real-time Analytics + Unbounce theme
-**Backend (12/12 tests pass)**
-- `POST /api/growth-plan/generate` — AI plan now includes `channel_distribution[]` (paid + organic mix), `monthly_lead_target`, `monthly_budget_usd`, `avg_deal_value_usd`
-- `POST /api/growth-plan/channels` — user override for channel distribution + targets, persisted to growth_plans collection
-- `GET /api/lead-targets` / `POST /api/lead-targets` — Guaranteed Leads target with optional guarantee terms; revenue target auto-computed from leads × avg deal
-- `GET /api/analytics/realtime` — live counters (last hour / today / month / converted / revenue / pipeline value), target progress with linear forecast and on-track flag, hourly leads (24h), source mix
-- `GET /api/analytics/revenue?months=N` — N consecutive months of leads/converted/revenue/conversion rate
-- `PUT /api/leads/{id}` accepts `estimated_value` and `actual_value`; transitioning to `CONVERTED` auto-fills `actual_value` from `estimated_value`
-
-**Frontend**
-- New `/analytics` page (sidebar "Live Analytics" with LIVE badge) — 6 live counters, editable target panel (Guaranteed Leads), forecast card, hourly area chart, source mix bars, 6-month revenue trend
-- `/growth → 12-Month Plan` — editable Channel distribution table (paid/organic dropdown, budget/leads/CPL/priority editable), Save Overrides button, paid vs organic split summary
-- `/landing-pages` + `/landing-pages/:id` + `/p/:slug` (public) routes wired into App.js + sidebar
-- **Unbounce theme**: Fraunces serif display, coral `#FF562D` primary, cream `#FAF7F2` bg, pill buttons (`rounded-full`), `rounded-2xl` cards, drop-shadow `shadow-brand-pop` accents
-- New `/` Landing page redesigned with editorial serif headlines, dashboard-mock hero, decorative blobs, social-proof strip, animated hover cards
-- Theme migration applied across all pages: `#002EB8 → #FF562D`, `#F4F4F5 → #FAF7F2`, `#E4E4E7 → #EDE5D4`, `#09090B → #0E0F11`
-
-### Iteration 5 — Team workspaces + scheduling + reliability (47 tests)
-- Team workspaces, AI rate limits, OAuth shells, IMAP polling, daily briefings, $lookup inbox
-
-### Earlier (Iter 1-4)
-- Auth + Mini-CRM, AI Lead Scoring, Growth Studio (Market/SEO/PR), Landing Page Builder backend, Razorpay test mode, Twilio + Gmail SMTP, security hardening
+### Iter 1-5 — Core MVP, Mini-CRM, AI lead scoring, Growth Studio (Market/SEO/PR), Landing Page builder, Team workspaces, IMAP polling, daily briefings
 
 ## Test results (cumulative)
 | Iter | Coverage | Result |
 |---|---|---|
-| 1 | MVP baseline | 37/37 ✅ |
-| 2 | AI SaaS features | 17/17 ✅ |
-| 3 | Growth Studio | 18/19 → fixed |
-| 4 | Reliability | 30/30 ✅ |
-| 5 | Team + scheduling | 17/17 ✅ |
-| 6 | Paid/Organic + Analytics + Guaranteed Leads + Theme | 12/12 ✅ |
+| 1-5 | MVP + scaling features | ALL PASS |
+| 6 | Paid/Organic + Analytics + Guarantee + Theme | 12/12 ✅ |
+| 7 (this) | Quick Plan + Kickoff + Admin + Social vault + Chatbot | 15/15 ✅ + 7/7 frontend |
 
 ## Backlog (P2)
-- **P2** Standardise `create_lead`/`import_leads`/`create_campaign` to use `ws(user)` not `user["id"]` on writes (workspace invariant)
-- **P2** Validate `monthly_lead_target > 0` and `avg_deal_value_usd >= 0` in LeadTargetIn
-- **P2** Replace 24x sequential `count_documents` in analytics_realtime hourly chart with a single `$bucket` aggregation
-- **P2** Server-side validation of channel_distribution items (require name/type/budget/leads)
-- **P2** Re-prompt Groq if generated plan missing paid OR organic channels
-- **P3** Split `server.py` (~2780 lines) into `routers/{auth,leads,team,ai,oauth,growth,analytics,landing_pages,webhooks}.py`
-- **P3** Real OAuth flows tested live (need user-supplied dev apps)
-- **P3** Real SEO API keys plugged in (DataForSEO/SerpAPI vars ready)
+- **P2** Concurrent content generation in `plan_kickoff_execution` (currently sequential — up to 90s for 6 kits)
+- **P2** `admin_users` should use `$lookup` aggregation instead of N×2 sequential count_documents
+- **P2** Move `from groq import Groq` to module-level (currently re-imported per request in `assistant_chat`)
+- **P2** Reports & Analysis page — wire traffic/impressions/clicks/conversions metrics tied to scheduled posts
+- **P3** Split `server.py` (now ~4445 lines) into `routers/{auth,leads,team,ai,oauth,growth,analytics,landing_pages,admin,assistant,integrations}.py`
+- **P3** Real OAuth flows for LinkedIn/Facebook/Twitter (live tested with user-supplied dev apps)
 - **P3** Per-worker leader election for APScheduler
 
 ## File map
 ```
-/app/backend/server.py                      # ~2780 lines
-/app/backend/.env                           # Live keys
-/app/backend/tests/test_iter6_analytics_targets.py  # iter6 regression
-/app/frontend/src/App.js                    # Routes (incl. /analytics, /landing-pages, /p/:slug)
-/app/frontend/src/index.css                 # Cream/coral theme + Fraunces
-/app/frontend/tailwind.config.js            # brand colors + radius
-/app/frontend/src/components/{AppLayout,PageHeader,BriefingCard,LandingPagePreview}.jsx
-/app/frontend/src/pages/
-  Landing.jsx                               # NEW redesign
-  Analytics.jsx                             # NEW (Live Analytics + Guaranteed Leads)
-  GrowthStudio.jsx                          # Channel distribution editor
-  LandingPages.jsx + LandingPageEditor.jsx + PublicLandingPage.jsx
-  Dashboard, Login, Register, Onboarding, Inbox, Approvals, Leads, LeadDetail,
-  Campaigns, Scraping, Integrations, Business, Reports, Billing, Team
+/app/backend/server.py                                  # ~4445 lines
+/app/backend/.env                                       # Live keys
+/app/backend/tests/
+  test_iter6_analytics_targets.py                       # 12 tests
+  test_iter7_quickplan_admin_social.py                  # 15 tests
+/app/frontend/src/
+  App.js                                                # Routes (incl. /admin, /growth, /schedule, /content, /integrations, /p/:slug)
+  components/
+    AppLayout.jsx                                       # Sidebar with section labels matching user request
+    ChatbotWidget.jsx                                   # Mounted globally; calls /assistant/chat
+    NotificationsBell.jsx
+    PageHeader.jsx, BriefingCard.jsx, LandingPagePreview.jsx
+  pages/
+    Landing.jsx                                         # Public landing with growth chart
+    Admin.jsx                                           # Super admin dashboard
+    GrowthStudio.jsx                                    # 6 tabs (Quick Plan first), Activate Execution buttons
+    Analytics.jsx, Dashboard.jsx, Onboarding.jsx,
+    Leads.jsx, LeadDetail.jsx, Campaigns.jsx,
+    Content.jsx, Schedule.jsx, Integrations.jsx,
+    Reports.jsx, Team.jsx, Billing.jsx, Business.jsx,
+    Inbox.jsx, Approvals.jsx, Scraping.jsx,
+    LandingPages.jsx, LandingPageEditor.jsx, PublicLandingPage.jsx
+  lib/locale.js                                         # Currency helpers
 /app/memory/PRD.md, test_credentials.md
-/app/test_reports/iteration_{1..6}.json     # All passing
+/app/test_reports/iteration_{1..7}.json                 # All passing
 ```
