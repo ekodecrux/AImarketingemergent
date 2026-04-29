@@ -82,7 +82,7 @@ export default function AppLayout() {
         sections.push({
             title: "Admin",
             items: [
-                { to: "/admin", label: "Super Admin", icon: Crown, testid: "nav-admin", badge: "PRO" },
+                { to: "/admin", label: "Platform Console", icon: Crown, testid: "nav-admin", badge: "OWNER" },
             ],
         });
     }

@@ -28,7 +28,11 @@ import Analytics from "@/pages/Analytics";
 import AuthCallback from "@/pages/AuthCallback";
 import Content from "@/pages/Content";
 import Schedule from "@/pages/Schedule";
-import Admin from "@/pages/Admin";
+import AdminLayout from "@/components/AdminLayout";
+import AdminOverview from "@/pages/admin/AdminOverview";
+import AdminUsers from "@/pages/admin/AdminUsers";
+import AdminRevenue from "@/pages/admin/AdminRevenue";
+import AdminAudit from "@/pages/admin/AdminAudit";
 import AdCampaigns from "@/pages/AdCampaigns";
 
 function Protected({ children }) {
@@ -43,7 +47,18 @@ function Protected({ children }) {
 function PublicOnly({ children }) {
     const { user, loading } = useAuth();
     if (loading) return null;
-    if (user) return <Navigate to="/dashboard" replace />;
+    if (user) {
+        // Send platform admins straight to the admin console
+        return <Navigate to={(user.role || "user") === "admin" ? "/admin" : "/dashboard"} replace />;
+    }
+    return children;
+}
+
+function AdminOnly({ children }) {
+    const { user, loading } = useAuth();
+    if (loading) return null;
+    if (!user) return <Navigate to="/login" replace />;
+    if ((user.role || "user") !== "admin") return <Navigate to="/dashboard" replace />;
     return children;
 }
 
@@ -79,13 +94,20 @@ function App() {
                         <Route path="/content" element={<Content />} />
                         <Route path="/schedule" element={<Schedule />} />
                         <Route path="/ad-campaigns" element={<AdCampaigns />} />
-                        <Route path="/admin" element={<Admin />} />
                         <Route path="/scraping" element={<Scraping />} />
                         <Route path="/integrations" element={<Integrations />} />
                         <Route path="/business" element={<Business />} />
                         <Route path="/reports" element={<Reports />} />
                         <Route path="/billing" element={<Billing />} />
                         <Route path="/team" element={<Team />} />
+                    </Route>
+
+                    {/* Platform owner / Super Admin console — separate shell, dark theme */}
+                    <Route element={<AdminOnly><AdminLayout /></AdminOnly>}>
+                        <Route path="/admin" element={<AdminOverview />} />
+                        <Route path="/admin/users" element={<AdminUsers />} />
+                        <Route path="/admin/revenue" element={<AdminRevenue />} />
+                        <Route path="/admin/audit" element={<AdminAudit />} />
                     </Route>
 
                     <Route path="*" element={<Navigate to="/" replace />} />

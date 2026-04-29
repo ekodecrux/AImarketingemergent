@@ -1,0 +1,37 @@
+{
+  "summary": "Iter 18 — Super Admin Console restructure (separate /admin shell). 23/23 backend pytest pass, all frontend admin flows verified (login redirect, sidebar, overview, users table+search, manage modal with 5 tabs, subscription/wallet/discount save with toasts, audit history populated, revenue rollup, audit log page, view-as-user, logout clears session, /admin guarded when logged out).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter18_admin_console.py",
+    "/app/test_reports/pytest/iter18_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~5434 lines — admin write-actions block (4750-5005) should be extracted into /app/backend/admin_console.py for maintainability.",
+    "PLAN_PRICE_INR is hardcoded inside admin_revenue (line 4952). It is duplicated logic from the real billing module — extract a single source of truth so pricing changes don't drift.",
+    "admin_set_subscription overwrites trial_ends_at to None for non-FREE_TRIAL plans but does NOT clear stale trial state on the user document if it lives on the user record. Confirm trial flag is read solely from subscriptions collection.",
+    "admin_set_role allows setting role to 'admin' with no audit warning; consider notifying via email or surfacing a confirmation modal on the frontend (currently only audit-logged).",
+    "admin_adjust_wallet uses _get_or_create_wallet which has a TOCTOU race (carry-over from iter16) — two concurrent admin adjustments on a brand-new wallet could create duplicates. Add unique index on wallets.user_id.",
+    "AdminLayout logout: after navigate('/login'), occasionally the URL stays on /admin briefly until the next render — consider window.location.assign('/login') or invalidate the auth context synchronously to avoid the flash.",
+    "Audit log endpoint returns full payload as raw JSON — large payloads (e.g. notes) are not truncated; consider trimming or storing payload size for UI ergonomics.",
+    "discounts collection is upserted but there is no GET endpoint for the user to see their own discount; verify whether checkout/billing actually consumes db.discounts.percent at payment time."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter18_admin_console.py (new)"
+  ],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "100% (all 11 admin flows verified)"},
+  "test_credentials": "admin@zeromark.ai / admin123 (read from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created 2 ephemeral non-admin users (TEST_iter18_*) via /api/auth/register for permission tests + executed PRO/3mo subscription, +500/-100 wallet adjustments, 25%/15% discount, suspend/unsuspend on test target. All actions logged in admin_audit_log.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Admin shell at /admin/* fully working with dark sidebar (data-testid: admin-shell, admin-nav-{overview|users|revenue|audit}, admin-view-as-user, admin-logout). Manage modal data-testids: tab-{subscription|wallet|discount|role|history}, edit-plan-select, edit-duration, save-subscription, edit-wallet-amount, edit-wallet-reason, save-wallet, edit-discount-pct, save-discount. AdminOnly guard correctly redirects non-admin/unauth users. Login redirect to /admin works for role=admin. /api/admin/users/{uid}, /api/admin/users/{uid}/{subscription|wallet/adjust|discount|role|suspend}, /api/admin/revenue, /api/admin/audit-log all respond correctly. Validation: zero amount → 400, short reason → 400, insufficient balance → 400, invalid plan → 400, invalid percent → 400, self-demote/self-suspend → 400, non-admin → 403, unknown uid → 404. Legacy /api/admin/overview and /api/admin/users still work. Audit table column headers use uppercase CSS (zm-section-label) — keyword matches must use case-insensitive when checking inner_text.",
+  "rca of the issue": "No bugs found in this iter. All backend endpoints validated and frontend flows pass on first run."
+}

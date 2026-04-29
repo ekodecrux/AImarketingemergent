@@ -4751,6 +4751,260 @@ async def admin_users(
     }
 
 
+# ---------- Admin write-actions: subscription / wallet / discount / role / suspend ----------
+class AdminSetSubIn(BaseModel):
+    plan: str  # FREE_TRIAL | BASIC | PRO | ENTERPRISE
+    duration_months: int = 1
+    note: Optional[str] = None
+
+
+class AdminWalletAdjustIn(BaseModel):
+    amount: float            # positive = credit, negative = debit
+    reason: str
+
+
+class AdminDiscountIn(BaseModel):
+    percent: float           # 0-100
+    valid_until: Optional[str] = None  # ISO date
+    note: Optional[str] = None
+
+
+class AdminRoleIn(BaseModel):
+    role: str  # user | admin
+
+
+class AdminSuspendIn(BaseModel):
+    suspended: bool
+    reason: Optional[str] = None
+
+
+VALID_PLANS = {"FREE_TRIAL", "BASIC", "PRO", "ENTERPRISE"}
+
+
+async def _audit_admin_action(actor: Dict[str, Any], target_user_id: str, action: str, payload: Dict[str, Any]):
+    await db.admin_audit_log.insert_one({
+        "id": str(uuid.uuid4()),
+        "actor_user_id": actor["id"],
+        "actor_email": actor.get("email"),
+        "target_user_id": target_user_id,
+        "action": action,
+        "payload": payload,
+        "created_at": now_utc().isoformat(),
+    })
+
+
+@api.post("/admin/users/{uid}/subscription")
+async def admin_set_subscription(uid: str, payload: AdminSetSubIn, user=Depends(get_current_user)):
+    _require_admin(user)
+    plan_upper = payload.plan.upper()
+    if plan_upper not in VALID_PLANS:
+        raise HTTPException(status_code=400, detail=f"Plan must be one of {VALID_PLANS}")
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    wid = target.get("workspace_id") or target["id"]
+    expires_at = (now_utc() + timedelta(days=30 * max(1, payload.duration_months))).isoformat()
+    await db.subscriptions.update_one(
+        {"user_id": wid},
+        {"$set": {
+            "user_id": wid,
+            "plan": plan_upper,
+            "status": "ACTIVE",
+            "manually_set_by": user.get("email"),
+            "manually_set_at": now_utc().isoformat(),
+            "manually_set_note": payload.note,
+            "expires_at": expires_at,
+            "trial_ends_at": None if plan_upper != "FREE_TRIAL" else expires_at,
+        }},
+        upsert=True,
+    )
+    await _audit_admin_action(user, uid, "set_subscription",
+        {"plan": plan_upper, "duration_months": payload.duration_months, "note": payload.note})
+    sub = await db.subscriptions.find_one({"user_id": wid}, {"_id": 0})
+    return {"success": True, "subscription": sub}
+
+
+@api.post("/admin/users/{uid}/wallet/adjust")
+async def admin_adjust_wallet(uid: str, payload: AdminWalletAdjustIn, user=Depends(get_current_user)):
+    _require_admin(user)
+    if payload.amount == 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be zero")
+    if not payload.reason or len(payload.reason.strip()) < 3:
+        raise HTTPException(status_code=400, detail="Reason is required (min 3 chars)")
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    wid = target.get("workspace_id") or target["id"]
+    w = await _get_or_create_wallet(wid)
+    new_balance = float(w.get("balance") or 0) + float(payload.amount)
+    if new_balance < 0:
+        raise HTTPException(status_code=400, detail=f"Insufficient balance — would go to {new_balance}")
+    await db.wallets.update_one(
+        {"user_id": wid},
+        {"$set": {"balance": new_balance, "updated_at": now_utc().isoformat()}},
+    )
+    txn = {
+        "id": str(uuid.uuid4()),
+        "user_id": wid,
+        "type": "ADMIN_CREDIT" if payload.amount > 0 else "ADMIN_DEBIT",
+        "amount": float(payload.amount),
+        "currency": w["currency"],
+        "balance_after": new_balance,
+        "reason": payload.reason,
+        "actor_email": user.get("email"),
+        "created_at": now_utc().isoformat(),
+    }
+    await db.wallet_transactions.insert_one(dict(txn))
+    txn.pop("_id", None)
+    await _audit_admin_action(user, uid, "wallet_adjust",
+        {"amount": payload.amount, "reason": payload.reason, "balance_after": new_balance})
+    return {"success": True, "balance": new_balance, "transaction": txn}
+
+
+@api.post("/admin/users/{uid}/discount")
+async def admin_set_discount(uid: str, payload: AdminDiscountIn, user=Depends(get_current_user)):
+    _require_admin(user)
+    if payload.percent < 0 or payload.percent > 100:
+        raise HTTPException(status_code=400, detail="Discount percent must be 0-100")
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    wid = target.get("workspace_id") or target["id"]
+    await db.discounts.update_one(
+        {"user_id": wid},
+        {"$set": {
+            "user_id": wid,
+            "percent": float(payload.percent),
+            "valid_until": payload.valid_until,
+            "note": payload.note,
+            "set_by": user.get("email"),
+            "set_at": now_utc().isoformat(),
+            "active": payload.percent > 0,
+        }},
+        upsert=True,
+    )
+    await _audit_admin_action(user, uid, "set_discount",
+        {"percent": payload.percent, "valid_until": payload.valid_until, "note": payload.note})
+    disc = await db.discounts.find_one({"user_id": wid}, {"_id": 0})
+    return {"success": True, "discount": disc}
+
+
+@api.post("/admin/users/{uid}/role")
+async def admin_set_role(uid: str, payload: AdminRoleIn, user=Depends(get_current_user)):
+    _require_admin(user)
+    if payload.role not in ("user", "admin"):
+        raise HTTPException(status_code=400, detail="Role must be 'user' or 'admin'")
+    if uid == user["id"] and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="You cannot demote yourself")
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.update_one({"id": uid}, {"$set": {"role": payload.role, "updated_at": now_utc().isoformat()}})
+    await _audit_admin_action(user, uid, "set_role", {"role": payload.role})
+    return {"success": True, "role": payload.role}
+
+
+@api.post("/admin/users/{uid}/suspend")
+async def admin_suspend(uid: str, payload: AdminSuspendIn, user=Depends(get_current_user)):
+    _require_admin(user)
+    if uid == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot suspend yourself")
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.update_one(
+        {"id": uid},
+        {"$set": {
+            "suspended": payload.suspended,
+            "suspend_reason": payload.reason if payload.suspended else None,
+            "suspended_at": now_utc().isoformat() if payload.suspended else None,
+        }},
+    )
+    await _audit_admin_action(user, uid, "suspend" if payload.suspended else "unsuspend",
+        {"reason": payload.reason})
+    return {"success": True, "suspended": payload.suspended}
+
+
+@api.get("/admin/users/{uid}")
+async def admin_user_detail(uid: str, user=Depends(get_current_user)):
+    _require_admin(user)
+    target = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    wid = target.get("workspace_id") or target["id"]
+    sub = await db.subscriptions.find_one({"user_id": wid}, {"_id": 0})
+    wallet = await db.wallets.find_one({"user_id": wid}, {"_id": 0})
+    discount = await db.discounts.find_one({"user_id": wid}, {"_id": 0})
+    leads = await db.leads.count_documents({"user_id": wid})
+    campaigns = await db.campaigns.count_documents({"user_id": wid})
+    last_audit = await db.admin_audit_log.find({"target_user_id": uid}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
+    return {
+        "user": target,
+        "subscription": sub,
+        "wallet": wallet,
+        "discount": discount,
+        "stats": {"leads": leads, "campaigns": campaigns},
+        "audit_log": last_audit,
+    }
+
+
+# ---------- Admin: revenue + audit + subscriptions ----------
+PLAN_PRICE_INR = {"FREE_TRIAL": 0, "BASIC": 499, "PRO": 1499, "ENTERPRISE": 4999}
+
+
+@api.get("/admin/revenue")
+async def admin_revenue(user=Depends(get_current_user)):
+    _require_admin(user)
+    # MRR by plan
+    by_plan_pipe = [
+        {"$match": {"status": "ACTIVE"}},
+        {"$group": {"_id": {"$ifNull": ["$plan", "FREE_TRIAL"]}, "count": {"$sum": 1}}},
+    ]
+    plan_rows = [d async for d in db.subscriptions.aggregate(by_plan_pipe)]
+    by_plan = []
+    mrr = 0.0
+    for r in plan_rows:
+        plan = r["_id"]
+        cnt = r["count"]
+        price = PLAN_PRICE_INR.get(plan, 0)
+        plan_mrr = price * cnt
+        mrr += plan_mrr
+        by_plan.append({"plan": plan, "count": cnt, "price_inr": price, "mrr_inr": plan_mrr})
+    # Last 30 days payments
+    cutoff = (now_utc() - timedelta(days=30)).isoformat()
+    last30 = await db.payments.find(
+        {"created_at": {"$gte": cutoff}, "status": "SUCCESS"}, {"_id": 0}
+    ).sort("created_at", -1).limit(50).to_list(50)
+    revenue_30d = sum(float(p.get("amount_inr") or 0) for p in last30)
+    # Wallet topups
+    wallet_topups = await db.wallet_transactions.find(
+        {"type": "TOPUP", "created_at": {"$gte": cutoff}}, {"_id": 0}
+    ).to_list(200)
+    wallet_30d = sum(float(t.get("amount") or 0) for t in wallet_topups)
+    return {
+        "mrr_inr": mrr,
+        "arr_inr": mrr * 12,
+        "revenue_30d_inr": revenue_30d,
+        "wallet_topups_30d_inr": wallet_30d,
+        "by_plan": by_plan,
+        "recent_payments": last30,
+    }
+
+
+@api.get("/admin/audit-log")
+async def admin_audit_log(page: int = 1, limit: int = 30, user=Depends(get_current_user)):
+    _require_admin(user)
+    page = max(1, page)
+    limit = max(1, min(limit, 100))
+    skip = (page - 1) * limit
+    total = await db.admin_audit_log.count_documents({})
+    items = await db.admin_audit_log.find({}, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {
+        "items": items, "page": page, "limit": limit, "total": total,
+        "total_pages": (total + limit - 1) // limit if total else 0,
+    }
+
+
 # ====================================================================
 # ---------- AI Chatbot Assistant ----------
 # ====================================================================

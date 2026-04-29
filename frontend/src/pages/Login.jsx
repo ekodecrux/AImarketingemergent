@@ -26,9 +26,9 @@ export default function Login() {
         e.preventDefault();
         setLoading(true);
         try {
-            await login(email, password);
+            const u = await login(email, password);
             toast.success("Welcome back");
-            navigate("/dashboard");
+            navigate((u?.role || "user") === "admin" ? "/admin" : "/dashboard");
         } catch (err) {
             toast.error(err.response?.data?.detail || "Login failed");
         } finally { setLoading(false); }
