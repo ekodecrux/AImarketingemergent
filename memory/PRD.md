@@ -19,7 +19,37 @@ User explicitly asked (Iter 7, Feb 2026):
 
 ## Key features (cumulative)
 
-### Iter 15 (Feb 2026) — Admin Users pagination + search
+### Iter 18 (Feb 2026) — Super Admin / Platform Owner Console (separate shell)
+**The complaint**: "Super admin should be platform owner — show subscribed users, statistics, manually subscribe users, change credit limits/discounts. Don't show admin as normal user."
+
+**Backend (8 new endpoints + 1 new collection)**
+- `GET /api/admin/users/{uid}` — user detail with subscription, wallet, discount, stats, last 20 audit entries
+- `POST /api/admin/users/{uid}/subscription` — manually set plan + duration_months (no payment); writes `manually_set_by/at/note` to subscriptions
+- `POST /api/admin/users/{uid}/wallet/adjust` — credit/debit with reason; logs `ADMIN_CREDIT/ADMIN_DEBIT` transaction; rejects insufficient balance
+- `POST /api/admin/users/{uid}/discount` — upserts `db.discounts` with percent (0-100), valid_until, note
+- `POST /api/admin/users/{uid}/role` — promote/demote (blocks self-demote)
+- `POST /api/admin/users/{uid}/suspend` — suspend/reactivate (blocks self-suspend)
+- `GET /api/admin/revenue` — MRR/ARR rollup, MRR by plan, last 30d payments, last 30d wallet topups
+- `GET /api/admin/audit-log` — paginated SaaS-wide admin actions
+- All write-actions logged to new `db.admin_audit_log` with actor_email, target_user_id, action, payload, timestamp
+
+**Frontend — entirely separate platform-owner shell**
+- `AdminLayout.jsx` — DARK sidebar (`#0F172A`) with Crown logo, "PLATFORM CONSOLE" subtitle, 4 nav items (Overview/Users/Revenue & Plans/Audit Log), "View as user" portal-out link, admin email + crown badge + Sign out
+- New routes mounted at `/admin/*` under `<AdminOnly><AdminLayout/></AdminOnly>` — completely isolated from regular user app shell
+- **Login redirect**: admin role auto-redirects to `/admin` (not `/dashboard`)
+- `AdminOverview` — Recurring revenue hero card + 6 stat cards + Growth + provider/plan mix
+- `AdminUsers` — Paginated table with search, page-size selector, "Manage" button per row → opens `UserEditModal` with 5 tabs (Subscription / Wallet / Discount / Role & Suspend / Audit history) + snapshot row showing live Plan/Wallet/Discount/Stats
+- `AdminRevenue` — MRR/ARR/30d/topups KPIs + MRR-by-plan table + recent payments
+- `AdminAudit` — Full SaaS-wide audit log paginated
+
+**Other fixes this iter**
+- Removed "Made with Emergent" badge from `public/index.html`; title now "ZeroMark — AI Marketing Engine"
+- Landing page positioned as **organic-first**: "Get more leads. Spend 70% less than ad platforms"
+- Quick Plan AI prompt forces ≥60% organic budget split + treats budget as "tools + freelance" not ad spend
+- Chatbot ("ZeroMark Guide") is **proactive for non-IT users**: auto-tooltip after 4s, warm greeting with emoji, 4 quick-prompt chips, plain-English placeholder, "no marketing jargon" tagline
+- Backend assistant system prompt rewritten for SMB owners: simple language, ≤4 sentences, 1 concrete next step, links via `[Label](/path)` markdown, organic-first recommendations
+- Idempotency on `/wallet/topup/verify` (duplicate `razorpay_payment_id` returns existing transaction)
+- Unique indexes added: `wallets.user_id`, `wallet_transactions.razorpay_payment_id`, `ad_accounts.(user_id,platform,ad_account_id)`, `ad_campaigns.(user_id,created_at)`
 **Backend**
 - `GET /api/admin/users?page=N&limit=L&q=search` — full pagination + case-insensitive search across `email`, `phone`, `first_name`, `last_name` (regex-escaped)
 - Response shape: `{users[], page, limit, total, total_pages}`
