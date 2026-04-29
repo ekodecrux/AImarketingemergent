@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
+import ChatbotWidget from "@/components/ChatbotWidget";
 import {
     Crown, Gauge, Users, CurrencyDollar, ClockCounterClockwise, SignOut, Eye,
     Shield, ArrowSquareOut,
@@ -114,6 +115,7 @@ export default function AdminLayout() {
             <main className="flex-1 min-w-0 bg-[#F8FAFC] text-[#0F172A] overflow-y-auto">
                 <Outlet />
             </main>
+            <ChatbotWidget />
         </div>
     );
 }
