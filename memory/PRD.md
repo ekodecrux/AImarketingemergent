@@ -1,5 +1,20 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 19 (Apr 2026) — Unified Plan Overview + Auto-sync (no manual clicks)
+User complaint: "When I change business profile and target, it should automatically reflect everywhere. Feels like too many steps — instead I want a summary of all tabs from the Plan menu with deep-links for detail."
+
+**Backend**
+- `POST /api/plan/regenerate-all` — runs ICP + Market + Growth Plan + SEO keywords + Content ideas + PR outlets **in parallel** (`asyncio.gather`). Each module is independently resilient (fail-soft, returns per-module status).
+- `GET /api/plan/summary` — consolidated snapshot of all 7 artifacts with: `has_data`, `generated_at`, 3-line summary, highlights[], deep_link hint, and `modules_ready/modules_total` for progress bar.
+- `POST /api/business` — now kicks off `BackgroundTasks` fire-and-forget regeneration whenever business_name + industry + target_audience are present. Response includes `plan_regenerating: true`.
+- New collections: `plan_seo_keywords`, `plan_content_ideas`, `plan_pr_outlets`, `plan_snapshots` (one-per-user with last_regenerated_at + last_results[]).
+
+**Frontend**
+- New **"Plan Overview"** first tab in Growth Studio (marked NEW). Dark hero card with sync status + "Regenerate all" button + progress bar + 7 summary cards in 3-col grid (Quick Plan, ICP, Market, SEO, Content Ideas, PR, 12-Month Plan). Each card is clickable → deep-links into its detailed tab via `?tab=` URL param.
+- `useSearchParams` for tab state so URLs are shareable/bookmarkable.
+- `Business.jsx` save → if profile is complete, sets `sessionStorage.plan_bg_regen=1` and redirects to `/growth?tab=overview` with toast "Regenerating ICP, market, SEO, PR & roadmap in background…"
+- Plan Overview auto-polls `/plan/summary` every 5s (up to 2min) while regeneration is in-flight, so cards populate live.
+
 ## Original problem statement
 Build an end-to-end AI marketing automation platform that:
 - Takes a business profile + objective; performs market analysis; builds a 12-month paid+organic plan

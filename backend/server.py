@@ -659,7 +659,7 @@ async def get_business(user=Depends(get_current_user)):
 
 
 @api.post("/business")
-async def upsert_business(payload: BusinessProfileIn, user=Depends(get_current_user)):
+async def upsert_business(payload: BusinessProfileIn, background: BackgroundTasks, user=Depends(get_current_user)):
     data = payload.model_dump()
     # Auto-derive currency from country if not explicitly set
     locale = _resolve_locale(data.get("country_code"), data.get("currency_code"))
@@ -675,7 +675,11 @@ async def upsert_business(payload: BusinessProfileIn, user=Depends(get_current_u
         data["created_at"] = now_utc().isoformat()
         await db.business_profiles.insert_one(data)
     profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0})
-    return {"profile": profile, "locale": locale}
+    # Fire-and-forget: auto-regenerate all plan modules so user doesn't have to click "Generate" per tab.
+    # Only kick off when required fields are present (avoid wasting AI calls on drafts).
+    if profile and profile.get("business_name") and profile.get("industry") and profile.get("target_audience"):
+        background.add_task(_bg_regenerate_plan, user["id"])
+    return {"profile": profile, "locale": locale, "plan_regenerating": bool(profile and profile.get("business_name") and profile.get("industry") and profile.get("target_audience"))}
 
 
 @api.get("/locale/countries")
@@ -2085,6 +2089,244 @@ async def growth_plan_generate(user=Depends(get_current_user)):
 async def growth_plan_latest(user=Depends(get_current_user)):
     rec = await db.growth_plans.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)])
     return {"plan": rec}
+
+
+# ---------- PLAN HUB: one-shot regenerate + consolidated summary ----------
+async def _plan_regen_icp(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        r = await icp_generate(user)
+        return {"module": "icp", "status": "ok", "id": r["icp"]["id"]}
+    except Exception as e:
+        return {"module": "icp", "status": "error", "error": str(e)[:200]}
+
+
+async def _plan_regen_market(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        r = await market_analyze(MarketAnalysisIn(), user)
+        return {"module": "market", "status": "ok", "id": r["analysis"]["id"]}
+    except Exception as e:
+        return {"module": "market", "status": "error", "error": str(e)[:200]}
+
+
+async def _plan_regen_growth(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        r = await growth_plan_generate(user)
+        return {"module": "growth_plan", "status": "ok", "id": r["plan"]["id"]}
+    except Exception as e:
+        return {"module": "growth_plan", "status": "error", "error": str(e)[:200]}
+
+
+async def _plan_regen_seo(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        r = await seo_keywords(SEORequestIn(), user)
+        doc = {
+            "id": str(uuid.uuid4()),
+            "user_id": ws(user),
+            "keywords": r.get("keywords") or [],
+            "source": r.get("source", "ai"),
+            "generated_at": now_utc().isoformat(),
+        }
+        await db.plan_seo_keywords.insert_one(doc)
+        return {"module": "seo", "status": "ok", "count": len(doc["keywords"])}
+    except Exception as e:
+        return {"module": "seo", "status": "error", "error": str(e)[:200]}
+
+
+async def _plan_regen_content(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        r = await seo_content_gaps(SEORequestIn(), user)
+        doc = {
+            "id": str(uuid.uuid4()),
+            "user_id": ws(user),
+            "content_ideas": r.get("content_ideas") or [],
+            "generated_at": now_utc().isoformat(),
+        }
+        await db.plan_content_ideas.insert_one(doc)
+        return {"module": "content_ideas", "status": "ok", "count": len(doc["content_ideas"])}
+    except Exception as e:
+        return {"module": "content_ideas", "status": "error", "error": str(e)[:200]}
+
+
+async def _plan_regen_pr(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        r = await pr_media_list(SEORequestIn(), user)
+        doc = {
+            "id": str(uuid.uuid4()),
+            "user_id": ws(user),
+            "outlets": r.get("outlets") or [],
+            "generated_at": now_utc().isoformat(),
+        }
+        await db.plan_pr_outlets.insert_one(doc)
+        return {"module": "pr", "status": "ok", "count": len(doc["outlets"])}
+    except Exception as e:
+        return {"module": "pr", "status": "error", "error": str(e)[:200]}
+
+
+async def _regenerate_plan_for_user(user: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Runs all plan modules in parallel. Each is independently resilient."""
+    tasks = [
+        _plan_regen_icp(user),
+        _plan_regen_market(user),
+        _plan_regen_growth(user),
+        _plan_regen_seo(user),
+        _plan_regen_content(user),
+        _plan_regen_pr(user),
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
+    # Mark snapshot
+    await db.plan_snapshots.update_one(
+        {"user_id": ws(user)},
+        {"$set": {
+            "user_id": ws(user),
+            "last_regenerated_at": now_utc().isoformat(),
+            "last_results": results,
+        }},
+        upsert=True,
+    )
+    return results
+
+
+@api.post("/plan/regenerate-all")
+async def plan_regenerate_all(user=Depends(get_current_user)):
+    """Regenerates ICP + Market + Growth Plan + SEO Keywords + Content Ideas + PR media list
+    in parallel. Each module is independent — failures don't block the others."""
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0})
+    if not profile or not profile.get("business_name"):
+        raise HTTPException(status_code=400, detail="Fill your Business Profile first")
+    results = await _regenerate_plan_for_user(user)
+    return {"regenerated_at": now_utc().isoformat(), "results": results}
+
+
+async def _bg_regenerate_plan(user_id: str):
+    """Background task — looks up user & workspace, runs regeneration. Fire-and-forget."""
+    try:
+        u = await db.users.find_one({"id": user_id}, {"_id": 0})
+        if not u:
+            return
+        await _regenerate_plan_for_user(u)
+    except Exception as e:
+        logger.error("Background plan regeneration failed for %s: %s", user_id, e)
+
+
+@api.get("/plan/summary")
+async def plan_summary(user=Depends(get_current_user)):
+    """Consolidated summary of every plan artifact with deep-link hints for the UI."""
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    snapshot = await db.plan_snapshots.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+
+    # Fetch all latest artifacts in parallel
+    icp_doc, market_doc, growth_doc, seo_doc, content_doc, pr_doc, target_doc = await asyncio.gather(
+        db.icps.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)]),
+        db.market_analyses.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)]),
+        db.growth_plans.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)]),
+        db.plan_seo_keywords.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)]),
+        db.plan_content_ideas.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)]),
+        db.plan_pr_outlets.find_one({"user_id": ws(user)}, {"_id": 0}, sort=[("generated_at", -1)]),
+        db.lead_targets.find_one({"user_id": ws(user)}, {"_id": 0}),
+    )
+
+    def _card(module: str, tab: str, title: str, doc: Optional[Dict[str, Any]], summary: str, highlights: List[str]):
+        return {
+            "module": module,
+            "tab": tab,
+            "title": title,
+            "has_data": bool(doc),
+            "generated_at": (doc or {}).get("generated_at"),
+            "summary": summary,
+            "highlights": highlights,
+            "deep_link": f"/growth?tab={tab}",
+        }
+
+    # Quick Plan card (from growth_plans + lead_targets)
+    qp_highlights: List[str] = []
+    qp_summary = "Tell us your budget → AI builds an organic-first channel mix with guaranteed leads."
+    if growth_doc and (growth_doc.get("source") == "quick_plan"):
+        p = growth_doc.get("plan", {})
+        qp_summary = f"{p.get('guaranteed_leads_per_month',0)} guaranteed leads/mo · {p.get('duration_months',0)} months"
+        qp_highlights = [
+            f"Monthly budget: {p.get('monthly_budget_usd', 0)}",
+            f"Total guaranteed: {p.get('total_guaranteed_leads', 0)} leads",
+            p.get('recommended_first_action') or "",
+        ]
+    elif target_doc and target_doc.get("guarantee_enabled"):
+        qp_summary = target_doc.get("guarantee_terms") or qp_summary
+        qp_highlights = [f"{target_doc.get('monthly_lead_target', 0)} leads / month target"]
+
+    # ICP card
+    icp_highlights: List[str] = []
+    icp_summary = "Define who we're selling to — persona, firmographics, buying signals."
+    if icp_doc:
+        persona = (icp_doc.get("icp") or {}).get("persona") or {}
+        firmo = (icp_doc.get("icp") or {}).get("firmographics") or {}
+        icp_summary = f"{persona.get('title', '—')} · {firmo.get('industry', '')} · {firmo.get('geography', '')}"
+        pains = persona.get("daily_pains") or []
+        icp_highlights = [p for p in pains[:3] if p]
+
+    # Market card
+    mk_highlights: List[str] = []
+    mk_summary = "TAM/SAM/SOM, competitor landscape and positioning recommendation."
+    if market_doc:
+        a = market_doc.get("data") or {}
+        mk_summary = (a.get("positioning_recommendation") or a.get("market_size") or mk_summary)[:180]
+        comps = a.get("competitors") or []
+        mk_highlights = [c.get("name", "") for c in comps[:4] if c.get("name")]
+
+    # Growth plan card
+    gp_highlights: List[str] = []
+    gp_summary = "12-month roadmap with quarterly themes, channel mix, hiring plan."
+    if growth_doc and (growth_doc.get("source") != "quick_plan"):
+        p = growth_doc.get("plan", {})
+        gp_summary = p.get("vision", gp_summary)[:180]
+        gp_highlights = [
+            f"North star: {p.get('north_star_metric', '—')}",
+            f"Monthly target: {p.get('monthly_lead_target', '—')} leads",
+            f"Monthly budget: {p.get('monthly_budget_usd', '—')}",
+        ]
+
+    # SEO card
+    seo_highlights: List[str] = []
+    seo_summary = "Keywords, backlinks and link-building opportunities."
+    if seo_doc:
+        kws = seo_doc.get("keywords") or []
+        seo_summary = f"{len(kws)} keyword targets · source: {seo_doc.get('source','ai')}"
+        seo_highlights = [k.get("keyword", "") for k in kws[:4] if k.get("keyword")]
+
+    # Content ideas
+    ci_highlights: List[str] = []
+    ci_summary = "Content ideas mapped to funnel stage — blog/listicle/case-study."
+    if content_doc:
+        ideas = content_doc.get("content_ideas") or []
+        ci_summary = f"{len(ideas)} content ideas ready"
+        ci_highlights = [i.get("title", "") for i in ideas[:3] if i.get("title")]
+
+    # PR card
+    pr_highlights: List[str] = []
+    pr_summary = "Media list — outlets, beats, journalists for outreach."
+    if pr_doc:
+        outlets = pr_doc.get("outlets") or []
+        pr_summary = f"{len(outlets)} outlets with journalist contacts"
+        pr_highlights = [o.get("publication", "") for o in outlets[:4] if o.get("publication")]
+
+    cards = [
+        _card("quick_plan", "quick", "Quick Plan · Guaranteed leads", growth_doc if (growth_doc or {}).get("source") == "quick_plan" else None, qp_summary, qp_highlights),
+        _card("icp", "icp", "Ideal Customer", icp_doc, icp_summary, icp_highlights),
+        _card("market", "market", "Market & Competitors", market_doc, mk_summary, mk_highlights),
+        _card("seo", "seo", "SEO Toolkit", seo_doc, seo_summary, seo_highlights),
+        _card("content_ideas", "seo", "Content Ideas", content_doc, ci_summary, ci_highlights),
+        _card("pr", "pr", "PR & Media Outreach", pr_doc, pr_summary, pr_highlights),
+        _card("growth_plan", "plan", "12-Month Growth Plan", growth_doc if (growth_doc or {}).get("source") != "quick_plan" else None, gp_summary, gp_highlights),
+    ]
+
+    modules_ready = sum(1 for c in cards if c["has_data"])
+    return {
+        "profile_set": bool(profile and profile.get("business_name")),
+        "business_name": profile.get("business_name"),
+        "last_regenerated_at": snapshot.get("last_regenerated_at"),
+        "last_results": snapshot.get("last_results") or [],
+        "modules_ready": modules_ready,
+        "modules_total": len(cards),
+        "cards": cards,
+    }
 
 
 # ---------- Quick Plan: budget-driven, guaranteed leads (50% buffer) ----------

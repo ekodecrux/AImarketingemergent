@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
 import { Sparkle, Globe } from "@phosphor-icons/react";
 
 export default function Business() {
+    const navigate = useNavigate();
     const [form, setForm] = useState({
         business_name: "", industry: "", location: "", target_audience: "",
         website_url: "", description: "",
@@ -25,8 +27,15 @@ export default function Business() {
         e.preventDefault();
         setSaving(true);
         try {
-            await api.post("/business", form);
-            toast.success("Profile saved");
+            const r = await api.post("/business", form);
+            if (r.data?.plan_regenerating) {
+                // Signal the Plan Overview to start polling, then redirect
+                sessionStorage.setItem("plan_bg_regen", "1");
+                toast.success("Profile saved · Regenerating ICP, market, SEO, PR & roadmap in background…");
+                navigate("/growth?tab=overview");
+            } else {
+                toast.success("Profile saved");
+            }
         } catch (err) {
             toast.error(err.response?.data?.detail || "Save failed");
         } finally {
