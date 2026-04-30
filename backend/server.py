@@ -3017,6 +3017,10 @@ async def free_audit(payload: FreeAuditIn, request: Request):
     if recent_email >= 5:
         raise HTTPException(status_code=429, detail="Too many audits — try again in an hour")
     client_ip = request.client.host if request.client else "unknown"
+    # Honour X-Forwarded-For first hop (k8s ingress puts the real client IP there)
+    xff = request.headers.get("x-forwarded-for") or ""
+    if xff:
+        client_ip = xff.split(",")[0].strip() or client_ip
     recent_ip = await db.audit_runs.count_documents({"client_ip": client_ip, "created_at": {"$gte": one_hour_ago}})
     if recent_ip >= 10:
         raise HTTPException(status_code=429, detail="Too many audits from your network — try again later")
