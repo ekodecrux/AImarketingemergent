@@ -32,6 +32,9 @@ export default function Landing() {
                         <span className="font-display text-xl font-black tracking-tight">ZeroMark</span>
                     </Link>
                     <div className="flex items-center gap-2 sm:gap-3">
+                        <Link to="/audit" className="hidden sm:inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-full bg-[#10B981]/10 text-[#065F46] hover:bg-[#10B981]/20 transition-colors" data-testid="landing-free-audit">
+                            ⚡ Free SEO audit
+                        </Link>
                         <Link to="/login" className="text-sm font-semibold text-[#0F172A] hover:text-[#2563EB] px-2 sm:px-3 py-2" data-testid="landing-login">Sign in</Link>
                         <Link to="/register" className="zm-btn-primary text-xs sm:text-sm" data-testid="landing-register">
                             Start free <ArrowRight size={14} weight="bold" />

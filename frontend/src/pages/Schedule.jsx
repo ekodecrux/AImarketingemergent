@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import {
     CalendarBlank, Plus, X, LinkedinLogo, TwitterLogo, InstagramLogo,
-    EnvelopeSimple, Article, Lightning, CheckCircle, Clock, WarningCircle,
+    EnvelopeSimple, Article, Lightning, CheckCircle, Clock, WarningCircle, WhatsappLogo,
 } from "@phosphor-icons/react";
 
 const PLATFORMS = [
@@ -13,6 +13,7 @@ const PLATFORMS = [
     { id: "instagram", label: "Instagram", icon: InstagramLogo, color: "#E1306C" },
     { id: "blog", label: "Blog post", icon: Article, color: "#10B981" },
     { id: "email_broadcast", label: "Email blast", icon: EnvelopeSimple, color: "#F59E0B" },
+    { id: "whatsapp_broadcast", label: "WhatsApp blast", icon: WhatsappLogo, color: "#25D366" },
 ];
 
 function startOfWeek(d) {

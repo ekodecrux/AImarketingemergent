@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
     SquaresFour, Users, Megaphone, CheckSquare, Buildings,
-    ChartBar, Receipt, SignOut, Sparkle, Compass, Plugs,
+    ChartBar, Receipt, SignOut, Sparkle, Compass, Plugs, Crosshair,
     Tray, ChartLineUp, UsersThree, Globe, Pulse, Article, CalendarBlank, List, X,
     Crown, Lightning, Question,
 } from "@phosphor-icons/react";

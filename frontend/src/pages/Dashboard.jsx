@@ -9,6 +9,7 @@ import { Link, useNavigate } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
 import BriefingCard from "@/components/BriefingCard";
 import SetupChecklist from "@/components/SetupChecklist";
+import CopilotPanel from "@/components/CopilotPanel";
 import { setLocaleCache } from "@/lib/locale";
 
 const STATUS_COLORS = ["#2563EB", "#10B981", "#F59E0B", "#0F172A", "#A855F7"];
@@ -55,6 +56,11 @@ export default function Dashboard() {
             <div className="px-4 sm:px-6 lg:px-8 pb-12">
                 {/* Setup checklist — shows until everything is done */}
                 {setupIncomplete && <SetupChecklist setup={setup} />}
+
+                {/* AI Growth Co-Pilot — daily autonomous brief (always visible) */}
+                <div className="mb-6">
+                    <CopilotPanel />
+                </div>
 
                 {/* Daily AI Briefing */}
                 {briefing && !setupIncomplete && (

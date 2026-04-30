@@ -34,6 +34,8 @@ import AdminUsers from "@/pages/admin/AdminUsers";
 import AdminRevenue from "@/pages/admin/AdminRevenue";
 import AdminAudit from "@/pages/admin/AdminAudit";
 import AdCampaigns from "@/pages/AdCampaigns";
+import FreeAudit from "@/pages/FreeAudit";
+import Competitors from "@/pages/Competitors";
 
 function Protected({ children }) {
     const { user, loading } = useAuth();
@@ -71,6 +73,7 @@ function App() {
                 }} />
                 <Routes>
                     <Route path="/" element={<Landing />} />
+                    <Route path="/audit" element={<FreeAudit />} />
                     <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
                     <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
                     <Route path="/auth/callback" element={<AuthCallback />} />
@@ -94,6 +97,7 @@ function App() {
                         <Route path="/content" element={<Content />} />
                         <Route path="/schedule" element={<Schedule />} />
                         <Route path="/ad-campaigns" element={<AdCampaigns />} />
+                        <Route path="/competitors" element={<Competitors />} />
                         <Route path="/scraping" element={<Scraping />} />
                         <Route path="/integrations" element={<Integrations />} />
                         <Route path="/business" element={<Business />} />

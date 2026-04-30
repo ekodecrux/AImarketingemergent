@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import {
     ArrowLeft, Sparkle, EnvelopeSimple, ChatCircle, WhatsappLogo,
-    PaperPlaneTilt, ArrowDown, ArrowUp, Robot, Plus,
+    PaperPlaneTilt, ArrowDown, ArrowUp, Robot, Plus, MagnifyingGlass,
 } from "@phosphor-icons/react";
 
 const CHANNEL_ICON = {
@@ -24,6 +24,19 @@ export default function LeadDetail() {
     const [aiInput, setAiInput] = useState("");
     const [aiReply, setAiReply] = useState("");
     const [aiLoading, setAiLoading] = useState(false);
+    const [enriching, setEnriching] = useState(false);
+
+    const enrich = async () => {
+        setEnriching(true);
+        const t = toast.loading("AI enriching from email domain…");
+        try {
+            await api.post(`/leads/${id}/enrich`);
+            toast.success("Lead enriched", { id: t });
+            load();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Enrichment failed", { id: t });
+        } finally { setEnriching(false); }
+    };
 
     const load = () => {
         setLoading(true);
@@ -105,6 +118,42 @@ export default function LeadDetail() {
                         <Field label="Source" value={lead.source} />
                         <Field label="Status" value={lead.status} />
                         <Field label="Notes" value={lead.notes || "—"} />
+
+                        {/* AI Enrichment */}
+                        {lead.enrichment ? (
+                            <div className="mt-4 pt-4 border-t border-[#E2E8F0]" data-testid="lead-enrichment">
+                                <p className="zm-section-label mb-2">// AI enrichment</p>
+                                <div className="space-y-2 text-sm">
+                                    {lead.enrichment.company_name && <p><strong>Company:</strong> {lead.enrichment.company_name}</p>}
+                                    {lead.enrichment.industry && <p><strong>Industry:</strong> {lead.enrichment.industry}</p>}
+                                    {lead.enrichment.company_size_estimate && <p><strong>Size:</strong> {lead.enrichment.company_size_estimate}</p>}
+                                    {lead.enrichment.likely_role && <p><strong>Likely role:</strong> {lead.enrichment.likely_role}</p>}
+                                    {lead.enrichment.personalised_opener && (
+                                        <div className="bg-[#10B981]/5 border-l-2 border-l-[#10B981] p-2.5 mt-2 rounded-r-lg">
+                                            <p className="text-[10px] uppercase tracking-[0.15em] font-bold text-[#065F46] mb-1">// Cold-outreach opener</p>
+                                            <p className="text-xs italic">{lead.enrichment.personalised_opener}</p>
+                                        </div>
+                                    )}
+                                    {(lead.enrichment.buying_signals || []).length > 0 && (
+                                        <div>
+                                            <p className="text-[10px] uppercase tracking-[0.15em] font-bold text-[#94A3B8] mt-2 mb-1">// Buying signals</p>
+                                            <ul className="space-y-0.5">
+                                                {lead.enrichment.buying_signals.map((s, i) => (
+                                                    <li key={i} className="text-xs text-[#475569]">→ {s}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+                                </div>
+                                <button onClick={enrich} disabled={enriching} className="zm-btn-secondary text-xs mt-3" data-testid="reenrich-lead">
+                                    <MagnifyingGlass size={11} weight="bold" /> Re-enrich
+                                </button>
+                            </div>
+                        ) : (
+                            <button onClick={enrich} disabled={enriching || !lead.email} className="zm-btn-primary text-xs w-full mt-4" data-testid="enrich-lead">
+                                <MagnifyingGlass size={11} weight="bold" /> {enriching ? "Enriching…" : "AI enrich from domain"}
+                            </button>
+                        )}
                     </div>
                 </div>
 

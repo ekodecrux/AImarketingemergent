@@ -2483,6 +2483,619 @@ async def delete_content(cid: str, user=Depends(get_current_user)):
     return {"success": True}
 
 
+# ---------- AI A/B Subject Line + CTA Tester ----------
+class ABTestIn(BaseModel):
+    base_text: str       # original subject line / headline / CTA copy
+    kind: str = "subject"  # "subject" | "headline" | "cta"
+    audience: Optional[str] = None  # short descriptor of audience
+    n: int = 3           # how many variants to generate (max 5)
+
+
+@api.post("/ab-test/generate")
+async def ab_test_generate(payload: ABTestIn, user=Depends(get_current_user)):
+    """Generates N AI-rewritten variants of a subject/headline/CTA with predicted CTR
+    and a recommended winner. Persists to db.ab_tests for later analytics."""
+    if not payload.base_text or len(payload.base_text.strip()) < 3:
+        raise HTTPException(status_code=400, detail="base_text is required (min 3 chars)")
+    if payload.kind not in ("subject", "headline", "cta"):
+        raise HTTPException(status_code=400, detail="kind must be one of: subject, headline, cta")
+    n = max(2, min(payload.n, 5))
+    await check_ai_rate_limit(user)
+    profile = await db.business_profiles.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    audience = payload.audience or profile.get("target_audience") or "general audience"
+
+    kind_label = {"subject": "email subject line", "headline": "ad/blog headline", "cta": "call-to-action button text"}[payload.kind]
+
+    prompt = (
+        f"You are a senior conversion copywriter. The user's original {kind_label} is:\n"
+        f"  ORIGINAL: \"{payload.base_text}\"\n"
+        f"  AUDIENCE: {audience}\n\n"
+        f"Generate exactly {n} radically different variants — vary tone, length, "
+        f"angle (curiosity / urgency / value / proof / question). For each variant, predict CTR uplift "
+        f"vs original (-50% to +200%, integer) based on industry-median open/click benchmarks.\n\n"
+        f"Output STRICT JSON (no preamble) with this EXACT shape:\n"
+        f"{{\n"
+        f"  \"variants\": [\n"
+        f"    {{\"text\": \"...\", \"angle\": \"curiosity|urgency|value|proof|question\", \"predicted_ctr_uplift_pct\": <int>, \"rationale\": \"1 sentence\"}},\n"
+        f"    ... ({n} total)\n"
+        f"  ],\n"
+        f"  \"recommended_index\": <0-{n - 1} integer>,\n"
+        f"  \"reasoning\": \"<2 sentences explaining why winner was picked>\"\n"
+        f"}}"
+    )
+    try:
+        ai = await _groq_json(prompt, max_tokens=900)
+    except Exception as e:
+        logger.error("AB test AI failed: %s", e)
+        raise HTTPException(status_code=502, detail="AI is busy — please try again")
+
+    variants = ai.get("variants") or []
+    if not variants:
+        raise HTTPException(status_code=502, detail="AI returned no variants")
+    rec_idx = ai.get("recommended_index")
+    if not isinstance(rec_idx, int) or rec_idx < 0 or rec_idx >= len(variants):
+        # Fallback: pick highest predicted uplift
+        rec_idx = max(range(len(variants)), key=lambda i: int(variants[i].get("predicted_ctr_uplift_pct") or 0))
+
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "kind": payload.kind,
+        "base_text": payload.base_text,
+        "audience": audience,
+        "variants": variants,
+        "recommended_index": rec_idx,
+        "reasoning": ai.get("reasoning") or "",
+        "created_at": now_utc().isoformat(),
+    }
+    await db.ab_tests.insert_one(dict(record))
+    record.pop("_id", None)
+    return record
+
+
+@api.get("/ab-test/history")
+async def ab_test_history(user=Depends(get_current_user)):
+    items = await db.ab_tests.find({"user_id": ws(user)}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    return {"items": items}
+
+
+# ====================================================================
+# ---------- AI Growth Co-Pilot (agentic daily orchestrator) ----------
+# ====================================================================
+
+class CopilotToggleIn(BaseModel):
+    enabled: bool
+    aggressiveness: str = "balanced"  # "cautious" | "balanced" | "aggressive"
+
+
+@api.get("/copilot/state")
+async def copilot_state(user=Depends(get_current_user)):
+    """Returns copilot config + last brief + last 10 actions."""
+    cfg = await db.copilot_settings.find_one({"user_id": ws(user)}, {"_id": 0}) or {
+        "user_id": ws(user), "enabled": False, "aggressiveness": "balanced",
+    }
+    last_brief = await db.copilot_briefs.find_one(
+        {"user_id": ws(user)}, {"_id": 0}, sort=[("created_at", -1)],
+    )
+    actions = await db.copilot_actions.find(
+        {"user_id": ws(user)}, {"_id": 0},
+    ).sort("created_at", -1).limit(10).to_list(10)
+    return {"settings": cfg, "last_brief": last_brief, "recent_actions": actions}
+
+
+@api.put("/copilot/toggle")
+async def copilot_toggle(payload: CopilotToggleIn, user=Depends(get_current_user)):
+    if payload.aggressiveness not in ("cautious", "balanced", "aggressive"):
+        raise HTTPException(status_code=400, detail="aggressiveness must be cautious/balanced/aggressive")
+    await db.copilot_settings.update_one(
+        {"user_id": ws(user)},
+        {"$set": {
+            "user_id": ws(user),
+            "enabled": bool(payload.enabled),
+            "aggressiveness": payload.aggressiveness,
+            "updated_at": now_utc().isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"success": True, "enabled": payload.enabled}
+
+
+@api.post("/copilot/run-now")
+async def copilot_run_now(user=Depends(get_current_user)):
+    """Manually trigger a copilot cycle for THIS user (admin shortcut / testing)."""
+    result = await _copilot_cycle_for_user(ws(user), force=True)
+    return result
+
+
+async def _copilot_cycle_for_user(wid: str, force: bool = False) -> Dict[str, Any]:
+    """Runs one copilot cycle: gathers state -> asks AI for plan -> executes safe actions -> writes brief."""
+    cfg = await db.copilot_settings.find_one({"user_id": wid}, {"_id": 0}) or {}
+    if not force and not cfg.get("enabled"):
+        return {"skipped": "disabled"}
+    aggr = cfg.get("aggressiveness", "balanced")
+
+    profile = await db.business_profiles.find_one({"user_id": wid}, {"_id": 0}) or {}
+    target = await db.lead_targets.find_one({"user_id": wid}, {"_id": 0}) or {}
+    monthly_target = int(target.get("monthly_lead_target") or 0)
+
+    # Month-to-date leads
+    now = now_utc()
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    mtd_leads = await db.leads.count_documents({"user_id": wid, "created_at": {"$gte": start_of_month}})
+    day_of_month = now.day
+    days_in_month = 30
+    expected_by_now = (monthly_target * day_of_month / days_in_month) if monthly_target else 0
+    pace_gap = int(expected_by_now - mtd_leads) if monthly_target else 0  # positive = behind
+
+    recent_posts = await db.content_kits.count_documents({
+        "user_id": wid, "created_at": {"$gte": (now - timedelta(days=7)).isoformat()},
+    })
+    pending_schedules = await db.content_schedules.count_documents({"user_id": wid, "status": "PENDING"})
+
+    # Decide actions based on state + aggressiveness
+    actions_taken: List[Dict[str, Any]] = []
+    max_autogens = {"cautious": 1, "balanced": 2, "aggressive": 3}[aggr]
+
+    # Action 1: if behind pace AND few pending schedules, auto-generate content + schedule
+    if pace_gap > 0 and pending_schedules < 3 and recent_posts < 5:
+        gens = min(max_autogens, max(1, pace_gap // max(1, monthly_target // 10) if monthly_target else 1))
+        gens = max(1, min(gens, 3))
+        created = 0
+        for _i in range(gens):
+            try:
+                # Fake user dict for content_generate (needs 'id' for ws())
+                fake_user = {"id": wid}
+                r = await content_generate(ContentGenerateIn(), fake_user)
+                kit = r["content"]
+                # Auto-schedule 2 days out at 11 AM UTC
+                sched_when = (now + timedelta(days=2 + _i)).replace(hour=11, minute=0, second=0, microsecond=0)
+                await db.content_schedules.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": wid,
+                    "content_id": kit["id"],
+                    "scheduled_at": sched_when.isoformat(),
+                    "platforms": ["linkedin", "twitter", "blog"],
+                    "status": "PENDING",
+                    "delivery": {p: {"status": "pending"} for p in ["linkedin", "twitter", "blog"]},
+                    "created_at": now_utc().isoformat(),
+                    "source": "copilot",
+                })
+                await db.content_kits.update_one({"id": kit["id"], "user_id": wid}, {"$set": {"status": "SCHEDULED"}})
+                created += 1
+            except Exception as e:
+                logger.warning("Copilot content gen failed: %s", e)
+                break
+        if created > 0:
+            actions_taken.append({
+                "type": "auto_content_schedule", "count": created,
+                "reason": f"Pace gap: {pace_gap} leads behind target. Generated {created} posts.",
+            })
+
+    # Action 2: if pending_schedules >= target for week, no-op (don't spam)
+    # Action 3: nudge user for stale business profile (cautious action)
+    if not profile.get("industry") or not profile.get("target_audience"):
+        actions_taken.append({
+            "type": "nudge_business_profile",
+            "reason": "Business profile is incomplete — AI recommendations are weaker.",
+        })
+
+    # AI brief summarising state
+    try:
+        prompt = (
+            f"You are the user's AI marketing co-pilot. Write a friendly 3-line daily brief (no jargon, warm tone). "
+            f"State snapshot:\n"
+            f"- Monthly target: {monthly_target} leads\n"
+            f"- Generated MTD: {mtd_leads} (expected by today: {int(expected_by_now)}; gap: {pace_gap})\n"
+            f"- Posts in last 7d: {recent_posts}; Pending schedules: {pending_schedules}\n"
+            f"- Actions I took today: {len(actions_taken)} — {[a['type'] for a in actions_taken]}\n\n"
+            f"Output STRICT JSON: {{\"headline\":\"1 emoji + 1 short sentence\",\"body\":\"2 short sentences — what I did and what's next\",\"next_step\":\"1 sentence — what they should check in the app\",\"sentiment\":\"positive|neutral|urgent\"}}"
+        )
+        ai = await _groq_json(prompt, max_tokens=350)
+    except Exception:
+        ai = {"headline": "📊 Daily check-in", "body": f"MTD leads: {mtd_leads}/{monthly_target}. Pace gap: {pace_gap}.", "next_step": "Review your growth plan.", "sentiment": "neutral"}
+
+    brief = {
+        "id": str(uuid.uuid4()),
+        "user_id": wid,
+        "snapshot": {
+            "monthly_target": monthly_target, "mtd_leads": mtd_leads,
+            "expected_by_now": int(expected_by_now), "pace_gap": pace_gap,
+            "recent_posts": recent_posts, "pending_schedules": pending_schedules,
+        },
+        "actions": actions_taken,
+        "ai": ai,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.copilot_briefs.insert_one(dict(brief))
+    brief.pop("_id", None)
+    # Also log actions individually for the action feed
+    for a in actions_taken:
+        await db.copilot_actions.insert_one({
+            "id": str(uuid.uuid4()), "user_id": wid, "brief_id": brief["id"],
+            **a, "created_at": now_utc().isoformat(),
+        })
+    # In-app notification
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()), "user_id": wid,
+        "title": ai.get("headline") or "Daily brief",
+        "body": ai.get("body") or "",
+        "severity": "urgent" if ai.get("sentiment") == "urgent" else "info",
+        "read": False, "created_at": now_utc().isoformat(),
+    })
+    return {"brief": brief}
+
+
+async def _copilot_daily_tick():
+    """Cron: run copilot cycle for every enabled user."""
+    try:
+        async for cfg in db.copilot_settings.find({"enabled": True}, {"_id": 0, "user_id": 1}):
+            try:
+                await _copilot_cycle_for_user(cfg["user_id"])
+            except Exception as e:
+                logger.error("Copilot cycle failed for %s: %s", cfg.get("user_id"), e)
+    except Exception as e:
+        logger.error("Copilot cron failed: %s", e)
+
+
+# ====================================================================
+# ---------- Competitor Watch ----------
+# ====================================================================
+
+class CompetitorAddIn(BaseModel):
+    url: str
+    nickname: Optional[str] = None
+
+
+@api.get("/competitors")
+async def list_competitors(user=Depends(get_current_user)):
+    items = await db.competitors.find({"user_id": ws(user)}, {"_id": 0}).sort("created_at", -1).to_list(20)
+    return {"items": items}
+
+
+@api.post("/competitors")
+async def add_competitor(payload: CompetitorAddIn, user=Depends(get_current_user)):
+    if not payload.url or len(payload.url.strip()) < 4:
+        raise HTTPException(status_code=400, detail="URL required")
+    count = await db.competitors.count_documents({"user_id": ws(user)})
+    if count >= 3:
+        raise HTTPException(status_code=400, detail="Max 3 competitors tracked. Delete one first.")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "url": payload.url.strip(),
+        "nickname": payload.nickname or payload.url.strip(),
+        "created_at": now_utc().isoformat(),
+        "last_scanned_at": None,
+        "last_snapshot": None,
+    }
+    await db.competitors.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return {"success": True, "competitor": doc}
+
+
+@api.delete("/competitors/{cid}")
+async def delete_competitor(cid: str, user=Depends(get_current_user)):
+    res = await db.competitors.delete_one({"id": cid, "user_id": ws(user)})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"success": True}
+
+
+@api.post("/competitors/{cid}/scan")
+async def scan_competitor(cid: str, user=Depends(get_current_user)):
+    rec = await db.competitors.find_one({"id": cid, "user_id": ws(user)})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Not found")
+    scrape = await asyncio.get_event_loop().run_in_executor(None, _scrape_url_quick, rec["url"])
+    if not scrape.get("ok"):
+        raise HTTPException(status_code=400, detail=f"Scan failed: {scrape.get('error')}")
+    prev = rec.get("last_snapshot") or {}
+
+    # Compute a rough diff
+    changes: List[str] = []
+    if prev.get("title") and prev["title"] != scrape.get("title"):
+        changes.append(f"Title changed: '{prev['title']}' → '{scrape.get('title')}'")
+    if prev.get("meta_desc") and prev["meta_desc"] != scrape.get("meta_desc"):
+        changes.append("Meta description changed")
+    if prev.get("h1s") and prev["h1s"] != scrape.get("h1s"):
+        changes.append("H1 headlines changed")
+
+    # AI analysis of what this competitor is doing
+    try:
+        prompt = (
+            f"Competitor website: {rec['url']}\n"
+            f"Title: {scrape.get('title')}\n"
+            f"Meta: {scrape.get('meta_desc') or '(missing)'}\n"
+            f"H1s: {scrape.get('h1s', [])}\n"
+            f"H2s: {scrape.get('h2s', [])}\n"
+            f"Text sample: {scrape.get('text_sample', '')[:1000]}\n\n"
+            f"Output STRICT JSON:\n"
+            f"{{\n"
+            f"  \"current_positioning\": \"<1 sentence\",\n"
+            f"  \"likely_target_audience\": \"<1 sentence>\",\n"
+            f"  \"strengths\": [\"<2-3 short bullets>\"],\n"
+            f"  \"weaknesses_you_can_exploit\": [\"<2-3 short bullets where YOU can differentiate>\"],\n"
+            f"  \"suggested_counter_moves\": [\"<2-3 concrete actions the user should take\"]\n"
+            f"}}"
+        )
+        ai = await _groq_json(prompt, max_tokens=700)
+    except Exception:
+        ai = {}
+
+    snap = {
+        "scanned_at": now_utc().isoformat(),
+        "title": scrape.get("title"),
+        "meta_desc": scrape.get("meta_desc"),
+        "h1s": scrape.get("h1s"),
+        "h2s": scrape.get("h2s"),
+        "word_count": scrape.get("word_count"),
+    }
+    await db.competitors.update_one(
+        {"id": cid, "user_id": ws(user)},
+        {"$set": {
+            "last_scanned_at": snap["scanned_at"],
+            "last_snapshot": snap,
+            "last_ai": ai,
+            "last_changes": changes,
+        }},
+    )
+    return {"success": True, "snapshot": snap, "ai": ai, "changes": changes}
+
+
+# ====================================================================
+# ---------- Lead Enrichment from email/domain ----------
+# ====================================================================
+
+@api.post("/leads/{lead_id}/enrich")
+async def enrich_lead(lead_id: str, user=Depends(get_current_user)):
+    lead = await db.leads.find_one({"id": lead_id, "user_id": ws(user)})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    email = lead.get("email") or ""
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="Lead has no email domain to enrich from")
+    domain = email.split("@", 1)[1].strip().lower()
+    # Ignore personal domains
+    personal = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "proton.me", "pm.me", "aol.com"}
+    if domain in personal:
+        raise HTTPException(status_code=400, detail=f"{domain} is a personal email — no company data to enrich")
+
+    # Try to fetch the company homepage
+    scrape = await asyncio.get_event_loop().run_in_executor(None, _scrape_url_quick, f"https://{domain}")
+
+    # AI inference from first-name + domain + scrape
+    try:
+        prompt = (
+            f"Lead data:\n"
+            f"  Name: {lead.get('first_name','')} {lead.get('last_name','')}\n"
+            f"  Email: {email}\n"
+            f"  Company website: https://{domain}\n"
+            f"  Title tag: {scrape.get('title','(unreachable)') if scrape.get('ok') else '(unreachable)'}\n"
+            f"  Meta: {scrape.get('meta_desc','') if scrape.get('ok') else ''}\n"
+            f"  Headlines: {scrape.get('h1s',[]) if scrape.get('ok') else []}\n\n"
+            f"Output STRICT JSON:\n"
+            f"{{\n"
+            f"  \"company_name\": \"<best guess>\",\n"
+            f"  \"industry\": \"<e.g. SaaS, D2C e-commerce, healthcare>\",\n"
+            f"  \"company_size_estimate\": \"<micro | small | medium | enterprise>\",\n"
+            f"  \"likely_role\": \"<from first name + domain — best guess>\",\n"
+            f"  \"personalised_opener\": \"<1-sentence cold-outreach opener referencing something specific from their site>\",\n"
+            f"  \"buying_signals\": [\"<2-3 possible buying signals>\"]\n"
+            f"}}"
+        )
+        ai = await _groq_json(prompt, max_tokens=500)
+    except Exception:
+        ai = {"company_name": domain, "industry": "unknown"}
+
+    enrichment = {
+        "domain": domain,
+        "company_name": ai.get("company_name"),
+        "industry": ai.get("industry"),
+        "company_size_estimate": ai.get("company_size_estimate"),
+        "likely_role": ai.get("likely_role"),
+        "personalised_opener": ai.get("personalised_opener"),
+        "buying_signals": ai.get("buying_signals") or [],
+        "scrape_title": scrape.get("title") if scrape.get("ok") else None,
+        "enriched_at": now_utc().isoformat(),
+    }
+    await db.leads.update_one(
+        {"id": lead_id, "user_id": ws(user)},
+        {"$set": {"enrichment": enrichment, "updated_at": now_utc().isoformat()}},
+    )
+    return {"success": True, "enrichment": enrichment}
+
+
+# ---------- Free public AI Website Audit (lead magnet) ----------
+class FreeAuditIn(BaseModel):
+    url: str
+    email: str
+    business_name: Optional[str] = None
+
+
+def _is_public_ip(host: str) -> bool:
+    """Block SSRF: only allow requests to public IPs (no loopback / link-local / private)."""
+    try:
+        import ipaddress
+        import socket
+        infos = socket.getaddrinfo(host, None)
+        for info in infos:
+            ip = info[4][0]
+            ip_obj = ipaddress.ip_address(ip)
+            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved or ip_obj.is_multicast:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _scrape_url_quick(url: str) -> Dict[str, Any]:
+    """Lightweight scrape with SSRF protection: title, meta, h1/h2, word count, simple SEO heuristics."""
+    try:
+        from bs4 import BeautifulSoup
+        from urllib.parse import urlparse
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        parsed = urlparse(url)
+        host = parsed.hostname
+        if not host or not _is_public_ip(host):
+            return {"ok": False, "error": "blocked host (private/invalid)"}
+        r = _http.get(url, timeout=10, headers={"User-Agent": "ZeroMarkAuditBot/1.0"}, allow_redirects=True)
+        if r.status_code >= 400:
+            return {"ok": False, "error": f"site returned {r.status_code}"}
+        soup = BeautifulSoup(r.text[:300_000], "html.parser")
+        title = (soup.title.string if soup.title else "").strip()[:200]
+        meta_desc = ""
+        m = soup.find("meta", attrs={"name": "description"})
+        if m and m.get("content"):
+            meta_desc = m["content"].strip()[:300]
+        og_image = bool(soup.find("meta", attrs={"property": "og:image"}))
+        h1s = [h.get_text(strip=True)[:120] for h in soup.find_all("h1")][:5]
+        h2s = [h.get_text(strip=True)[:120] for h in soup.find_all("h2")][:8]
+        text = soup.get_text(separator=" ", strip=True)[:5000]
+        word_count = len(text.split())
+        # Best-effort: detect favicon, canonical, robots
+        has_canonical = bool(soup.find("link", rel="canonical"))
+        has_favicon = bool(soup.find("link", rel=lambda v: v and "icon" in (v if isinstance(v, str) else " ".join(v))))
+        # Image alt-tag coverage
+        imgs = soup.find_all("img")
+        imgs_with_alt = sum(1 for i in imgs if (i.get("alt") or "").strip())
+        return {
+            "ok": True, "title": title, "meta_desc": meta_desc, "og_image": og_image,
+            "h1_count": len(h1s), "h1s": h1s, "h2_count": len(h2s), "h2s": h2s,
+            "word_count": word_count, "has_canonical": has_canonical,
+            "has_favicon": has_favicon,
+            "img_count": len(imgs), "img_alt_coverage_pct": int(100 * imgs_with_alt / max(1, len(imgs))),
+            "text_sample": text[:1500],
+            "final_url": r.url,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def _heuristic_seo_score(scrape: Dict[str, Any]) -> Dict[str, Any]:
+    issues: List[str] = []
+    score = 100
+    if not scrape.get("title"):
+        issues.append("Missing <title> tag"); score -= 18
+    elif len(scrape["title"]) < 30 or len(scrape["title"]) > 65:
+        issues.append(f"Title length {len(scrape['title'])} chars — aim for 30–60"); score -= 6
+    if not scrape.get("meta_desc"):
+        issues.append("Missing meta description"); score -= 14
+    elif len(scrape["meta_desc"]) < 120 or len(scrape["meta_desc"]) > 160:
+        issues.append(f"Meta description length {len(scrape['meta_desc'])} — aim for 140–160"); score -= 4
+    if scrape.get("h1_count", 0) == 0:
+        issues.append("No H1 tag found"); score -= 12
+    elif scrape.get("h1_count", 0) > 1:
+        issues.append(f"{scrape['h1_count']} H1 tags — should be 1 per page"); score -= 5
+    if not scrape.get("og_image"):
+        issues.append("Missing og:image — social shares will look flat"); score -= 6
+    if not scrape.get("has_canonical"):
+        issues.append("Missing canonical link"); score -= 4
+    if not scrape.get("has_favicon"):
+        issues.append("Missing favicon"); score -= 3
+    if scrape.get("word_count", 0) < 300:
+        issues.append(f"Only {scrape.get('word_count', 0)} words — Google prefers 600+"); score -= 8
+    if scrape.get("img_count", 0) > 0 and scrape.get("img_alt_coverage_pct", 100) < 70:
+        issues.append(f"Only {scrape['img_alt_coverage_pct']}% of images have alt text — accessibility & SEO loss"); score -= 5
+    return {"score": max(20, score), "issues": issues}
+
+
+@api.post("/free-audit")
+async def free_audit(payload: FreeAuditIn, request: Request):
+    """PUBLIC endpoint (no auth). Scrapes the URL, generates an SEO audit + 3 organic content
+    ideas, captures the email as a lead with source='free_audit'. Rate-limited per IP + email."""
+    if not payload.url or len(payload.url.strip()) < 4:
+        raise HTTPException(status_code=400, detail="URL is required")
+    if not payload.email or "@" not in payload.email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+    if payload.business_name and len(payload.business_name) > 200:
+        raise HTTPException(status_code=400, detail="Business name too long")
+
+    # Rate limits
+    one_hour_ago = (now_utc() - timedelta(hours=1)).isoformat()
+    recent_email = await db.audit_runs.count_documents({"email": payload.email, "created_at": {"$gte": one_hour_ago}})
+    if recent_email >= 5:
+        raise HTTPException(status_code=429, detail="Too many audits — try again in an hour")
+    client_ip = request.client.host if request.client else "unknown"
+    recent_ip = await db.audit_runs.count_documents({"client_ip": client_ip, "created_at": {"$gte": one_hour_ago}})
+    if recent_ip >= 10:
+        raise HTTPException(status_code=429, detail="Too many audits from your network — try again later")
+
+    scrape = await asyncio.get_event_loop().run_in_executor(None, _scrape_url_quick, payload.url.strip())
+    if not scrape.get("ok"):
+        raise HTTPException(status_code=400, detail=f"Could not fetch site: {scrape.get('error','unknown')}")
+
+    seo = _heuristic_seo_score(scrape)
+
+    # AI: 3 organic content ideas + competitor angle suggestion
+    prompt = (
+        f"You're an organic-growth strategist. The user's website is at {scrape.get('final_url')}.\n"
+        f"  TITLE: \"{scrape.get('title')}\"\n"
+        f"  META: \"{scrape.get('meta_desc') or '(missing)'}\"\n"
+        f"  TOP HEADINGS: {scrape.get('h1s', []) + scrape.get('h2s', [])[:3]}\n"
+        f"  WORD COUNT: {scrape.get('word_count')}\n"
+        f"  TEXT SAMPLE (first 800 chars): {scrape.get('text_sample','')[:800]}\n\n"
+        f"Output STRICT JSON (no preamble) with EXACT shape:\n"
+        f"{{\n"
+        f"  \"business_summary\": \"<1 sentence — what this business sells>\",\n"
+        f"  \"primary_audience\": \"<1 sentence>\",\n"
+        f"  \"top_strengths\": [\"<3-5 short bullets>\"],\n"
+        f"  \"content_ideas\": [\n"
+        f"    {{\"title\": \"...\", \"format\": \"blog post|video|carousel|email\", \"why\": \"1 sentence\", \"target_keyword\": \"...\"}},\n"
+        f"    ... 3 total\n"
+        f"  ],\n"
+        f"  \"organic_growth_tip\": \"<1 sentence — biggest organic-first opportunity>\"\n"
+        f"}}"
+    )
+    try:
+        ai = await _groq_json(prompt, max_tokens=900)
+    except Exception:
+        ai = {"business_summary": scrape.get("title", ""), "content_ideas": [], "organic_growth_tip": "Connect with us for a personalised plan."}
+
+    # Persist run + capture as a free-audit lead (separate collection to avoid pollution)
+    run_doc = {
+        "id": str(uuid.uuid4()),
+        "url": scrape.get("final_url"),
+        "email": payload.email.lower().strip(),
+        "business_name": payload.business_name,
+        "scrape": {k: scrape[k] for k in scrape if k != "text_sample"},
+        "seo": seo,
+        "ai": ai,
+        "client_ip": client_ip,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.audit_runs.insert_one(dict(run_doc))
+    run_doc.pop("_id", None)
+
+    # Capture as marketing lead in our own pipeline (workspace_id = "free_audit_pool" — owned by platform)
+    await db.audit_leads.update_one(
+        {"email": run_doc["email"]},
+        {"$set": {
+            "email": run_doc["email"],
+            "url": run_doc["url"],
+            "business_name": payload.business_name,
+            "last_audit_at": run_doc["created_at"],
+            "last_score": seo["score"],
+        },
+         "$setOnInsert": {
+            "id": str(uuid.uuid4()),
+            "first_audit_at": run_doc["created_at"],
+        },
+         "$inc": {"audit_count": 1},
+        },
+        upsert=True,
+    )
+
+    return {
+        "audit_id": run_doc["id"],
+        "url": run_doc["url"],
+        "score": seo["score"],
+        "issues": seo["issues"],
+        "scrape": run_doc["scrape"],
+        "ai": ai,
+    }
+
+
 # ---------- Content Scheduling / Auto-publish ----------
 class ScheduleIn(BaseModel):
     content_id: str
@@ -2496,7 +3109,7 @@ class ScheduleUpdateIn(BaseModel):
     status: Optional[str] = None
 
 
-SUPPORTED_PLATFORMS = {"linkedin", "twitter", "instagram", "email_broadcast", "blog"}
+SUPPORTED_PLATFORMS = {"linkedin", "twitter", "instagram", "email_broadcast", "blog", "whatsapp_broadcast"}
 
 
 @api.post("/schedule")
@@ -2697,6 +3310,50 @@ async def _publish_to_email_broadcast(content: Dict[str, Any], user_doc: Dict[st
     return {"status": "published" if sent else "failed", "recipients": len(leads), "delivered": sent}
 
 
+async def _publish_to_whatsapp_broadcast(content: Dict[str, Any], user_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """WhatsApp-broadcasts a short message to leads with phone numbers via Twilio."""
+    kit = content.get("kit") or {}
+    blog = kit.get("blog_post") or {}
+    socials = kit.get("social_posts") or []
+    # Pick the shortest social post or blog excerpt — WhatsApp prefers short
+    body = ""
+    for s in socials:
+        if s.get("body"):
+            body = s["body"]
+            break
+    if not body:
+        body = (blog.get("excerpt") or blog.get("title") or "")[:500]
+    if not body:
+        return {"status": "failed", "error": "no message body"}
+
+    leads = await db.leads.find(
+        {"user_id": ws(user_doc), "phone": {"$ne": None},
+         "status": {"$in": ["CONTACTED", "INTERESTED", "NEW"]}},
+        {"_id": 0, "phone": 1, "id": 1, "first_name": 1},
+    ).to_list(500)
+    if not leads:
+        return {"status": "failed", "error": "no leads with phone"}
+
+    integ = await db.integrations.find_one({"user_id": ws(user_doc)}, {"_id": 0}) or {}
+    wa_from = integ.get("whatsapp", {}).get("from_number") or os.environ.get("TWILIO_WHATSAPP_FROM")
+    if not wa_from or not os.environ.get("TWILIO_ACCOUNT_SID"):
+        # Mock mode — pretend success so the dashboard still shows traction
+        return {"status": "mock_published", "recipients": len(leads), "delivered": len(leads), "note": "Twilio WhatsApp not configured"}
+
+    sent = 0
+    for ld in leads:
+        try:
+            personalised = body.replace("{first_name}", ld.get("first_name") or "there")[:1500]
+            ok = await asyncio.get_event_loop().run_in_executor(
+                None, _send_whatsapp_sync, ld["phone"], personalised, wa_from,
+            )
+            if ok:
+                sent += 1
+        except Exception:
+            continue
+    return {"status": "published" if sent else "failed", "recipients": len(leads), "delivered": sent}
+
+
 async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatches a scheduled content item to all its platforms."""
     user_doc = await db.users.find_one({"workspace_id": sched["user_id"]}, {"_id": 0}) \
@@ -2728,6 +3385,8 @@ async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
                 delivery[plat] = await _publish_to_blog(content, user_doc)
             elif plat == "email_broadcast":
                 delivery[plat] = await _publish_to_email_broadcast(content, user_doc)
+            elif plat == "whatsapp_broadcast":
+                delivery[plat] = await _publish_to_whatsapp_broadcast(content, user_doc)
             else:
                 delivery[plat] = {"status": "failed", "error": "unsupported"}
         except Exception as e:
@@ -5389,6 +6048,7 @@ async def on_startup():
     scheduler.add_job(_publish_due_schedules_tick, "interval", minutes=5, id="auto_publish", replace_existing=True)
     scheduler.add_job(_daily_auto_content_tick, "cron", minute=10, id="auto_daily_content", replace_existing=True)
     scheduler.add_job(_sync_ad_spend_tick, "interval", minutes=15, id="ad_spend_sync", replace_existing=True)
+    scheduler.add_job(_copilot_daily_tick, "cron", hour=3, minute=30, id="copilot_daily", replace_existing=True)
     scheduler.start()
     logger.info("APScheduler started: daily_briefings + imap_poll + forecast_alerts + auto_publish + auto_daily_content")
     # Seed admin

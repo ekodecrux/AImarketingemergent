@@ -1,0 +1,43 @@
+{
+  "summary": "Iter20 (SSRF fix + per-IP rate-limit + AI Growth Co-Pilot + Competitor Watch + Lead Enrichment) — 23/23 backend pytest pass, frontend flows verified for /dashboard CopilotPanel, /competitors page, and /leads enrichment block. ONE missing feature found: 'Competitor Watch' nav entry NOT present in left sidebar (Crosshair icon imported but no entry registered under Execution Engine in AppLayout.jsx).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/free-audit", "issue": "Per-IP rate-limit uses request.client.host which is the ingress pod IP — different pods load-balance the same external user across multiple internal IPs (saw 10.79.131.85 + 10.79.131.86 in audit_runs from a single test client). Effective per-IP limit is therefore higher than 10/hr per real user. Should mirror /auth/login by reading X-Forwarded-For first-hop. Limit DOES trigger when XFF is honoured (verified by sending fixed XFF=203.0.113.55 — got 429)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AppLayout sidebar", "issue": "Missing 'Competitor Watch' nav entry under Execution Engine. Crosshair icon is imported in /app/frontend/src/components/AppLayout.jsx line 5 but never wired up. data-testid='nav-competitors' not in DOM. Users cannot reach /competitors except by typing URL.", "selector": "[data-testid=\"nav-competitors\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter20_copilot_competitors_ssrf.py",
+    "/app/test_reports/pytest/iter20_results.xml"
+  ],
+  "action_items": [
+    "Add { to: '/competitors', label: 'Competitor Watch', icon: Crosshair, testid: 'nav-competitors' } entry to the 'Execution Engine' group in /app/frontend/src/components/AppLayout.jsx (line ~37).",
+    "Optional hardening: in POST /api/free-audit, derive client_ip from X-Forwarded-For first hop (same pattern used in /auth/login line 428-429) so per-IP rate-limit works behind k8s ingress."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~6094 lines — please split into modules (lead_magnets / copilot / competitors / enrichment).",
+    "_scrape_url_quick uses synchronous DNS resolution + no IP cap; consider also blocking IPv6 ULA (fc00::/7) and the IPv4 0.0.0.0/8 + 100.64.0.0/10 (CGNAT) ranges in addition to current is_private/is_loopback/is_link_local check.",
+    "/competitors POST does NOT validate URL scheme (e.g. accepts 'ftp://' or invalid strings). Should reject anything not http(s) before storing.",
+    "/leads/{id}/enrich does not check if the lead already has enrichment — re-enrich silently overwrites. Behavior is OK but a 'last_enriched_at' compare + a force=true flag would be more deliberate.",
+    "_copilot_cycle_for_user has no per-user concurrency lock — two simultaneous /copilot/run-now calls could double-generate kits when aggressiveness=aggressive.",
+    "FreeAuditIn.email still uses 'in payload.email' instead of Pydantic EmailStr (carry-over from iter19).",
+    "Crosshair icon imported in AppLayout.jsx but unused — dead import."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter20_copilot_competitors_ssrf.py (new — 23 tests)"
+  ],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "~85% — CopilotPanel ON/OFF/run-now/brief/mode chips OK; Competitors add/scan/render/delete OK with full AI sections (positioning, strengths, where-you-can-win, counter-moves); Lead enrichment block renders Company+Industry+Size+Role+green-opener+buying-signals; Re-enrich button switches in. Sidebar nav-competitors MISSING."},
+  "test_credentials": "admin@zeromark.ai / admin123 (read from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created 1 admin copilot_settings (toggled cautious/balanced), 1 copilot_brief, 3 competitors (example.com / example.org / example.net) all auto-deleted by class fixture. Created 3 test leads (TestEnrich UI + jane-*@example.com + joe-*@gmail.com). 22+ audit_runs entries with rotating client IPs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend 23/23 green for iter20. Important data-testids: copilot-panel, copilot-run-now, copilot-mode-{cautious|balanced|aggressive|off}, copilot-brief, copilot-actions, competitors-page, competitor-url, competitor-nickname, competitor-add, competitor-list, competitor-{id}, scan-{id}, del-{id}, lead-enrichment, enrich-lead, reenrich-lead. /competitors UI scan populates 'Their positioning' / 'Strengths' chips / 'Where you can win' / 'Counter-moves' correctly (verified by screenshot). /api/leads expects field 'name' (single string), NOT first_name/last_name. Per-IP rate limit on /free-audit only triggers reliably when X-Forwarded-For is set; behind k8s ingress, request.client.host alone is insufficient. Apscheduler logs confirm 'Added job _copilot_daily_tick' at startup.",
+  "rca of the issue": "Missing nav-competitors: developer added Crosshair import but forgot to add the actual entry in NAV_GROUPS array under Execution Engine. One-line fix in /app/frontend/src/components/AppLayout.jsx after line 37. Per-IP RL: behind k8s ingress, request.client.host returns the load-balanced pod's IP; need to consume X-Forwarded-For first hop like login endpoint does (line 428-429). Confirmed via direct DB query: 11 sequential POSTs landed on 2 different pod IPs (10.79.131.85 and 10.79.131.86)."
+}

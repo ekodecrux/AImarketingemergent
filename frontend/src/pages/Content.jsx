@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
+import ABTester from "@/components/ABTester";
 import {
     Sparkle, Article, Hash, ShareNetwork, Clipboard, CheckCircle,
     Code, ArrowRight, Trash, MagnifyingGlass,
@@ -171,7 +172,18 @@ function ContentDetail({ content, onPublish, onDelete }) {
                     <h3 className="font-display text-2xl font-black tracking-tight mb-2">{k.blog_post.title}</h3>
                     <p className="text-xs text-[#64748B] font-mono mb-3">/{k.blog_post.slug}</p>
                     <p className="text-sm text-[#475569] italic mb-4 leading-relaxed">{k.blog_post.excerpt}</p>
-                    <details className="bg-[#F8FAFC] rounded-md p-4 border border-[#E2E8F0]">
+
+                    {/* AI A/B tester for blog title */}
+                    <details className="mt-4">
+                        <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-[#D97706]">
+                            ⚡ Try A/B variants for this title
+                        </summary>
+                        <div className="mt-4">
+                            <ABTester defaultKind="headline" defaultText={k.blog_post.title} />
+                        </div>
+                    </details>
+
+                    <details className="bg-[#F8FAFC] rounded-md p-4 border border-[#E2E8F0] mt-3">
                         <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-[#0F172A]">View body markdown ({k.blog_post.body_md?.length || 0} chars)</summary>
                         <pre className="text-xs whitespace-pre-wrap mt-3 text-[#0F172A] font-mono leading-relaxed max-h-96 overflow-auto">{k.blog_post.body_md}</pre>
                         <button onClick={() => copy(k.blog_post.body_md, "Body markdown")} className="zm-btn-secondary text-xs mt-3"><Clipboard size={12} weight="bold" /> Copy markdown</button>
