@@ -2566,6 +2566,9 @@ async def ab_test_history(user=Depends(get_current_user)):
 class CopilotToggleIn(BaseModel):
     enabled: bool
     aggressiveness: str = "balanced"  # "cautious" | "balanced" | "aggressive"
+    daily_brief_phone: Optional[str] = None  # E.164 WhatsApp recipient (defaults to user.phone)
+    daily_brief_slack_webhook: Optional[str] = None  # https://hooks.slack.com/...
+    daily_brief_channels: Optional[List[str]] = None  # subset of ["slack","whatsapp","in_app"]
 
 
 @api.get("/copilot/state")
@@ -2587,17 +2590,48 @@ async def copilot_state(user=Depends(get_current_user)):
 async def copilot_toggle(payload: CopilotToggleIn, user=Depends(get_current_user)):
     if payload.aggressiveness not in ("cautious", "balanced", "aggressive"):
         raise HTTPException(status_code=400, detail="aggressiveness must be cautious/balanced/aggressive")
+    channels = payload.daily_brief_channels
+    if channels is not None:
+        bad = [c for c in channels if c not in ("slack", "whatsapp", "in_app")]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"Unknown channels: {bad}")
+    if payload.daily_brief_slack_webhook and not payload.daily_brief_slack_webhook.startswith("https://hooks.slack.com/"):
+        raise HTTPException(status_code=400, detail="Invalid Slack webhook URL")
+    update = {
+        "user_id": ws(user),
+        "enabled": bool(payload.enabled),
+        "aggressiveness": payload.aggressiveness,
+        "updated_at": now_utc().isoformat(),
+    }
+    if payload.daily_brief_phone is not None:
+        update["daily_brief_phone"] = payload.daily_brief_phone.strip() or None
+    if payload.daily_brief_slack_webhook is not None:
+        update["daily_brief_slack_webhook"] = payload.daily_brief_slack_webhook.strip() or None
+    if payload.daily_brief_channels is not None:
+        update["daily_brief_channels"] = payload.daily_brief_channels
     await db.copilot_settings.update_one(
-        {"user_id": ws(user)},
-        {"$set": {
-            "user_id": ws(user),
-            "enabled": bool(payload.enabled),
-            "aggressiveness": payload.aggressiveness,
-            "updated_at": now_utc().isoformat(),
-        }},
-        upsert=True,
+        {"user_id": ws(user)}, {"$set": update}, upsert=True,
     )
     return {"success": True, "enabled": payload.enabled}
+
+
+@api.post("/copilot/test-delivery")
+async def copilot_test_delivery(user=Depends(get_current_user)):
+    """Sends a sample 'Daily brief' to all configured channels for the current user."""
+    fake_brief = {
+        "id": "test_" + uuid.uuid4().hex[:8],
+        "user_id": ws(user),
+        "snapshot": {"monthly_target": 100, "mtd_leads": 42, "expected_by_now": 40, "pace_gap": -2, "recent_posts": 3, "pending_schedules": 5},
+        "actions": [{"type": "demo", "reason": "This is a test message"}],
+        "ai": {
+            "headline": "🎉 Test brief from your AI Co-Pilot",
+            "body": "If you're reading this in Slack/WhatsApp, your daily-brief delivery is working perfectly!",
+            "next_step": "Open ZeroMark to see your real daily brief.",
+            "sentiment": "positive",
+        },
+        "created_at": now_utc().isoformat(),
+    }
+    return await _deliver_copilot_brief(ws(user), fake_brief)
 
 
 @api.post("/copilot/run-now")
@@ -2607,8 +2641,29 @@ async def copilot_run_now(user=Depends(get_current_user)):
     return result
 
 
+# Per-user lock to prevent concurrent copilot cycles for the same workspace
+_copilot_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _copilot_lock_for(wid: str) -> asyncio.Lock:
+    lock = _copilot_locks.get(wid)
+    if lock is None:
+        lock = asyncio.Lock()
+        _copilot_locks[wid] = lock
+    return lock
+
+
 async def _copilot_cycle_for_user(wid: str, force: bool = False) -> Dict[str, Any]:
-    """Runs one copilot cycle: gathers state -> asks AI for plan -> executes safe actions -> writes brief."""
+    """Runs one copilot cycle: gathers state -> asks AI for plan -> executes safe actions -> writes brief.
+    Per-workspace asyncio lock prevents double-fire when the user mashes 'Run cycle now'."""
+    lock = _copilot_lock_for(wid)
+    if lock.locked():
+        return {"skipped": "already_running"}
+    async with lock:
+        return await _copilot_cycle_inner(wid, force=force)
+
+
+async def _copilot_cycle_inner(wid: str, force: bool = False) -> Dict[str, Any]:
     cfg = await db.copilot_settings.find_one({"user_id": wid}, {"_id": 0}) or {}
     if not force and not cfg.get("enabled"):
         return {"skipped": "disabled"}
@@ -2722,6 +2777,11 @@ async def _copilot_cycle_for_user(wid: str, force: bool = False) -> Dict[str, An
         "severity": "urgent" if ai.get("sentiment") == "urgent" else "info",
         "read": False, "created_at": now_utc().isoformat(),
     })
+    # Deliver daily brief to user's preferred channels (Slack + WhatsApp)
+    try:
+        await _deliver_copilot_brief(wid, brief)
+    except Exception as e:
+        logger.warning("Co-Pilot brief delivery failed for %s: %s", wid, e)
     return {"brief": brief}
 
 
@@ -2735,6 +2795,102 @@ async def _copilot_daily_tick():
                 logger.error("Copilot cycle failed for %s: %s", cfg.get("user_id"), e)
     except Exception as e:
         logger.error("Copilot cron failed: %s", e)
+
+
+def _build_brief_slack_blocks(brief: Dict[str, Any]) -> Dict[str, Any]:
+    ai = brief.get("ai") or {}
+    snap = brief.get("snapshot") or {}
+    actions = brief.get("actions") or []
+    sent = ai.get("sentiment", "neutral")
+    emoji = "🟢" if sent == "positive" else ("🔴" if sent == "urgent" else "📊")
+    bullets = ""
+    if actions:
+        bullets = "\n".join([f"• {a.get('reason') or a.get('type')}" for a in actions[:4]])
+    text_parts = [
+        f"*MTD leads:* {snap.get('mtd_leads', 0)} / {snap.get('monthly_target', 0)}",
+        f"*Pace gap:* {snap.get('pace_gap', 0)}",
+        f"*Pending posts:* {snap.get('pending_schedules', 0)}",
+    ]
+    return {
+        "blocks": [
+            {"type": "header", "text": {"type": "plain_text", "text": f"{emoji} ZeroMark · Daily brief"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{ai.get('headline','Daily brief')}*\n{ai.get('body','')}"}},
+            {"type": "section", "fields": [{"type": "mrkdwn", "text": t} for t in text_parts]},
+        ] + (
+            [{"type": "section", "text": {"type": "mrkdwn", "text": f"*Actions taken today:*\n{bullets}"}}]
+            if bullets else []
+        ) + (
+            [{"type": "section", "text": {"type": "mrkdwn", "text": f":sparkles: *Next step:* {ai.get('next_step')}"}}]
+            if ai.get("next_step") else []
+        ),
+    }
+
+
+def _send_copilot_slack_sync(webhook_url: str, brief: Dict[str, Any]) -> bool:
+    try:
+        body = _build_brief_slack_blocks(brief)
+        r = _http.post(webhook_url, json=body, timeout=10)
+        return r.status_code in (200, 204)
+    except Exception as e:
+        logger.error("Co-Pilot Slack send failed: %s", e)
+        return False
+
+
+def _build_brief_whatsapp_text(brief: Dict[str, Any]) -> str:
+    ai = brief.get("ai") or {}
+    snap = brief.get("snapshot") or {}
+    parts = [
+        f"*ZeroMark · Daily brief*",
+        f"{ai.get('headline','Daily brief')}",
+        "",
+        ai.get("body", ""),
+        "",
+        f"📊 MTD: *{snap.get('mtd_leads',0)}/{snap.get('monthly_target',0)}* leads · pace gap *{snap.get('pace_gap',0)}*",
+    ]
+    if ai.get("next_step"):
+        parts.append(f"\n👉 {ai['next_step']}")
+    return "\n".join(p for p in parts if p is not None)[:1500]
+
+
+async def _deliver_copilot_brief(wid: str, brief: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = await db.copilot_settings.find_one({"user_id": wid}, {"_id": 0}) or {}
+    channels = cfg.get("daily_brief_channels") or ["in_app"]
+    delivered: Dict[str, Any] = {"in_app": True}  # in-app already inserted by caller
+
+    # Slack
+    if "slack" in channels:
+        webhook = cfg.get("daily_brief_slack_webhook")
+        if not webhook:
+            delivered["slack"] = {"sent": False, "reason": "no webhook configured"}
+        else:
+            ok = await asyncio.get_event_loop().run_in_executor(
+                None, _send_copilot_slack_sync, webhook, brief,
+            )
+            delivered["slack"] = {"sent": bool(ok)}
+
+    # WhatsApp
+    if "whatsapp" in channels:
+        phone = cfg.get("daily_brief_phone")
+        if not phone:
+            # Fall back to user's auth phone if set
+            user_doc = await db.users.find_one({"$or": [{"id": wid}, {"workspace_id": wid}]}, {"_id": 0, "phone": 1})
+            phone = (user_doc or {}).get("phone")
+        if not phone:
+            delivered["whatsapp"] = {"sent": False, "reason": "no phone configured"}
+        elif not os.environ.get("TWILIO_ACCOUNT_SID"):
+            delivered["whatsapp"] = {"sent": False, "reason": "Twilio not configured"}
+        else:
+            wa_from = os.environ.get("TWILIO_WHATSAPP_FROM")
+            if not wa_from:
+                delivered["whatsapp"] = {"sent": False, "reason": "TWILIO_WHATSAPP_FROM not set"}
+            else:
+                text = _build_brief_whatsapp_text(brief)
+                ok = await asyncio.get_event_loop().run_in_executor(
+                    None, _send_whatsapp_sync, phone, text, wa_from,
+                )
+                delivered["whatsapp"] = {"sent": bool(ok)}
+
+    return {"delivered": delivered}
 
 
 # ====================================================================
@@ -2908,7 +3064,7 @@ async def enrich_lead(lead_id: str, user=Depends(get_current_user)):
 # ---------- Free public AI Website Audit (lead magnet) ----------
 class FreeAuditIn(BaseModel):
     url: str
-    email: str
+    email: EmailStr
     business_name: Optional[str] = None
 
 
@@ -3006,8 +3162,6 @@ async def free_audit(payload: FreeAuditIn, request: Request):
     ideas, captures the email as a lead with source='free_audit'. Rate-limited per IP + email."""
     if not payload.url or len(payload.url.strip()) < 4:
         raise HTTPException(status_code=400, detail="URL is required")
-    if not payload.email or "@" not in payload.email:
-        raise HTTPException(status_code=400, detail="Valid email required")
     if payload.business_name and len(payload.business_name) > 200:
         raise HTTPException(status_code=400, detail="Business name too long")
 
