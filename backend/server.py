@@ -1422,9 +1422,9 @@ async def list_scraping_jobs(user=Depends(get_current_user)):
 
 # ---------- Subscription / Razorpay ----------
 PLANS = {
-    "basic": {"id": "basic", "name": "Basic", "price_inr": 499, "features": ["500 leads/month", "Email + SMS", "Basic reports", "1 user"]},
-    "pro": {"id": "pro", "name": "Pro", "price_inr": 1499, "features": ["5000 leads/month", "All channels", "AI generation", "Advanced analytics", "5 users"]},
-    "enterprise": {"id": "enterprise", "name": "Enterprise", "price_inr": 4999, "features": ["Unlimited leads", "Priority support", "Custom integrations", "SLA", "Unlimited users"]},
+    "free": {"id": "free", "name": "Free", "price_inr": 0, "features": ["100 leads/month", "Email only", "Basic reports", "1 user", "14-day trial of Pro features"]},
+    "basic": {"id": "basic", "name": "Basic", "price_inr": 499, "features": ["1,000 leads/month", "Email + SMS + WhatsApp", "AI content generation", "Organic-first Quick Plan", "3 users"]},
+    "pro": {"id": "pro", "name": "Pro", "price_inr": 999, "features": ["Unlimited leads", "All channels incl. paid ads", "AI Growth Co-Pilot (autonomous)", "Competitor Watch", "Lead enrichment", "Advanced analytics", "10 users", "Priority support"]},
 }
 
 
@@ -5570,7 +5570,7 @@ async def admin_users(
 
 # ---------- Admin write-actions: subscription / wallet / discount / role / suspend ----------
 class AdminSetSubIn(BaseModel):
-    plan: str  # FREE_TRIAL | BASIC | PRO | ENTERPRISE
+    plan: str  # FREE | BASIC | PRO
     duration_months: int = 1
     note: Optional[str] = None
 
@@ -5595,7 +5595,7 @@ class AdminSuspendIn(BaseModel):
     reason: Optional[str] = None
 
 
-VALID_PLANS = {"FREE_TRIAL", "BASIC", "PRO", "ENTERPRISE"}
+VALID_PLANS = {"FREE", "BASIC", "PRO"}
 
 
 async def _audit_admin_action(actor: Dict[str, Any], target_user_id: str, action: str, payload: Dict[str, Any]):
@@ -5631,7 +5631,7 @@ async def admin_set_subscription(uid: str, payload: AdminSetSubIn, user=Depends(
             "manually_set_at": now_utc().isoformat(),
             "manually_set_note": payload.note,
             "expires_at": expires_at,
-            "trial_ends_at": None if plan_upper != "FREE_TRIAL" else expires_at,
+            "trial_ends_at": None if plan_upper != "FREE" else expires_at,
         }},
         upsert=True,
     )
@@ -5766,7 +5766,7 @@ async def admin_user_detail(uid: str, user=Depends(get_current_user)):
 
 
 # ---------- Admin: revenue + audit + subscriptions ----------
-PLAN_PRICE_INR = {"FREE_TRIAL": 0, "BASIC": 499, "PRO": 1499, "ENTERPRISE": 4999}
+PLAN_PRICE_INR = {"FREE": 0, "FREE_TRIAL": 0, "BASIC": 499, "PRO": 999}
 
 
 @api.get("/admin/revenue")
