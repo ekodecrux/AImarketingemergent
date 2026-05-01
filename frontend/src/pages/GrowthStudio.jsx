@@ -9,7 +9,7 @@ import {
     Sparkle, ArrowRight, ArrowsClockwise, Lightning, CurrencyDollar, RocketLaunch, CheckCircle,
     SquaresFour,
 } from "@phosphor-icons/react";
-import { formatCurrency, currencySymbol, getCachedLocale } from "@/lib/locale";
+import { formatCurrency, currencySymbol, getCachedLocale, setLocaleCache } from "@/lib/locale";
 
 const SYMBOL_FOR_CCY = {
     USD: "$", INR: "₹", EUR: "€", GBP: "£", JPY: "¥", CNY: "¥", KRW: "₩",
@@ -89,12 +89,15 @@ function QuickPlanTab() {
     const [kickoffLoading, setKickoffLoading] = useState(false);
     const [locale, setLocale] = useState(getCachedLocale());
 
-    // Refresh locale from /locale/me so currency symbol matches user's country
+    // ALWAYS refresh from /locale/me on mount — cached locale may be stale after profile edit
     useEffect(() => {
-        if (!locale) {
-            api.get("/locale/me").then((r) => setLocale(r.data?.locale || null)).catch(() => {});
-        }
-    }, [locale]);
+        api.get("/locale/me").then((r) => {
+            if (r.data?.locale) {
+                setLocale(r.data.locale);
+                setLocaleCache(r.data.locale);
+            }
+        }).catch(() => {});
+    }, []);
 
     // Derive locale from backend response if cached locale missing (safety net)
     const effLocale = locale || (result?.guarantee?.currency
@@ -112,7 +115,7 @@ function QuickPlanTab() {
                     total_leads: p.plan?.total_guaranteed_leads || 0,
                     duration_months: p.plan?.duration_months || 12,
                     monthly_budget: p.plan?.monthly_budget_usd || 0,
-                    currency: locale?.currency || "USD",
+                    currency: p.plan?.currency || locale?.currency || "USD",
                     buffer_pct: 50,
                     raw_predicted_per_month: p.plan?.raw_predicted_leads_per_month || 0,
                 }});

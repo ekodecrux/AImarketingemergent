@@ -2475,6 +2475,8 @@ async def growth_plan_generate(user=Depends(get_current_user)):
         "id": str(uuid.uuid4()),
         "user_id": ws(user),
         "plan": plan,
+        "currency": cur,
+        "country_code": cc,
         "generated_at": now_utc().isoformat(),
     }
     await db.growth_plans.insert_one(record)

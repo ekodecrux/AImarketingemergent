@@ -3,14 +3,19 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "@/components/PageHeader";
-import { Sparkle, Globe } from "@phosphor-icons/react";
+import { Sparkle, Globe, CurrencyCircleDollar } from "@phosphor-icons/react";
+import { COUNTRIES, CURRENCY_OPTIONS, defaultCurrencyFor, symbolFor } from "@/lib/countries";
+import { setLocaleCache } from "@/lib/locale";
 
 export default function Business() {
     const navigate = useNavigate();
     const [form, setForm] = useState({
         business_name: "", industry: "", location: "", target_audience: "",
         website_url: "", description: "",
+        country_code: "IN",
+        currency_code: "INR",
     });
+    const [currencyOverridden, setCurrencyOverridden] = useState(false);
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [autoFilling, setAutoFilling] = useState(false);
@@ -18,18 +23,40 @@ export default function Business() {
     useEffect(() => {
         setLoading(true);
         api.get("/business")
-            .then((r) => { if (r.data.profile) setForm({ ...form, ...r.data.profile }); })
+            .then((r) => {
+                if (r.data.profile) {
+                    const p = r.data.profile;
+                    setForm((f) => ({
+                        ...f, ...p,
+                        country_code: (p.country_code || "IN").toUpperCase(),
+                        currency_code: (p.currency_code || defaultCurrencyFor(p.country_code) || "INR").toUpperCase(),
+                    }));
+                    if (p.currency_code && p.country_code && p.currency_code !== defaultCurrencyFor(p.country_code)) {
+                        setCurrencyOverridden(true);
+                    }
+                }
+            })
             .finally(() => setLoading(false));
-        // eslint-disable-next-line
     }, []);
+
+    // Whenever country changes (and currency NOT manually overridden), auto-set currency
+    const onCountryChange = (cc) => {
+        const upper = cc.toUpperCase();
+        setForm((f) => ({
+            ...f,
+            country_code: upper,
+            currency_code: currencyOverridden ? f.currency_code : defaultCurrencyFor(upper),
+        }));
+    };
 
     const submit = async (e) => {
         e.preventDefault();
         setSaving(true);
         try {
             const r = await api.post("/business", form);
+            // Update locale cache so Growth Studio + Wallet + Reports immediately use the new currency
+            if (r.data?.locale) setLocaleCache(r.data.locale);
             if (r.data?.plan_regenerating) {
-                // Signal the Plan Overview to start polling, then redirect
                 sessionStorage.setItem("plan_bg_regen", "1");
                 toast.success("Profile saved · Regenerating ICP, market, SEO, PR & roadmap in background…");
                 navigate("/growth?tab=overview");
@@ -50,15 +77,17 @@ export default function Business() {
         try {
             const r = await api.post("/business/auto-fill", { website_url: form.website_url });
             const p = r.data.profile;
-            setForm({
-                ...form,
-                business_name: p.business_name || form.business_name,
-                industry: p.industry || form.industry,
-                location: p.location || form.location,
-                target_audience: p.target_audience || form.target_audience,
-                description: p.description || form.description,
-                website_url: p.website_url || form.website_url,
-            });
+            setForm((f) => ({
+                ...f,
+                business_name: p.business_name || f.business_name,
+                industry: p.industry || f.industry,
+                location: p.location || f.location,
+                target_audience: p.target_audience || f.target_audience,
+                description: p.description || f.description,
+                website_url: p.website_url || f.website_url,
+                country_code: (p.country_code || f.country_code || "IN").toUpperCase(),
+                currency_code: (p.currency_code || f.currency_code || defaultCurrencyFor(p.country_code) || "INR").toUpperCase(),
+            }));
             toast.success("Auto-filled — review and save", { id: t });
         } catch (err) {
             toast.error(err.response?.data?.detail || "Auto-fill failed", { id: t });
@@ -67,12 +96,14 @@ export default function Business() {
         }
     };
 
+    const sym = symbolFor(form.currency_code);
+
     return (
         <div>
             <PageHeader
                 eyebrow="// Identity"
                 title="Business Profile"
-                subtitle="The single source of truth ZeroMark uses for AI generation, lead scoring and growth plans."
+                subtitle="The single source of truth ZeroMark uses for AI generation, lead scoring, growth plans and every monetary value across the app."
                 action={
                     <button onClick={autoFill} disabled={autoFilling} className="zm-btn-dark" data-testid="business-autofill">
                         <Sparkle size={14} weight="fill" /> {autoFilling ? "Analysing…" : "Auto-fill from URL"}
@@ -82,6 +113,8 @@ export default function Business() {
             <div className="px-4 sm:px-6 lg:px-8 py-6 max-w-3xl">
                 <form onSubmit={submit} className="zm-card p-8 space-y-5" data-testid="business-form">
                     {loading && <p className="text-sm text-[#A1A1AA]">Loading…</p>}
+
+                    {/* Website URL */}
                     <div>
                         <label className="zm-label">Website URL</label>
                         <div className="flex gap-2">
@@ -93,6 +126,7 @@ export default function Business() {
                         <p className="text-xs text-[#71717A] mt-1.5">Add your URL → click "Auto-fill from URL" above to have AI populate everything below.</p>
                     </div>
 
+                    {/* Identity */}
                     <div className="grid md:grid-cols-2 gap-5">
                         <div>
                             <label className="zm-label">Business Name *</label>
@@ -103,18 +137,68 @@ export default function Business() {
                             <input required className="zm-input" value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value })} placeholder="SaaS, Healthcare, …" data-testid="business-industry" />
                         </div>
                         <div>
-                            <label className="zm-label">Location *</label>
-                            <input required className="zm-input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Bangalore, India" data-testid="business-location" />
+                            <label className="zm-label">City *</label>
+                            <input required className="zm-input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Bangalore, Mumbai, Delhi, …" data-testid="business-location" />
                         </div>
                         <div>
                             <label className="zm-label">Target Audience *</label>
                             <input required className="zm-input" value={form.target_audience} onChange={(e) => setForm({ ...form, target_audience: e.target.value })} placeholder="Mid-market e-commerce founders" data-testid="business-audience" />
                         </div>
                     </div>
+
+                    {/* Currency block — primary focus per user feedback */}
+                    <div className="rounded-sm border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3" data-testid="business-locale-block">
+                        <div className="flex items-center gap-2">
+                            <CurrencyCircleDollar size={16} weight="bold" className="text-[#2563EB]" />
+                            <p className="text-[11px] uppercase tracking-[0.2em] text-[#71717A] font-bold">// Country & Currency</p>
+                            <span className="ml-auto zm-badge bg-[#DBEAFE] text-[#1D4ED8] text-[10px]">Powers Growth Studio · Reports · Wallet · Billing</span>
+                        </div>
+                        <p className="text-xs text-[#71717A]">
+                            Every monetary value across ZeroMark — guaranteed leads, channel mix, ad budgets, wallet, invoices — uses what you pick here. Pick once, it sticks.
+                        </p>
+                        <div className="grid md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="zm-label">Country *</label>
+                                <select
+                                    required
+                                    className="zm-input bg-white"
+                                    value={form.country_code}
+                                    onChange={(e) => onCountryChange(e.target.value)}
+                                    data-testid="business-country"
+                                >
+                                    {COUNTRIES.map((c) => (
+                                        <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="zm-label flex items-center gap-1">
+                                    Currency
+                                    <span className="text-[10px] text-[#71717A] normal-case font-normal">· auto-set from country (override if needed)</span>
+                                </label>
+                                <select
+                                    className="zm-input bg-white"
+                                    value={form.currency_code}
+                                    onChange={(e) => { setForm({ ...form, currency_code: e.target.value }); setCurrencyOverridden(true); }}
+                                    data-testid="business-currency"
+                                >
+                                    {CURRENCY_OPTIONS.map((c) => (
+                                        <option key={c} value={c}>{c} ({symbolFor(c)})</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <p className="text-xs text-[#0F172A] flex items-center gap-2">
+                            Preview · monthly budget will display as
+                            <span className="font-mono font-bold bg-white px-2 py-0.5 rounded border border-[#E2E8F0]" data-testid="currency-preview">{sym}5,000 / month</span>
+                        </p>
+                    </div>
+
                     <div>
                         <label className="zm-label">Description</label>
                         <textarea rows={4} className="zm-input" value={form.description || ""} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What does your business do? What problem do you solve?" data-testid="business-description" />
                     </div>
+
                     <div className="flex justify-end pt-3">
                         <button disabled={saving} className="zm-btn-primary" data-testid="business-save">
                             {saving ? "Saving…" : "Save Profile"}
