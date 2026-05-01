@@ -98,6 +98,8 @@ function App() {
                         <Route path="/growth" element={<GrowthStudio />} />
                         <Route path="/content" element={<Content />} />
                         <Route path="/schedule" element={<Schedule />} />
+                        <Route path="/landing-pages" element={<LandingPages />} />
+                        <Route path="/landing-pages/:id" element={<LandingPageEditor />} />
                         <Route path="/ad-campaigns" element={<AdCampaigns />} />
                         <Route path="/competitors" element={<Competitors />} />
                         <Route path="/scraping" element={<Scraping />} />

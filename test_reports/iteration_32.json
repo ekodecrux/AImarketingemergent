@@ -1,0 +1,43 @@
+{
+  "summary": "Iter32 nav-audit + regression PASS. Backend pytest 15/15 PASS in 70s (login, auth/me, logout, leads create + CSV import, campaign create+approve-and-send+duplicate+boost, scraping/start, competitors create+scan, ai/generate-content, quick-plan/generate, assistant/chat via Gemini, autopilot/kickoff). Frontend nav audit: all 19 sidebar links (18 user + 1 admin) clicked successfully and route to their pages without 404 or error boundary. Campaigns, Approvals, Landing Pages, and Inbox all reachable. SMTP send to ekodecrux@gmail.com confirmed via campaign reaching SENT status with sent_count>=1.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Sidebar / NavLink rendering", "issues": ["React hydration warning: '<span> cannot be a child of <option>' from a NavLink/select somewhere in AppLayout. Non-blocking but should be cleaned up — likely a <span> inside a native <select><option> tag in the sidebar/group rendering."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter32_regression.py",
+    "/app/test_reports/pytest/iter32_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Fix React hydration warning '<span> cannot be a child of <option>' surfaced in console (search for <option> tags wrapping <span> children in components rendered by AppLayout — possibly a Select inside a sidebar dropdown).",
+    "(Carry-over from iter26) Optional: server.py is >7800 lines; split into modules.",
+    "(Carry-over) Rename internal _llm_chat helper docs/comments are now consistent — confirmed via assistant/chat returning a non-empty Gemini reply."
+  ],
+  "critical_code_review_comments": [
+    "App.js has duplicate route definitions for /landing-pages and /landing-pages/:id (lines 96-97 AND 101-102). React Router uses the first match so this isn't a runtime bug, but it's dead code that should be deduped.",
+    "AppLayout.jsx 4-group nav (Home/Grow/Engage/Settings) cleanly includes Campaigns under Engage with PaperPlaneTilt icon and dedups Approvals into Engage. All 18 user-facing routes have matching sidebar entries with data-testid='nav-*'.",
+    "All 13 critical POST endpoints from the request return 200/202 with valid payloads. /api/campaigns/{id}/approve-and-send fires real email through SMTP and the campaign correctly transitions PENDING_APPROVAL -> SENT with sent_count>=1.",
+    "/api/assistant/chat (Gemini 3 Flash via _llm_chat after rename) returns non-empty replies — LLM routing intact.",
+    "/api/auth/logout is cookie-only — bearer token in Authorization header still grants access to /api/auth/me afterward. This is documented behavior and matches the request expectation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter32_regression.py"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15)",
+    "frontend": "100% (19/19 nav links route correctly without errors)"
+  },
+  "test_credentials": "admin@zeromark.ai / admin123",
+  "seed_data_creation": "Created TEST_iter32_* leads (1 via API + 3 via CSV import), 1 TEST_iter32 campaign (sent to ekodecrux@gmail.com), 1 duplicate, 1 TEST_iter32_* competitor (stripe.com). All prefixed for cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable regression suite at /app/backend/tests/test_iter32_regression.py covers 15 critical paths in ~70s. For schema reference: /api/campaigns POST requires {type, channel, content, subject, recipient_scope, ...} and returns {campaign: {...}}; /api/competitors POST requires {url, nickname} returns {competitor: {...}}; /api/scraping/start uses {type:'GOOGLE_MAPS_LEADS', location, keyword}; /api/quick-plan/generate uses {monthly_budget, duration_months}; /api/autopilot/kickoff requires {monthly_lead_target, avg_deal_value_usd}. /api/auth/me and /api/leads return nested {user:{}}/{lead:{}} shape. Login redirects admin to /admin — for AppLayout testing navigate to /dashboard manually after login.",
+  "rca of the issue": "n/a — no bugs found in iter32. Iter25 regressions (missing Campaigns nav, missing /landing-pages route, dup /approvals) have been correctly fixed in iter32 per the source files. Hydration warning in console is cosmetic only."
+}

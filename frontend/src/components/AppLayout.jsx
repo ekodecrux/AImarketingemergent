@@ -4,7 +4,7 @@ import {
     SquaresFour, Users, CheckSquare, Buildings,
     ChartBar, Receipt, SignOut, Sparkle, Compass, Plugs, Crosshair,
     Tray, ChartLineUp, UsersThree, Globe, Pulse, Article, CalendarBlank, List, X,
-    Crown, Lightning, House, Rocket, ChatCircleText, Gear,
+    Crown, Lightning, House, Rocket, ChatCircleText, Gear, PaperPlaneTilt,
 } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import NotificationsBell from "@/components/NotificationsBell";
@@ -20,7 +20,6 @@ const baseSections = [
             { to: "/dashboard", label: "Dashboard", icon: SquaresFour, testid: "nav-dashboard" },
             { to: "/analytics", label: "Live Analytics", icon: Pulse, testid: "nav-analytics", badge: "LIVE" },
             { to: "/reports", label: "Reports", icon: ChartBar, testid: "nav-reports" },
-            { to: "/approvals", label: "Approvals", icon: CheckSquare, testid: "nav-approvals" },
         ],
     },
     {
@@ -39,6 +38,8 @@ const baseSections = [
         items: [
             { to: "/leads", label: "Leads (CRM)", icon: Users, testid: "nav-leads" },
             { to: "/scraping", label: "Lead Discovery", icon: Compass, testid: "nav-scraping" },
+            { to: "/campaigns", label: "Campaigns", icon: PaperPlaneTilt, testid: "nav-campaigns" },
+            { to: "/approvals", label: "Approvals", icon: CheckSquare, testid: "nav-approvals" },
             { to: "/inbox", label: "Inbox", icon: Tray, testid: "nav-inbox" },
             { to: "/competitors", label: "Competitor Watch", icon: Crosshair, testid: "nav-competitors" },
             { to: "/ad-campaigns", label: "Ad Campaigns", icon: Lightning, testid: "nav-ad-campaigns", badge: "PAID" },
