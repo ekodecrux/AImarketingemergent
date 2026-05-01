@@ -52,7 +52,14 @@ export default function SmsAuthForm({ mode = "login", onCancel }) {
             toast.success(r.data.is_new ? "Account created — let's get started" : "Welcome back");
             navigate(r.data.is_new ? "/onboarding" : "/dashboard", { replace: true });
         } catch (err) {
-            toast.error(err.response?.data?.detail || "Invalid code");
+            const status = err.response?.status;
+            const detail = err.response?.data?.detail;
+            if (status === 403) {
+                // Platform policy: only pre-registered users can sign in with SMS.
+                toast.error(detail || "No ZeroMark account found for this phone. Please register with email first, then add your phone in Settings.", { duration: 8000 });
+            } else {
+                toast.error(detail || "Invalid code");
+            }
         } finally { setLoading(false); }
     };
 

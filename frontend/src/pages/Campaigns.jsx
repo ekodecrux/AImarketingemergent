@@ -3,7 +3,7 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import { ModalShell } from "@/pages/Leads";
-import { Plus, PaperPlaneTilt, Sparkle, Trash, Copy, EnvelopeSimple, ChatCircle, WhatsappLogo, FacebookLogo, InstagramLogo, LinkedinLogo } from "@phosphor-icons/react";
+import { Plus, PaperPlaneTilt, Sparkle, Trash, Copy, PencilSimple, EnvelopeSimple, ChatCircle, WhatsappLogo, FacebookLogo, InstagramLogo, LinkedinLogo } from "@phosphor-icons/react";
 
 const CHANNELS = [
     { v: "EMAIL", label: "Email", icon: EnvelopeSimple },
@@ -26,6 +26,7 @@ const STATUS_STYLES = {
 export default function Campaigns() {
     const [items, setItems] = useState([]);
     const [showCreate, setShowCreate] = useState(false);
+    const [editing, setEditing] = useState(null); // campaign object being edited
     const [loading, setLoading] = useState(true);
 
     const load = () => {
@@ -109,6 +110,11 @@ export default function Campaigns() {
                                     Sent: {c.sent_count || 0} · Failed: {c.failed_count || 0}
                                 </p>
                                 <div className="flex gap-2">
+                                    {c.status === "PENDING_APPROVAL" && (
+                                        <button onClick={() => setEditing(c)} className="zm-btn-primary flex-1 text-xs py-2" data-testid={`edit-campaign-${c.id}`}>
+                                            <PencilSimple size={12} weight="bold" /> Edit
+                                        </button>
+                                    )}
                                     {(c.status === "APPROVED" || c.status === "MODIFIED") && (
                                         <button onClick={() => sendCampaign(c.id)} className="zm-btn-primary flex-1 text-xs py-2" data-testid={`send-campaign-${c.id}`}>
                                             <PaperPlaneTilt size={12} weight="bold" /> Send Now
@@ -133,7 +139,159 @@ export default function Campaigns() {
             </div>
 
             {showCreate && <CreateCampaignModal onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />}
+            {editing && <EditCampaignModal campaign={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
         </div>
+    );
+}
+
+function EditCampaignModal({ campaign, onClose, onSaved }) {
+    const [form, setForm] = useState({
+        name: campaign.name || "",
+        channel: campaign.channel || "EMAIL",
+        subject: campaign.subject || "",
+        content: campaign.content || "",
+        recipient_scope: campaign.recipient_scope || "all_leads",
+        recipient_statuses: campaign.recipient_statuses || [],
+        recipient_lead_ids: campaign.recipient_lead_ids || [],
+        extra_recipients_raw: (campaign.extra_recipients || []).join(", "),
+    });
+    const [saving, setSaving] = useState(false);
+    const [leadsPreview, setLeadsPreview] = useState({ total: 0, leads: [] });
+
+    useEffect(() => {
+        api.get("/leads", { params: { limit: 100, page: 1 } })
+            .then((r) => setLeadsPreview({ total: r.data?.pagination?.total || 0, leads: r.data?.leads || [] }))
+            .catch(() => setLeadsPreview({ total: 0, leads: [] }));
+    }, []);
+
+    const toggleStatus = (s) => setForm((f) => ({
+        ...f,
+        recipient_statuses: f.recipient_statuses.includes(s) ? f.recipient_statuses.filter((x) => x !== s) : [...f.recipient_statuses, s],
+    }));
+    const toggleLead = (id) => setForm((f) => ({
+        ...f,
+        recipient_lead_ids: f.recipient_lead_ids.includes(id) ? f.recipient_lead_ids.filter((x) => x !== id) : [...f.recipient_lead_ids, id],
+    }));
+
+    const submit = async (e) => {
+        e.preventDefault();
+        setSaving(true);
+        try {
+            const extras = (form.extra_recipients_raw || "")
+                .split(/[,\n\s;]+/).map((s) => s.trim()).filter(Boolean);
+            await api.patch(`/campaigns/${campaign.id}`, {
+                name: form.name,
+                channel: form.channel,
+                subject: form.subject,
+                content: form.content,
+                recipient_scope: form.recipient_scope,
+                recipient_statuses: form.recipient_scope === "by_status" ? form.recipient_statuses : null,
+                recipient_lead_ids: form.recipient_scope === "selected" ? form.recipient_lead_ids : null,
+                extra_recipients: extras.length ? extras : null,
+            });
+            toast.success("Campaign updated");
+            onSaved();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Update failed");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const extraPlaceholder = form.channel === "EMAIL" ? "extra@example.com, …" : "+911234567890, …";
+
+    return (
+        <ModalShell title="Edit campaign" eyebrow="// Pending approval" onClose={onClose} size="lg">
+            <form onSubmit={submit} className="space-y-5" data-testid="edit-campaign-form">
+                <div>
+                    <label className="zm-label">Campaign Name</label>
+                    <input required className="zm-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="edit-campaign-name" />
+                </div>
+                <div>
+                    <label className="zm-label">Channel</label>
+                    <div className="grid grid-cols-3 gap-2">
+                        {CHANNELS.map((c) => (
+                            <button key={c.v} type="button" onClick={() => setForm({ ...form, channel: c.v })}
+                                data-testid={`edit-channel-${c.v}`}
+                                className={`flex flex-col items-center gap-1 px-2 py-3 border text-xs uppercase tracking-[0.1em] font-bold ${
+                                    form.channel === c.v ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#71717A] border-[#E2E8F0] hover:border-[#0F172A]"
+                                }`}>
+                                <c.icon size={18} weight="bold" />
+                                {c.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                <div>
+                    <label className="zm-label">Recipients</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                        {[
+                            { v: "all_leads", label: "All leads" },
+                            { v: "by_status", label: "By status" },
+                            { v: "selected", label: "Pick leads" },
+                            { v: "manual", label: "Manual entry" },
+                        ].map((o) => (
+                            <button key={o.v} type="button" onClick={() => setForm({ ...form, recipient_scope: o.v })}
+                                className={`px-2 py-2 text-xs uppercase tracking-[0.1em] font-bold border ${
+                                    form.recipient_scope === o.v ? "bg-[#2563EB] text-white border-[#2563EB]" : "bg-white text-[#71717A] border-[#E2E8F0] hover:border-[#2563EB]"
+                                }`}>{o.label}</button>
+                        ))}
+                    </div>
+                    {form.recipient_scope === "all_leads" && (
+                        <p className="text-xs text-[#64748B] bg-[#F8FAFC] p-2 border-l-2 border-l-[#2563EB]">
+                            Will send to <span className="font-bold text-[#0F172A]">{leadsPreview.total}</span> leads.
+                        </p>
+                    )}
+                    {form.recipient_scope === "by_status" && (
+                        <div className="flex flex-wrap gap-2">
+                            {["NEW", "CONTACTED", "INTERESTED", "CONVERTED", "NOT_INTERESTED"].map((s) => (
+                                <label key={s} className="text-xs inline-flex items-center gap-1.5 px-2 py-1 border border-[#E2E8F0] rounded-md cursor-pointer hover:border-[#2563EB]">
+                                    <input type="checkbox" checked={form.recipient_statuses.includes(s)} onChange={() => toggleStatus(s)} />
+                                    {s}
+                                </label>
+                            ))}
+                        </div>
+                    )}
+                    {form.recipient_scope === "selected" && (
+                        <div className="max-h-48 overflow-y-auto border border-[#E2E8F0] rounded-md divide-y divide-[#E2E8F0]">
+                            {leadsPreview.leads.map((l) => (
+                                <label key={l.id} className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-[#F8FAFC] cursor-pointer">
+                                    <input type="checkbox" checked={form.recipient_lead_ids.includes(l.id)} onChange={() => toggleLead(l.id)} />
+                                    <span className="font-semibold flex-1 truncate">{l.name}</span>
+                                    <span className="text-[#64748B] truncate">{l.email || l.phone || "—"}</span>
+                                </label>
+                            ))}
+                        </div>
+                    )}
+                    {(form.recipient_scope === "manual" || form.recipient_scope === "all_leads") && (
+                        <div className="mt-3">
+                            <label className="zm-label text-[11px]">
+                                {form.recipient_scope === "manual" ? "Recipients" : "Extra recipients (optional)"}
+                            </label>
+                            <textarea rows={2} className="zm-input text-xs" value={form.extra_recipients_raw}
+                                onChange={(e) => setForm({ ...form, extra_recipients_raw: e.target.value })}
+                                placeholder={extraPlaceholder} data-testid="edit-extra-recipients" />
+                        </div>
+                    )}
+                </div>
+                {form.channel === "EMAIL" && (
+                    <div>
+                        <label className="zm-label">Subject</label>
+                        <input className="zm-input" value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} data-testid="edit-campaign-subject" />
+                    </div>
+                )}
+                <div>
+                    <label className="zm-label">Content</label>
+                    <textarea required rows={8} className="zm-input font-mono text-xs" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} data-testid="edit-campaign-content" />
+                </div>
+                <div className="flex gap-3">
+                    <button type="submit" disabled={saving} className="zm-btn-primary flex-1" data-testid="edit-campaign-submit">
+                        {saving ? "Saving…" : "Save changes"}
+                    </button>
+                    <button type="button" onClick={onClose} className="zm-btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </ModalShell>
     );
 }
 

@@ -1,5 +1,13 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 27 (May 2026) — P2 cleanup: Campaign Edit, Auth 403 UX, LLM rename
+- **`PATCH /api/campaigns/{cid}`** — edit in-place while PENDING_APPROVAL (name, channel, subject, content, all recipient targeting fields). Derives `type` from `channel` automatically. Blocks edits once APPROVED/SENT/FAILED with a 400 ("Duplicate it to make changes."). Mirrors content/subject/channel into the linked `db.approvals` record.
+- **Frontend Edit modal** on `/campaigns` — new `EditCampaignModal` opens with full pre-filled state (channel, scope, statuses, lead IDs, extra_recipients CSV). `data-testid="edit-campaign-<id>"` appears only for PENDING_APPROVAL cards. Full recipients picker identical to Create.
+- **Friendly 403 toast/copy** — `AuthCallback` now detects `err.response.status === 403` and surfaces "No ZeroMark account found — register first, then sign in with Google" with a prominent "Register instead" CTA. `SmsAuthForm` does the same for SMS 403 via an 8-second toast.
+- **`_groq_chat` → `_llm_chat`** — cosmetic rename across server.py (replace_all); function name now accurately reflects the Gemini routing done in iter25.
+
+Test verifications: PATCH PENDING_APPROVAL → 200 with merged state; PATCH SENT → 400 "Cannot edit"; quick-plan generate still 200 after rename; UI shows 7 edit buttons on `/campaigns`, modal opens with pre-filled name verified via Playwright.
+
 ## Iter 26 (May 2026) — 8-issue sweep: scrape + bulk upload + competitor scan + campaign recipients/duplicate
 User bug report (8 items): (1) Quick Plan "AI busy", (2) menu not frozen, (3) Lead Scrape broken, (4) no bulk upload, (5) can't add lead, (6) competitor scan broken, (7) no receiver selector on campaigns, (8) no manage/rerun campaigns.
 

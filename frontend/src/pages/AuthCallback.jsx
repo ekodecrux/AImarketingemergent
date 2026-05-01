@@ -35,7 +35,14 @@ export default function AuthCallback() {
                 navigate(r.data.is_new ? "/onboarding" : "/dashboard", { replace: true });
             })
             .catch((err) => {
-                setError(err.response?.data?.detail || "Authentication failed");
+                const status = err.response?.status;
+                const detail = err.response?.data?.detail;
+                // 403 from our stricter Google sign-in policy — friendlier copy
+                if (status === 403) {
+                    setError(detail || "No ZeroMark account found for this Google email. Please register first, then sign in with Google using the same email.");
+                } else {
+                    setError(detail || "Authentication failed");
+                }
             });
     }, [location.hash, navigate, setSession]);
 

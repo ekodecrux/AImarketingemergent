@@ -119,10 +119,10 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
-def _groq_chat(prompt: str, system: str = "Output strict JSON only.", json_mode: bool = True,
+def _llm_chat(prompt: str, system: str = "Output strict JSON only.", json_mode: bool = True,
                max_tokens: int = 2000, temperature: float = 0.5) -> str:
     """Unified LLM completion via Emergent LLM key (Gemini 3 Flash by default).
-    Kept the legacy `_groq_chat` name to avoid rewriting every callsite — all calls
+    Kept the legacy `_llm_chat` name to avoid rewriting every callsite — all calls
     now route through Gemini. Raises 429 on rate limits, 502 on bad output."""
     sys_prompt = system
     if json_mode:
@@ -967,6 +967,56 @@ async def get_campaign(cid: str, user=Depends(get_current_user)):
     return {"campaign": c}
 
 
+class CampaignPatchIn(BaseModel):
+    name: Optional[str] = None
+    channel: Optional[str] = None
+    content: Optional[str] = None
+    subject: Optional[str] = None
+    recipient_scope: Optional[str] = None
+    recipient_statuses: Optional[List[str]] = None
+    recipient_lead_ids: Optional[List[str]] = None
+    extra_recipients: Optional[List[str]] = None
+
+
+@api.patch("/campaigns/{cid}")
+async def edit_campaign(cid: str, payload: CampaignPatchIn, user=Depends(get_current_user)):
+    """Edit a campaign in-place — ONLY allowed for PENDING_APPROVAL state.
+    Once a campaign is APPROVED, REJECTED, SENT, or SENDING, it becomes immutable and
+    the user must use /duplicate to create a new version."""
+    c = await db.campaigns.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if c.get("status") != "PENDING_APPROVAL":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot edit — campaign is {c.get('status', 'UNKNOWN')}. Duplicate it to make changes.",
+        )
+    patch = payload.model_dump(exclude_none=True)
+    if not patch:
+        return {"campaign": c}
+    # Derive type from channel if channel changed
+    if "channel" in patch:
+        type_map = {
+            "EMAIL": "EMAIL_BLAST", "SMS": "SMS_BLAST", "WHATSAPP": "WHATSAPP",
+            "FACEBOOK": "SOCIAL_POST", "INSTAGRAM": "SOCIAL_POST", "LINKEDIN": "SOCIAL_POST",
+        }
+        patch["type"] = type_map.get(patch["channel"], c.get("type", "EMAIL_BLAST"))
+    patch["updated_at"] = now_utc().isoformat()
+    await db.campaigns.update_one({"id": cid, "user_id": ws(user)}, {"$set": patch})
+    # Mirror content/subject/channel into the pending approval record (if any)
+    approval_patch: Dict[str, Any] = {}
+    for k in ("content", "subject", "channel"):
+        if k in patch:
+            approval_patch[k] = patch[k]
+    if approval_patch:
+        await db.approvals.update_one(
+            {"campaign_id": cid, "status": "PENDING"},
+            {"$set": approval_patch},
+        )
+    updated = await db.campaigns.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
+    return {"campaign": updated}
+
+
 @api.delete("/campaigns/{cid}")
 async def delete_campaign(cid: str, user=Depends(get_current_user)):
     await db.campaigns.delete_one({"id": cid, "user_id": ws(user)})
@@ -1216,7 +1266,7 @@ async def ai_generate_content(payload: AIGenerateIn, user=Depends(get_current_us
 
     try:
         content = await asyncio.get_event_loop().run_in_executor(
-            None, _groq_chat, prompt,
+            None, _llm_chat, prompt,
             "You are an expert marketing copywriter. Write compelling, concise content that drives conversions.",
             False, 800, 0.8,
         )
@@ -1618,7 +1668,7 @@ async def _ai_generate_sample_leads(payload: ScrapeIn, user_id: str) -> List[Dic
         )
 
     def _gen():
-        return _groq_chat(prompt, "You are a data generator. Output strict JSON only with no markdown.", True, 1500, 0.7)
+        return _llm_chat(prompt, "You are a data generator. Output strict JSON only with no markdown.", True, 1500, 0.7)
 
     raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
     import json, re
@@ -1763,7 +1813,7 @@ def _score_leads_sync(business_ctx: str, leads: List[Dict[str, Any]]) -> List[Di
         f"reason must be ≤140 chars, plain English.\n\n"
         f"LEADS: {payload}"
     )
-    raw = _groq_chat(prompt, "You are a precise B2B sales analyst. Output strict JSON only.", True, 2000, 0.3)
+    raw = _llm_chat(prompt, "You are a precise B2B sales analyst. Output strict JSON only.", True, 2000, 0.3)
     import json
     try:
         data = json.loads(raw)
@@ -1873,7 +1923,7 @@ async def ai_draft_reply(lead_id: str, payload: AIReplyIn, user=Depends(get_curr
     )
 
     def _gen():
-        return _groq_chat(prompt, "You are a senior B2B sales copywriter.", False, 400, 0.6)
+        return _llm_chat(prompt, "You are a senior B2B sales copywriter.", False, 400, 0.6)
 
     reply = await asyncio.get_event_loop().run_in_executor(None, _gen)
     return {"reply": reply.strip()}
@@ -2375,7 +2425,7 @@ async def generate_briefing(user=Depends(get_current_user)):
     )
 
     def _gen():
-        return _groq_chat(prompt, "You are a no-nonsense growth advisor. Output strict JSON.", True, 800, 0.5)
+        return _llm_chat(prompt, "You are a no-nonsense growth advisor. Output strict JSON.", True, 800, 0.5)
 
     raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
     import json
@@ -2528,7 +2578,7 @@ async def auto_fill_business(payload: AutoFillIn, user=Depends(get_current_user)
     )
 
     def _gen():
-        return _groq_chat(prompt, "You are a B2B research analyst. Output strict JSON only.", True, 1200, 0.3)
+        return _llm_chat(prompt, "You are a B2B research analyst. Output strict JSON only.", True, 1200, 0.3)
 
     raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
     import json
@@ -2580,7 +2630,7 @@ async def market_analyze(payload: MarketAnalysisIn, user=Depends(get_current_use
     )
 
     def _gen():
-        return _groq_chat(prompt, "You are a strategic consultant. Output strict JSON only.", True, 2500, 0.5)
+        return _llm_chat(prompt, "You are a strategic consultant. Output strict JSON only.", True, 2500, 0.5)
 
     raw = await asyncio.get_event_loop().run_in_executor(None, _gen)
     import json
@@ -5284,7 +5334,7 @@ async def analytics_revenue(months: int = 6, user=Depends(get_current_user)):
 # Helper: Groq JSON-mode call returning either a single object or an array under given key
 async def _groq_json(prompt: str, key: Optional[str] = None, max_tokens: int = 2000) -> Any:
     raw = await asyncio.get_event_loop().run_in_executor(
-        None, _groq_chat, prompt,
+        None, _llm_chat, prompt,
         "You return STRICT JSON ONLY. No preamble, no commentary, no apologies, no AI disclaimers, no markdown code fences. Begin with { and end with }.",
         True, max_tokens, 0.5,
     )
@@ -6135,7 +6185,7 @@ async def _ai_corrective_action(payload: Dict[str, Any], business: Dict[str, Any
     )
     try:
         text = await asyncio.get_event_loop().run_in_executor(
-            None, _groq_chat, prompt, "You are a senior performance-marketing operator. Be brutally concise.", False, 220, 0.4,
+            None, _llm_chat, prompt, "You are a senior performance-marketing operator. Be brutally concise.", False, 220, 0.4,
         )
         return (text or "").strip().strip('"').strip()[:400]
     except Exception:
@@ -7659,7 +7709,7 @@ async def _send_daily_briefings():
                 f"Output STRICT JSON: {{headline, wins (3), risks (3), actions (3)}}."
             )
             raw = await asyncio.get_event_loop().run_in_executor(
-                None, _groq_chat, prompt, "You are a no-nonsense growth advisor. Output strict JSON.", True, 800, 0.5,
+                None, _llm_chat, prompt, "You are a no-nonsense growth advisor. Output strict JSON.", True, 800, 0.5,
             )
             import json
             briefing = json.loads(raw)
