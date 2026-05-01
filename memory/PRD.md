@@ -1,5 +1,21 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 23 (May 2026) — Onboarding Wizard (4-screen first-login walkthrough)
+User: "Onboarding wizard: 4-screen first-login walkthrough (Profile → Connect 1 channel → Quick Plan → First post) — biggest activation lever."
+
+**Backend**
+- `GET /api/onboarding/wizard-state` — returns `{show_wizard, dismissed, completed, step_done:{profile, channel, plan, first_post}, next_step, completed_count, total_steps}`. Auto-detects completion from existing data (business_profiles, integrations, growth_plans, content_schedules), so the wizard intelligently auto-jumps past already-done steps.
+- `POST /api/onboarding/wizard-dismiss` and `POST /api/onboarding/wizard-complete` — persist state on user doc; survive across logins, prevent re-show.
+
+**Frontend**
+- New `OnboardingWizard` modal mounted in `AppLayout` — auto-shows on `/dashboard` for any user where `show_wizard=true`. Dark hero, segmented progress bar (green=done, white=current, gray=todo), 4 step cards with icons + "est time" labels.
+- **Step 1 — Profile**: name + industry + target audience + website. Saves to `/business`, auto-triggers background plan regeneration (Iter 19 hook).
+- **Step 2 — Channel**: visual brand chips (LinkedIn / X / Facebook), explainer "Awaiting platform setup" warning, deep-link to `/connect`. Skippable.
+- **Step 3 — Quick Plan**: budget + duration → calls `/quick-plan/generate` → renders guaranteed-leads summary inline.
+- **Step 4 — First post**: generates topical content via `/content/generate` (uses industry-aware topic), schedules 30 min from now via `/schedule` on every healthy channel (falls back to blog if none connected).
+- Sticky footer: Skip onboarding (left) · Back / Continue / Finish (right). X close in header.
+- Test report: `/app/test_reports/iteration_14.json` — 9/9 backend pytest pass, full frontend regression clean, multi-tenant isolation verified.
+
 ## Iter 22 (May 2026) — From demo to real, end-to-end (E + B sprint)
 User asked to ship dashboard widget first (E), then Phase 2+3+4 sprint (B). Tested 25/25 backend + full frontend regression.
 
