@@ -7931,6 +7931,13 @@ async def on_startup():
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@zeromark.ai")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
+    app_env = os.environ.get("APP_ENV", "").lower()
+    # Production safety: loud warning if default admin password is being used on a non-dev env
+    if admin_pw == "admin123" and app_env not in ("dev", "development", ""):
+        logger.warning(
+            "SECURITY WARNING: Seeding admin user with DEFAULT password 'admin123' in %s environment. "
+            "Set ADMIN_PASSWORD env var before deploying to production.", app_env or "unknown",
+        )
     existing = await db.users.find_one({"email": admin_email})
     if not existing:
         uid = str(uuid.uuid4())
