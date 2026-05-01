@@ -3,7 +3,7 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import { ModalShell } from "@/pages/Leads";
-import { Plus, PaperPlaneTilt, Sparkle, Trash, Copy, PencilSimple, EnvelopeSimple, ChatCircle, WhatsappLogo, FacebookLogo, InstagramLogo, LinkedinLogo } from "@phosphor-icons/react";
+import { Plus, PaperPlaneTilt, Sparkle, Trash, Copy, PencilSimple, Rocket, EnvelopeSimple, ChatCircle, WhatsappLogo, FacebookLogo, InstagramLogo, LinkedinLogo } from "@phosphor-icons/react";
 
 const CHANNELS = [
     { v: "EMAIL", label: "Email", icon: EnvelopeSimple },
@@ -62,6 +62,31 @@ export default function Campaigns() {
         await api.delete(`/campaigns/${id}`);
         toast.success("Campaign deleted");
         load();
+    };
+
+    const boostCampaign = async (c) => {
+        const ok = window.confirm(
+            `Boost "${c.name}" into a Meta Ad?\n\n` +
+            `• Creates a PAUSED draft — nothing charged until you resume it\n` +
+            `• 7-day burst @ ₹500/day default (editable from Ad Campaigns)\n` +
+            `• Reuses your ${c.channel} copy and subject\n\n` +
+            `Continue?`
+        );
+        if (!ok) return;
+        const t = toast.loading("Creating Meta Ad draft…");
+        try {
+            const r = await api.post(`/campaigns/${c.id}/boost`, { daily_budget: 500, duration_days: 7 });
+            const isMock = r.data?.ad_campaign?.is_mock;
+            toast.success(
+                isMock
+                  ? "Boost draft saved (Meta Ads in mock mode — bind real token to go live)"
+                  : "Boost draft created — review & resume in Ad Campaigns",
+                { id: t, duration: 6000, action: { label: "Open", onClick: () => (window.location.href = "/ad-campaigns") } },
+            );
+            load();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Boost failed", { id: t });
+        }
     };
 
     return (
@@ -124,6 +149,17 @@ export default function Campaigns() {
                                         <button onClick={() => duplicateCampaign(c.id)} className="zm-btn-primary flex-1 text-xs py-2" data-testid={`rerun-campaign-${c.id}`}>
                                             <Copy size={12} weight="bold" /> Rerun
                                         </button>
+                                    )}
+                                    {/* Boost: only for SENT email/social; hidden once already boosted */}
+                                    {c.status === "SENT" && !c.boosted_ad_id && ["EMAIL", "FACEBOOK", "INSTAGRAM", "LINKEDIN"].includes(c.channel) && (
+                                        <button onClick={() => boostCampaign(c)} className="zm-btn-secondary text-xs py-2 border-[#2563EB] text-[#2563EB] hover:bg-[#2563EB] hover:text-white" title="Boost to Meta Ads" data-testid={`boost-campaign-${c.id}`}>
+                                            <Rocket size={12} weight="bold" /> Boost
+                                        </button>
+                                    )}
+                                    {c.boosted_ad_id && (
+                                        <span className="text-[9px] uppercase tracking-[0.15em] font-bold text-[#2563EB] bg-[#DBEAFE] px-2 py-2 rounded-md flex items-center gap-1" title={`Boosted on ${new Date(c.boosted_at).toLocaleDateString()}`} data-testid={`boosted-badge-${c.id}`}>
+                                            <Rocket size={10} weight="fill" /> Boosted
+                                        </span>
                                     )}
                                     <button onClick={() => duplicateCampaign(c.id)} className="zm-btn-secondary text-xs py-2" title="Duplicate" data-testid={`duplicate-campaign-${c.id}`}>
                                         <Copy size={12} weight="bold" />

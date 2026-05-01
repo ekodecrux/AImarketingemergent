@@ -1,5 +1,20 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 30 (May 2026) — "Boost this campaign" — one-click organic→paid amplification
+User requested: convert winning SENT email/social campaigns into Meta Ad drafts automatically.
+
+**Backend**
+- **New `POST /api/campaigns/{cid}/boost`** — takes a SENT/APPROVED/MODIFIED campaign and creates a PAUSED Meta Ads Campaign + AdSet. Reuses the campaign's `subject` (→ ad headline) and `content` (→ ad copy) so no re-authoring. Objective auto-chosen: `OUTCOME_ENGAGEMENT` for social (FB/IG/LinkedIn), `OUTCOME_TRAFFIC` for email. Defaults: ₹500/day × 7 days (editable). Geo-targets the user's country_code. Fails fast if Meta Ad Account not connected ("bind your account in Connect Channels → Meta Ads"). Rejects non-sent/non-approved campaigns with 400.
+- **Persistence** — writes an `ad_campaigns` row with `source_campaign_id`, `source_campaign_name`, `ad_copy`, `ad_headline` for audit; also patches the source campaign with `boosted_ad_id` + `boosted_at` for UI badge.
+- **Notifications + activity log** — in-app notification + `campaign.boosted` activity event.
+
+**Frontend (`Campaigns.jsx`)**
+- **Boost button** (Rocket icon, blue outline) appears ONLY when: `status === SENT` AND channel ∈ {EMAIL, FACEBOOK, INSTAGRAM, LINKEDIN} AND not already boosted. One-click with confirm dialog summarizing defaults.
+- **Boosted badge** — once boosted, the Boost button is replaced by a "⚡ BOOSTED" pill showing the boost date. `data-testid="boosted-badge-<id>"`.
+- **Toast with deep-link** — success toast offers "Open" action to `/ad-campaigns`.
+
+Testing verified via curl: SENT → 200 with paused Meta Ad (mock mode since admin has placeholder token), PENDING_APPROVAL → 400, source campaign shows `boosted_ad_id`. Playwright confirms 2 boost buttons + 1 boosted badge in UI.
+
 ## Iter 29 (May 2026) — 4 user-reported auth/onboarding bugs
 User: "1. No Sign-Up option. 2. SMS OTP not working for unregistered numbers. 3. Admin logout doesn't work. 4. Google login onboarding 'What's your goal' doesn't complete."
 

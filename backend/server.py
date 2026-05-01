@@ -6839,6 +6839,138 @@ async def list_ad_campaigns(user=Depends(get_current_user)):
     return {"campaigns": items}
 
 
+class BoostIn(BaseModel):
+    daily_budget: Optional[float] = None  # defaults to 5% of Meta Ad Account's connected budget or 500 INR
+    duration_days: Optional[int] = 7      # short burst default
+
+
+@api.post("/campaigns/{cid}/boost")
+async def boost_campaign(cid: str, payload: BoostIn, user=Depends(get_current_user)):
+    """Turns a SENT email/social campaign into a paused Meta Ad draft.
+    Reuses the approved creative (subject → ad name, content → ad copy) so users
+    can amplify winning organic posts into paid without re-authoring anything.
+    Always returns the draft in PAUSED state so the user reviews before going live."""
+    src = await db.campaigns.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if src.get("status") not in ("SENT", "APPROVED", "MODIFIED"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only sent or approved campaigns can be boosted (this one is {src.get('status')}).",
+        )
+
+    # Find the user's connected Meta Ad Account
+    acct = await db.ad_accounts.find_one({"user_id": ws(user), "platform": "meta"}, {"_id": 0})
+    if not acct:
+        raise HTTPException(
+            status_code=400,
+            detail="Connect a Meta Ad Account first — go to Connect Channels → Meta Ads to bind your account.",
+        )
+
+    token = _dec(acct.get("access_token")) if acct.get("access_token") else ""
+    duration_days = max(1, min(30, payload.duration_days or 7))
+
+    # Budget: if user didn't pick, default to 500 INR/day (safe starter)
+    daily_budget = float(payload.daily_budget or 500.0)
+    monthly_budget = daily_budget * 30.0
+
+    content = (src.get("content") or "").strip()[:5000]
+    name_seed = src.get("name") or src.get("subject") or "Boosted Post"
+    ad_name = f"Boost · {name_seed[:60]}"
+
+    try:
+        # Step 1: Campaign (objective: OUTCOME_TRAFFIC for email-copy, OUTCOME_ENGAGEMENT for social)
+        objective = "OUTCOME_ENGAGEMENT" if src.get("channel") in ("FACEBOOK", "INSTAGRAM", "LINKEDIN") else "OUTCOME_TRAFFIC"
+        camp_resp = _meta_post(
+            f"/{acct['ad_account_id']}/campaigns", token,
+            {
+                "name": ad_name,
+                "objective": objective,
+                "status": "PAUSED",
+                "special_ad_categories": [],
+                "buying_type": "AUCTION",
+            },
+        )
+        ext_campaign_id = camp_resp.get("id")
+
+        # Step 2: AdSet
+        locale = await _user_locale(user)
+        adset_resp = _meta_post(
+            f"/{acct['ad_account_id']}/adsets", token,
+            {
+                "name": f"{ad_name} · AdSet",
+                "campaign_id": ext_campaign_id,
+                "daily_budget": int(daily_budget * 100),
+                "billing_event": "IMPRESSIONS",
+                "optimization_goal": "POST_ENGAGEMENT" if objective == "OUTCOME_ENGAGEMENT" else "LINK_CLICKS",
+                "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                "start_time": now_utc().isoformat(),
+                "end_time": (now_utc() + timedelta(days=duration_days)).isoformat(),
+                "targeting": {"geo_locations": {"countries": [(locale.get("country_code") or "IN")[:2]]}},
+                "status": "PAUSED",
+            },
+        )
+        ext_adset_id = adset_resp.get("id")
+
+        # Persist as ad_campaigns record so it shows up in /ad-campaigns alongside plan-driven ads
+        doc = {
+            "id": str(uuid.uuid4()),
+            "user_id": ws(user),
+            "platform": "meta",
+            "ad_account_id": acct["ad_account_id"],
+            "channel_name": f"Boost: {src.get('channel', 'EMAIL')}",
+            "ext_campaign_id": ext_campaign_id,
+            "ext_adset_id": ext_adset_id,
+            "objective": objective,
+            "status": "PAUSED",
+            "daily_budget": daily_budget,
+            "monthly_budget": monthly_budget,
+            "spend_cap": daily_budget * duration_days,
+            "currency": locale.get("currency", "INR"),
+            "auto_pause_at_cap": True,
+            "is_mock": bool(camp_resp.get("_mock") or adset_resp.get("_mock")),
+            "spend_actual": 0.0,
+            "impressions": 0,
+            "clicks": 0,
+            "leads": 0,
+            "start_date": now_utc().date().isoformat(),
+            "end_date": (now_utc() + timedelta(days=duration_days)).date().isoformat(),
+            "created_at": now_utc().isoformat(),
+            "last_synced_at": None,
+            # Boost provenance
+            "source_campaign_id": cid,
+            "source_campaign_name": src.get("name"),
+            "ad_copy": content,
+            "ad_headline": src.get("subject") or name_seed[:40],
+        }
+        await db.ad_campaigns.insert_one(dict(doc))
+        doc.pop("_id", None)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Boost failed")
+        raise HTTPException(status_code=502, detail=f"Could not create Meta Ad draft: {str(e)[:150]}")
+
+    # Tag the source campaign so UI can show "Boosted" badge
+    await db.campaigns.update_one(
+        {"id": cid, "user_id": ws(user)},
+        {"$set": {"boosted_ad_id": doc["id"], "boosted_at": now_utc().isoformat()}},
+    )
+    await db.notifications.insert_one({
+        "id": str(uuid.uuid4()), "user_id": ws(user),
+        "title": f"'{src.get('name')}' boosted to Meta Ads",
+        "body": f"Draft created in PAUSED state with {locale.get('symbol','₹')}{daily_budget:.0f}/day for {duration_days} days. Review in Ad Campaigns → resume to go live.",
+        "severity": "info", "read": False, "created_at": now_utc().isoformat(),
+    })
+    try:
+        await _log_activity(user["id"], "campaign.boosted",
+                            f"Boosted '{src.get('name')}' into Meta Ad draft ({daily_budget}/day for {duration_days}d)",
+                            details={"source_campaign_id": cid, "ad_id": doc["id"]})
+    except Exception:
+        pass
+    return {"success": True, "ad_campaign": doc, "source_campaign_id": cid}
+
+
 @api.post("/ad-platform/campaigns/{cid}/pause")
 async def pause_ad_campaign(cid: str, user=Depends(get_current_user)):
     return await _set_campaign_status(cid, "PAUSED", user)
