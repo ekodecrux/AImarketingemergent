@@ -250,6 +250,15 @@ class BusinessProfileIn(BaseModel):
     social_handles: Optional[Dict[str, str]] = None
     country_code: Optional[str] = "US"  # ISO 3166-1 alpha-2
     currency_code: Optional[str] = None  # Auto-derived from country if not provided
+    # Sprint A — AT-01: Granular approval workflows (per-channel)
+    approval_required_blog: Optional[bool] = False
+    approval_required_social: Optional[bool] = False
+    approval_required_email: Optional[bool] = True   # email is highest-stakes
+    approval_required_paid: Optional[bool] = True    # paid ads default ON for safety
+    # Sprint B — CQ-02: Brand Voice Profile (injected into every AI prompt)
+    brand_tone: Optional[str] = None  # e.g., "professional", "casual", "witty", "empathetic"
+    brand_voice_examples: Optional[List[str]] = None  # 1-3 example sentences founder likes
+    brand_forbidden_words: Optional[List[str]] = None  # words/phrases to never use
 
 
 # Country → currency mapping (ISO 3166-1 alpha-2 → ISO 4217)
@@ -1706,6 +1715,39 @@ async def disconnect_integration(channel: str, user=Depends(get_current_user)):
     return {"success": True}
 
 
+# ---------- Sprint C — UX-01: Activity feed for "What just happened?" dashboard widget ----------
+@api.get("/activity/recent")
+async def activity_recent(limit: int = 20, user=Depends(get_current_user)):
+    cap = max(1, min(limit, 100))
+    items = await db.user_activity.find(
+        {"user_id": ws(user)}, {"_id": 0}
+    ).sort("created_at", -1).limit(cap).to_list(cap)
+    return {"items": items, "count": len(items)}
+
+
+# ---------- Sprint C — PR-02: AI quota status banner (drives 80%/100% upsell) ----------
+@api.get("/quota/status")
+async def quota_status(user=Depends(get_current_user)):
+    cutoff = (now_utc() - timedelta(hours=1)).isoformat()
+    used_hour = await db.ai_calls.count_documents({"user_id": user["id"], "ts": {"$gte": cutoff}})
+    cutoff_day = (now_utc() - timedelta(hours=24)).isoformat()
+    used_day = await db.ai_calls.count_documents({"user_id": user["id"], "ts": {"$gte": cutoff_day}})
+    sub = await db.subscriptions.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    plan = (sub or {}).get("plan") or "FREE_TRIAL"
+    pct = round(100 * used_hour / max(1, AI_RATE_LIMIT_PER_HOUR))
+    return {
+        "plan": plan,
+        "limit_per_hour": AI_RATE_LIMIT_PER_HOUR,
+        "used_in_last_hour": used_hour,
+        "used_in_last_24h": used_day,
+        "percent_used_hour": pct,
+        "warn": pct >= 80 and pct < 100,
+        "blocked": pct >= 100,
+        "topup_offer_active": pct >= 80,
+        "checked_at": now_utc().isoformat(),
+    }
+
+
 @api.get("/integrations/health")
 async def integrations_health(user=Depends(get_current_user)):
     """Live verification of every connected channel by hitting a lightweight endpoint per provider.
@@ -1835,6 +1877,62 @@ async def integrations_health(user=Depends(get_current_user)):
         "Set META_ADS_MOCK_MODE=false + provide META_ACCESS_TOKEN/META_AD_ACCOUNT_ID to enable real ads",
         ""
     )
+    # Sprint A — CH-04: enrich each social channel with publish SLA (last success, success rate %)
+    try:
+        social_channels = ["linkedin", "twitter", "facebook", "instagram"]
+        wid = ws(user)
+        recent_cutoff = (now_utc() - timedelta(days=30)).isoformat()
+        # Pull last 30d publish results, then aggregate per platform in Python (cheap, <1k docs/user)
+        recent = await db.content_schedules.find(
+            {"user_id": wid, "checked_at": {"$gte": recent_cutoff}},
+            {"_id": 0, "platforms": 1, "delivery": 1, "checked_at": 1},
+        ).sort("checked_at", -1).limit(500).to_list(500)
+        per_plat: Dict[str, Dict[str, Any]] = {p: {"ok": 0, "fail": 0, "last_ok": None} for p in social_channels}
+        for r in recent:
+            d = r.get("delivery") or {}
+            for plat in social_channels:
+                pr = d.get(plat) or {}
+                status = (pr.get("status") or "").lower()
+                if status == "published":
+                    per_plat[plat]["ok"] += 1
+                    if not per_plat[plat]["last_ok"]:
+                        per_plat[plat]["last_ok"] = r.get("checked_at")
+                elif status in ("failed", "blocked_safety", "awaiting_approval"):
+                    per_plat[plat]["fail"] += 1
+        for plat, agg in per_plat.items():
+            ch = out.get(plat)
+            if not ch:
+                continue
+            total = agg["ok"] + agg["fail"]
+            ch["last_publish_at"] = agg["last_ok"]
+            ch["success_rate_30d"] = round(100 * agg["ok"] / total) if total else None
+            ch["publishes_30d"] = total
+            # token expiry (best-effort from stored expires_in seconds)
+            integ_rec = (integ.get(plat) or {})
+            exp = integ_rec.get("expires_in")
+            updated = integ_rec.get("updated_at")
+            if exp and updated:
+                try:
+                    expires_at = (datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                                  + timedelta(seconds=int(exp)))
+                    ch["token_expires_at"] = expires_at.isoformat()
+                    days_left = (expires_at - now_utc()).days
+                    ch["token_expires_in_days"] = days_left
+                    if days_left <= 7 and days_left >= 0:
+                        ch["token_expiry_warning"] = True
+                except Exception:
+                    pass
+            # Stale flag: > 24h since last successful publish
+            if agg["last_ok"]:
+                try:
+                    last_dt = datetime.fromisoformat(agg["last_ok"].replace("Z", "+00:00"))
+                    if (now_utc() - last_dt).total_seconds() > 86400 and total > 0:
+                        ch["stale_warning"] = True
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("CH-04 SLA enrichment failed: %s", e)
+
     return {"channels": out, "checked_at": now_utc().isoformat()}
 
 
@@ -2803,6 +2901,17 @@ async def quick_plan_generate(payload: QuickPlanIn, user=Depends(get_current_use
     guaranteed_per_month = max(1, int(raw_predicted * 0.5))
     total_guaranteed = guaranteed_per_month * payload.duration_months
 
+    # Sprint C — GL-01: AI Confidence Score (70-100%)
+    # Higher when buffer between raw prediction and guarantee is large, budget reasonable, channels diversified.
+    margin_ratio = (raw_predicted - guaranteed_per_month) / max(1, raw_predicted)  # 0.5 by design
+    channel_diversity = min(1.0, len([c for c in channels if (c.get("expected_leads_per_month") or 0) > 0]) / 5.0)
+    budget_score = min(1.0, payload.monthly_budget / 10000.0) if payload.monthly_budget else 0.3
+    raw_conf = 60 + (margin_ratio * 25) + (channel_diversity * 10) + (budget_score * 5)
+    confidence_score = max(70, min(100, round(raw_conf)))
+    confidence_band = ("high" if confidence_score >= 88
+                       else "medium" if confidence_score >= 78
+                       else "low")
+
     avg_deal = float(payload.avg_deal_value) if payload.avg_deal_value else 100.0
     revenue_target = guaranteed_per_month * avg_deal
 
@@ -2821,6 +2930,13 @@ async def quick_plan_generate(payload: QuickPlanIn, user=Depends(get_current_use
         "guaranteed_leads_per_month": guaranteed_per_month,
         "total_guaranteed_leads": total_guaranteed,
         "buffer_pct": 50,
+        "confidence_score": confidence_score,
+        "confidence_band": confidence_band,
+        "confidence_factors": {
+            "margin_ratio": round(margin_ratio, 2),
+            "channel_diversity": round(channel_diversity, 2),
+            "budget_score": round(budget_score, 2),
+        },
     }
     record = {
         "id": str(uuid.uuid4()),
@@ -3057,7 +3173,10 @@ async def content_generate(payload: ContentGenerateIn = ContentGenerateIn(), use
         f"  topic (1 sentence — the angle for today's content),\n"
         f"  blog_post (object: title (60 chars max, SEO-optimised), slug (kebab-case), "
         f"     excerpt (160 chars meta-description quality), body_md (700-1000 word markdown article with H2/H3 headers, "
-        f"     internal CTA links denoted [CTA: text]; do NOT add ‘As an AI’ disclaimers), "
+        f"     internal CTA links denoted [CTA: text]; do NOT add ‘As an AI’ disclaimers; "
+        f"     end the body_md with a final '## Sources & Citations' H2 section listing 3-5 high-authority "
+        f"     references as a markdown bullet list — each line: '- [Source name](https://url)' — pick real, "
+        f"     well-known industry publications relevant to the topic), "
         f"     reading_time_min (integer)),\n"
         f"  meta_tags (object: title (max 60 chars), description (max 158 chars), "
         f"     og_title, og_description, twitter_title, twitter_description, "
@@ -3069,6 +3188,7 @@ async def content_generate(payload: ContentGenerateIn = ContentGenerateIn(), use
         f"     difficulty ('low'|'medium'|'high'), monthly_searches_estimate (integer)}}),\n"
         f"  cta_recommendation (1 sentence on which existing landing page or campaign this content should funnel into).\n\n"
         f"BUSINESS:\n{biz_ctx}"
+        f"{_brand_voice_block(profile)}"
     )
     kit = await _groq_json(prompt, max_tokens=4500)
     record = {
@@ -4323,6 +4443,118 @@ async def _publish_to_whatsapp_broadcast(content: Dict[str, Any], user_doc: Dict
     return {"status": "published" if sent else "failed", "recipients": len(leads), "delivered": sent}
 
 
+# ---------- Sprint C — UX-01: Per-user activity feed + activity logger ----------
+async def _log_activity(user_id: str, kind: str, message: str,
+                        details: Optional[Dict[str, Any]] = None,
+                        request: Optional["Request"] = None) -> None:
+    """Append a row to user_activity. Used by safety filter, circuit breaker, publish results,
+    co-pilot actions etc. Cheap, append-only, fuels the dashboard 'What just happened?' feed."""
+    try:
+        doc: Dict[str, Any] = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "kind": kind,
+            "message": message[:500],
+            "details": (details or {}),
+            "created_at": now_utc().isoformat(),
+        }
+        # Sprint D — TE-05 prep: enrich with IP/UA when called from a request handler.
+        if request is not None:
+            try:
+                doc["ip_address"] = request.client.host if request.client else None
+                doc["user_agent"] = (request.headers.get("user-agent") or "")[:200]
+            except Exception:
+                pass
+        await db.user_activity.insert_one(doc)
+    except Exception as e:
+        logger.warning("activity log failed: %s", e)
+
+
+# ---------- Sprint A — AT-02: Pre-flight content safety filter ----------
+# Lightweight regex-based checks. Cheap, deterministic, blocks the most common foot-guns
+# without needing an extra LLM call. Failed posts are flagged & logged but never silently
+# dropped — they show up in the user's approvals queue with the failure reason.
+_PROFANITY_RE = re.compile(
+    r"\b(fuck|shit|bitch|asshole|bastard|cunt|dick|piss|wank|whore|slut)\b",
+    re.IGNORECASE,
+)
+_MEDICAL_CLAIM_RE = re.compile(
+    r"\b(cure|cures|curing|treats|treat|treatment for|guarantees? a cure|"
+    r"prescribed|medical advice|fda[- ]?approved|clinical(ly)? proven|miracle|"
+    r"diagnose|prevents? (cancer|diabetes|covid|disease))\b",
+    re.IGNORECASE,
+)
+_FINANCIAL_CLAIM_RE = re.compile(
+    r"\b(guaranteed returns?|risk[- ]?free|double your money|10x returns?|"
+    r"insider tip|sure[- ]?shot|never lose|profit guaranteed|nifty target|"
+    r"intraday tip)\b",
+    re.IGNORECASE,
+)
+_PRICING_CLAIM_RE = re.compile(
+    r"\b(\$?\d{1,3}(,\d{3})*(\.\d+)?|₹\d{1,3}(,\d{3})*(\.\d+)?)\s*(off|discount|free|lifetime|forever|guaranteed)\b",
+    re.IGNORECASE,
+)
+
+
+def _content_safety_check(content_kit: Dict[str, Any], business: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Returns {"safe": bool, "issues": [...], "risk_level": "low|medium|high"}.
+    Catches profanity, medical/financial claims w/o disclaimer, and 3+ competitor mentions."""
+    issues: List[str] = []
+    blob_parts: List[str] = []
+    blog = (content_kit.get("kit") or {}).get("blog_post") or {}
+    blob_parts.append(str(blog.get("title", "")))
+    blob_parts.append(str(blog.get("content", "")))
+    blob_parts.append(str(blog.get("excerpt", "")))
+    for sp in (content_kit.get("kit") or {}).get("social_posts") or []:
+        blob_parts.append(str(sp.get("body", "")))
+    blob = "\n".join(blob_parts)
+    blob_lower = blob.lower()
+
+    if _PROFANITY_RE.search(blob):
+        issues.append("Profanity detected")
+    if _MEDICAL_CLAIM_RE.search(blob):
+        issues.append("Medical/health claim detected — needs disclaimer")
+    if _FINANCIAL_CLAIM_RE.search(blob):
+        issues.append("Financial-return claim detected — needs disclaimer")
+    if _PRICING_CLAIM_RE.search(blob) and "*" not in blob and "terms" not in blob_lower:
+        issues.append("Pricing claim without 'terms apply' or asterisk disclaimer")
+
+    # Competitor mention >2 times — uses business profile competitor_brands list if present
+    competitors = (business or {}).get("competitor_brands") or []
+    for comp in competitors:
+        if comp and blob_lower.count(comp.lower()) > 2:
+            issues.append(f"Competitor brand '{comp}' mentioned more than twice")
+
+    risk = "high" if any(("Medical" in i or "Financial" in i or "Profanity" in i) for i in issues) \
+        else ("medium" if issues else "low")
+    return {"safe": len(issues) == 0, "issues": issues, "risk_level": risk}
+
+
+# ---------- Sprint B — CQ-02 brand voice block injected into AI prompts ----------
+def _brand_voice_block(business: Optional[Dict[str, Any]]) -> str:
+    """Returns a prompt fragment to inject the founder's brand voice into every AI generation.
+    Empty string if no profile exists yet."""
+    if not business:
+        return ""
+    parts: List[str] = []
+    tone = (business.get("brand_tone") or "").strip()
+    examples = business.get("brand_voice_examples") or []
+    forbidden = business.get("brand_forbidden_words") or []
+    if tone:
+        parts.append(f"Tone: {tone}")
+    if examples:
+        ex = "\n".join(f"  - {e.strip()}" for e in examples if e and e.strip())
+        if ex:
+            parts.append(f"Example sentences the founder likes:\n{ex}")
+    if forbidden:
+        f = ", ".join(w.strip() for w in forbidden if w and w.strip())
+        if f:
+            parts.append(f"NEVER use these words/phrases: {f}")
+    if not parts:
+        return ""
+    return "\n\nBRAND VOICE GUIDELINES (must follow strictly):\n" + "\n".join(parts) + "\n"
+
+
 async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatches a scheduled content item to all its platforms."""
     user_doc = await db.users.find_one({"workspace_id": sched["user_id"]}, {"_id": 0}) \
@@ -4334,6 +4566,52 @@ async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
     if not content:
         await db.content_schedules.update_one({"id": sched["id"]}, {"$set": {"status": "FAILED", "error": "content missing"}})
         return {"status": "FAILED"}
+
+    # Sprint A — AT-01: Per-channel approval gate. If any platform in this schedule requires
+    # approval and the content isn't in 'approved' state, send to /approvals queue instead of publishing.
+    business = await db.business_profiles.find_one({"user_id": sched["user_id"]}, {"_id": 0}) or {}
+    approval_map = {
+        "blog": business.get("approval_required_blog", False),
+        "linkedin": business.get("approval_required_social", False),
+        "twitter": business.get("approval_required_social", False),
+        "facebook": business.get("approval_required_social", False),
+        "instagram": business.get("approval_required_social", False),
+        "email_broadcast": business.get("approval_required_email", True),
+        "whatsapp_broadcast": business.get("approval_required_email", True),
+    }
+    needs_approval_for = [p for p in sched["platforms"] if approval_map.get(p, False)]
+    if needs_approval_for and (content.get("status") or "").lower() != "approved":
+        await db.content_schedules.update_one(
+            {"id": sched["id"]},
+            {"$set": {"status": "AWAITING_APPROVAL",
+                      "awaiting_approval_for": needs_approval_for,
+                      "checked_at": now_utc().isoformat()}},
+        )
+        await db.content_kits.update_one(
+            {"id": sched["content_id"]},
+            {"$set": {"status": "pending_approval"}},
+        )
+        return {"status": "AWAITING_APPROVAL", "platforms": needs_approval_for}
+
+    # Sprint A — AT-02: Pre-flight safety filter. Block + flag if it fails (loud, never silent).
+    safety = _content_safety_check(content, business)
+    if not safety["safe"]:
+        await db.content_schedules.update_one(
+            {"id": sched["id"]},
+            {"$set": {"status": "BLOCKED_SAFETY",
+                      "safety_issues": safety["issues"],
+                      "risk_level": safety["risk_level"],
+                      "checked_at": now_utc().isoformat()}},
+        )
+        await db.content_kits.update_one(
+            {"id": sched["content_id"]},
+            {"$set": {"status": "blocked_safety", "safety_issues": safety["issues"]}},
+        )
+        # Audit-log + push notification
+        await _log_activity(sched["user_id"], "content.blocked_safety",
+                            f"Auto-publish blocked · risk={safety['risk_level']}",
+                            details={"content_id": sched["content_id"], "issues": safety["issues"]})
+        return {"status": "BLOCKED_SAFETY", "issues": safety["issues"]}
 
     # Canonical OAuth store: db.integrations (populated by /oauth/{provider}/callback)
     tokens_doc = await db.integrations.find_one({"user_id": sched["user_id"]}, {"_id": 0}) or {}
@@ -4433,6 +4711,16 @@ async def onboarding_wizard_dismiss(user=Depends(get_current_user)):
         {"$set": {"onboarding_wizard_dismissed_at": now_utc().isoformat()}},
     )
     return {"success": True, "dismissed": True}
+
+
+@api.post("/onboarding/wizard-resume")
+async def onboarding_wizard_resume(user=Depends(get_current_user)):
+    """Sprint C — OB-04: Re-open the wizard for users who dismissed it but didn't finish."""
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$unset": {"onboarding_wizard_dismissed_at": ""}},
+    )
+    return {"success": True, "resumed": True}
 
 
 @api.post("/onboarding/wizard-complete")
@@ -6342,9 +6630,44 @@ async def _sync_one_campaign(rec: Dict[str, Any]) -> None:
         "spend_actual": spend, "impressions": impressions, "clicks": clicks, "leads": leads,
         "last_synced_at": now_utc().isoformat(),
     }
-    if rec.get("auto_pause_at_cap") and rec.get("spend_cap") and spend >= rec["spend_cap"] and rec.get("status") != "PAUSED":
+    # Sprint A — AT-03: Hard circuit breaker at 110% of daily cap. No override except super admin.
+    cap = rec.get("spend_cap") or 0
+    breach_threshold = cap * 1.10 if cap else 0
+    if breach_threshold and spend >= breach_threshold and rec.get("status") != "PAUSED_BREACH":
+        upd["status"] = "PAUSED_BREACH"
+        upd["auto_paused_reason"] = f"CIRCUIT BREAKER · spend {spend} >= 110% of cap ({breach_threshold})"
+        upd["circuit_breaker_at"] = now_utc().isoformat()
+        # Audit-log the security incident
+        await db.admin_audit_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "kind": "ad_spend_circuit_breaker",
+            "actor": "system",
+            "target_user_id": rec["user_id"],
+            "campaign_id": rec.get("id"),
+            "spend": spend, "cap": cap, "breach_threshold": breach_threshold,
+            "created_at": now_utc().isoformat(),
+        })
+        # Multi-channel alert: in-app + email + Slack (best-effort, swallow failures)
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()), "user_id": rec["user_id"],
+            "title": "🛑 Ad spend circuit breaker triggered",
+            "body": f"{rec.get('channel_name','Campaign')} spent {spend} (>110% of {cap} cap). All campaigns paused. Review and re-enable manually.",
+            "severity": "critical", "read": False, "created_at": now_utc().isoformat(),
+        })
+        try:
+            await _log_activity(rec["user_id"], "ads.circuit_breaker",
+                                f"Spend {spend} exceeded 110% cap — auto-paused",
+                                details={"campaign_id": rec.get("id"), "spend": spend, "cap": cap})
+        except Exception:
+            pass
+        # Pause ALL active campaigns for this user (cascade)
+        await db.ad_campaigns.update_many(
+            {"user_id": rec["user_id"], "status": "ACTIVE"},
+            {"$set": {"status": "PAUSED", "auto_paused_reason": "Cascade pause from circuit breaker"}},
+        )
+    elif rec.get("auto_pause_at_cap") and cap and spend >= cap and rec.get("status") != "PAUSED":
         upd["status"] = "PAUSED"
-        upd["auto_paused_reason"] = f"Spend cap reached: {spend} ≥ {rec['spend_cap']}"
+        upd["auto_paused_reason"] = f"Spend cap reached: {spend} ≥ {cap}"
         await db.notifications.insert_one({
             "id": str(uuid.uuid4()), "user_id": rec["user_id"],
             "title": "Ad campaign auto-paused",

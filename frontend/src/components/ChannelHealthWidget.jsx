@@ -15,10 +15,28 @@ const CHANNELS = [
 ];
 
 function dotFor(s) {
-    if (s?.healthy) return { color: "#10B981", icon: CheckCircle, label: "Live" };
+    if (s?.healthy) {
+        // Sprint A — CH-04: green dot still ON, but flag SLA issues with side-warnings (preserves UX)
+        return { color: "#10B981", icon: CheckCircle, label: "Live" };
+    }
     if (s?.connected) return { color: "#F59E0B", icon: WarningCircle, label: s.status_label || "Stale" };
     if (s && s.provider_configured === false) return { color: "#A1A1AA", icon: Crown, label: "Awaiting platform" };
     return { color: "#E2E8F0", icon: XCircle, label: "Off" };
+}
+
+function staleWarnFor(s) {
+    if (!s?.healthy) return null;
+    const out = [];
+    if (s.token_expires_in_days !== undefined && s.token_expires_in_days <= 7 && s.token_expires_in_days >= 0) {
+        out.push(`token expires in ${s.token_expires_in_days}d — reconnect soon`);
+    }
+    if (s.stale_warning) {
+        out.push("no successful publish in 24h+");
+    }
+    if (typeof s.success_rate_30d === "number" && s.success_rate_30d < 80 && s.publishes_30d >= 5) {
+        out.push(`${s.success_rate_30d}% success in 30d`);
+    }
+    return out.length ? out.join(" · ") : null;
 }
 
 export default function ChannelHealthWidget() {
@@ -124,6 +142,29 @@ export default function ChannelHealthWidget() {
                     ))}
                 </div>
             )}
+
+            {/* Sprint A — CH-04: SLA warnings for live channels (token expiry, stale, low success rate) */}
+            {(() => {
+                const warnings = CHANNELS
+                    .map((c) => ({ c, w: staleWarnFor(health[c.id]) }))
+                    .filter((x) => x.w);
+                if (warnings.length === 0) return null;
+                return (
+                    <div className="mt-3 pt-3 border-t border-dashed border-[#E2E8F0] space-y-1.5" data-testid="channel-sla-warnings">
+                        {warnings.map(({ c, w }) => (
+                            <div key={c.id} className="flex items-center justify-between text-[11px]" data-testid={`sla-warn-${c.id}`}>
+                                <span className="text-[#92400E]">
+                                    <WarningCircle size={11} weight="fill" className="inline mr-1.5 text-[#F59E0B]" />
+                                    <span className="font-bold">{c.label}:</span> {w}
+                                </span>
+                                <Link to="/connect" className="text-[#2563EB] font-bold hover:underline shrink-0 ml-2">
+                                    Fix
+                                </Link>
+                            </div>
+                        ))}
+                    </div>
+                );
+            })()}
 
             <Link
                 to="/connect"

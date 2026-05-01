@@ -286,6 +286,35 @@ function QuickPlanTab() {
                                 </div>
                             )}
                         </div>
+                        {/* Sprint C — GL-01: AI Confidence Score */}
+                        {plan.plan?.confidence_score && (
+                            <div className="mt-5 pt-4 border-t border-white/10 flex items-start gap-4 flex-wrap" data-testid="confidence-score">
+                                <div>
+                                    <p className="text-[10px] uppercase tracking-[0.2em] text-white/50 font-bold mb-1">// AI confidence</p>
+                                    <div className="flex items-baseline gap-2">
+                                        <span className={`font-display text-3xl font-black tracking-tight ${
+                                            plan.plan.confidence_band === "high" ? "text-[#10B981]" :
+                                            plan.plan.confidence_band === "medium" ? "text-[#F59E0B]" : "text-[#94A3B8]"
+                                        }`}>{plan.plan.confidence_score}%</span>
+                                        <span className="text-[11px] text-white/60 uppercase tracking-wide font-bold">{plan.plan.confidence_band} confidence</span>
+                                    </div>
+                                </div>
+                                <div className="flex-1 min-w-[200px]">
+                                    <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full transition-all duration-700"
+                                            style={{
+                                                width: `${plan.plan.confidence_score}%`,
+                                                background: plan.plan.confidence_band === "high" ? "#10B981" : plan.plan.confidence_band === "medium" ? "#F59E0B" : "#94A3B8",
+                                            }}
+                                        />
+                                    </div>
+                                    <p className="text-[11px] text-white/60 mt-2">
+                                        Based on a 50% safety buffer, channel diversity, and budget headroom. Higher = larger margin between predicted and guaranteed.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
                         {plan.ai_rationale && (
                             <p className="text-sm text-white/80 mt-5 pt-4 border-t border-white/10 leading-relaxed max-w-3xl">
                                 {plan.ai_rationale}

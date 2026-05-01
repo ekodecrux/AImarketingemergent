@@ -11,6 +11,9 @@ import BriefingCard from "@/components/BriefingCard";
 import SetupChecklist from "@/components/SetupChecklist";
 import CopilotPanel from "@/components/CopilotPanel";
 import ChannelHealthWidget from "@/components/ChannelHealthWidget";
+import ActivityFeed from "@/components/ActivityFeed";
+import QuotaBanner from "@/components/QuotaBanner";
+import ResumeOnboardingBanner from "@/components/ResumeOnboardingBanner";
 import { setLocaleCache } from "@/lib/locale";
 
 const STATUS_COLORS = ["#2563EB", "#10B981", "#F59E0B", "#0F172A", "#A855F7"];
@@ -91,9 +94,18 @@ export default function Dashboard() {
                     ))}
                 </div>
 
+                {/* Sprint C banners — quota + onboarding resume */}
+                <QuotaBanner />
+                <ResumeOnboardingBanner />
+
                 {/* Channel health — proactive surface for broken connections */}
                 <div className="mb-6">
                     <ChannelHealthWidget />
+                </div>
+
+                {/* Sprint C — UX-01: Activity feed */}
+                <div className="mb-6">
+                    <ActivityFeed />
                 </div>
 
                 {/* Charts row */}

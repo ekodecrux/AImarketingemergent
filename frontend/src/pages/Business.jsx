@@ -194,6 +194,90 @@ export default function Business() {
                         </p>
                     </div>
 
+                    {/* Sprint A — AT-01: Approval workflows (per-channel) */}
+                    <div className="rounded-sm border border-[#E2E8F0] bg-[#FFFBEB] p-4 space-y-3" data-testid="business-approvals-block">
+                        <div className="flex items-center gap-2">
+                            <p className="text-[11px] uppercase tracking-[0.2em] text-[#71717A] font-bold">// Auto-publish guardrails</p>
+                            <span className="ml-auto zm-badge bg-[#FEF3C7] text-[#92400E] text-[10px]">Trust & Safety</span>
+                        </div>
+                        <p className="text-xs text-[#71717A]">
+                            Toggle ON for any channel where YOU want to review every post before it goes out. Email & Paid Ads default ON for safety; social/blog default OFF for speed.
+                        </p>
+                        <div className="grid md:grid-cols-2 gap-3">
+                            {[
+                                { key: "approval_required_blog", label: "Require approval · Blog posts", desc: "SEO blog goes live only after you click Approve" },
+                                { key: "approval_required_social", label: "Require approval · Social posts", desc: "LinkedIn / X / Facebook / Instagram posts" },
+                                { key: "approval_required_email", label: "Require approval · Email broadcasts", desc: "Email + WhatsApp campaigns to your CRM" },
+                                { key: "approval_required_paid", label: "Require approval · Paid Ads", desc: "Real ad campaigns charging your wallet" },
+                            ].map((t) => (
+                                <label key={t.key} className="flex items-start gap-2 p-2 bg-white rounded-sm border border-[#E2E8F0] cursor-pointer hover:bg-[#F8FAFC]">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!form[t.key]}
+                                        onChange={(e) => setForm({ ...form, [t.key]: e.target.checked })}
+                                        className="mt-0.5"
+                                        data-testid={`toggle-${t.key}`}
+                                    />
+                                    <div>
+                                        <p className="text-xs font-bold text-[#0F172A]">{t.label}</p>
+                                        <p className="text-[10px] text-[#71717A]">{t.desc}</p>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Sprint B — CQ-02: Brand Voice Profile */}
+                    <div className="rounded-sm border border-[#E2E8F0] bg-[#F0FDF4] p-4 space-y-3" data-testid="business-voice-block">
+                        <div className="flex items-center gap-2">
+                            <p className="text-[11px] uppercase tracking-[0.2em] text-[#71717A] font-bold">// Brand voice (optional, recommended)</p>
+                            <span className="ml-auto zm-badge bg-[#DCFCE7] text-[#166534] text-[10px]">Injected into every AI prompt</span>
+                        </div>
+                        <p className="text-xs text-[#71717A]">
+                            Fill these and ZeroMark stops sounding like generic AI. Every blog, social post, and email picks up your tone automatically.
+                        </p>
+                        <div className="grid md:grid-cols-2 gap-3">
+                            <div>
+                                <label className="zm-label">Tone</label>
+                                <select
+                                    className="zm-input bg-white"
+                                    value={form.brand_tone || ""}
+                                    onChange={(e) => setForm({ ...form, brand_tone: e.target.value })}
+                                    data-testid="business-tone"
+                                >
+                                    <option value="">— pick one —</option>
+                                    <option value="professional">Professional</option>
+                                    <option value="casual">Casual / Friendly</option>
+                                    <option value="witty">Witty / Sharp</option>
+                                    <option value="empathetic">Empathetic / Supportive</option>
+                                    <option value="bold">Bold / Provocative</option>
+                                    <option value="academic">Academic / Authoritative</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="zm-label">Forbidden words/phrases (comma-separated)</label>
+                                <input
+                                    className="zm-input bg-white"
+                                    value={(form.brand_forbidden_words || []).join(", ")}
+                                    onChange={(e) => setForm({ ...form, brand_forbidden_words: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+                                    placeholder="leverage, synergy, in this fast-paced world"
+                                    data-testid="business-forbidden-words"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="zm-label">Example sentences you like (one per line, max 3)</label>
+                            <textarea
+                                rows={3}
+                                className="zm-input bg-white"
+                                value={(form.brand_voice_examples || []).join("\n")}
+                                onChange={(e) => setForm({ ...form, brand_voice_examples: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 3) })}
+                                placeholder="We don't sell software. We sell back the time founders waste on plumbing.&#10;Most marketers chase impressions. We track only what you can deposit in a bank."
+                                data-testid="business-voice-examples"
+                            />
+                        </div>
+                    </div>
+
                     <div>
                         <label className="zm-label">Description</label>
                         <textarea rows={4} className="zm-input" value={form.description || ""} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What does your business do? What problem do you solve?" data-testid="business-description" />
