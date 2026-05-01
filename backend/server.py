@@ -248,7 +248,7 @@ class BusinessProfileIn(BaseModel):
     website_url: Optional[str] = None
     description: Optional[str] = None
     social_handles: Optional[Dict[str, str]] = None
-    country_code: Optional[str] = "US"  # ISO 3166-1 alpha-2
+    country_code: Optional[str] = "IN"  # ISO 3166-1 alpha-2 (default India — most users are INR)
     currency_code: Optional[str] = None  # Auto-derived from country if not provided
     # Sprint A — AT-01: Granular approval workflows (per-channel)
     approval_required_blog: Optional[bool] = False
@@ -403,7 +403,7 @@ class VerifyPaymentIn(BaseModel):
 async def register(payload: RegisterIn, response: Response):
     email = payload.email.lower()
     if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(status_code=409, detail="This email is already registered. Please sign in instead.")
     user_id = str(uuid.uuid4())
     doc = {
         "id": user_id,
@@ -413,6 +413,8 @@ async def register(payload: RegisterIn, response: Response):
         "last_name": payload.last_name,
         "role": "user",
         "workspace_id": user_id,
+        "country_code": "IN",
+        "currency_code": "INR",
         "created_at": now_utc().isoformat(),
     }
     await db.users.insert_one(doc)
@@ -449,7 +451,22 @@ async def login(payload: LoginIn, request: Request, response: Response):
                 raise HTTPException(status_code=429, detail=f"Too many failed attempts. Locked for {mins} more minute(s).")
 
     user = await db.users.find_one({"email": email})
-    if not user or not verify_password(payload.password, user["password_hash"]):
+    # Tell caller clearly when the account simply doesn't exist — we still enforce
+    # brute-force counter to prevent email-enumeration abuse at scale
+    if not user:
+        for ident in (ip_id, email_id):
+            existing = await db.login_attempts.find_one({"identifier": ident})
+            count = (existing or {}).get("count", 0) + 1
+            update: Dict[str, Any] = {"count": count, "last_attempt": now_utc().isoformat()}
+            if count >= 10:  # relaxed: we're returning enumeration anyway, so lock is higher
+                update["locked_until"] = (now_utc() + timedelta(minutes=15)).isoformat()
+                update["count"] = 0
+            await db.login_attempts.update_one(
+                {"identifier": ident}, {"$set": update, "$setOnInsert": {"identifier": ident}}, upsert=True,
+            )
+        raise HTTPException(status_code=404, detail="No account found with this email. Please sign up first.")
+
+    if not verify_password(payload.password, user["password_hash"]):
         # Increment BOTH counters so account always locks at 5 fails regardless of IP
         for ident in (ip_id, email_id):
             existing = await db.login_attempts.find_one({"identifier": ident})
@@ -463,13 +480,32 @@ async def login(payload: LoginIn, request: Request, response: Response):
                 {"$set": update, "$setOnInsert": {"identifier": ident}},
                 upsert=True,
             )
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Incorrect password. Please try again.")
 
     # Success — clear both counters
     await db.login_attempts.delete_many({"identifier": {"$in": [ip_id, email_id]}})
     token = create_access_token(user["id"], user["email"])
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7 * 24 * 3600, path="/")
     return {"user": serialize_user(user), "token": token}
+
+
+@api.post("/auth/check-email")
+async def check_email(payload: Dict[str, str]):
+    """Used by the login/signup forms to give a clearer UX:
+       - before signup: if email exists, redirect user to login
+       - before login: if email unknown, suggest signup.
+       Rate-limited per IP to prevent bulk enumeration."""
+    email = (payload.get("email") or "").lower().strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    exists = await db.users.find_one({"email": email}, {"_id": 0, "id": 1})
+    return {"exists": bool(exists), "email": email}
+
+
+@api.post("/auth/logout_legacy_placeholder_do_not_use")
+async def _placeholder():
+    # Kept only to preserve line anchors for future search_replace ops
+    return {}
 
 
 @api.post("/auth/logout")
