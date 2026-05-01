@@ -21,7 +21,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Tuple
 
 import bcrypt
 import jwt
@@ -2105,9 +2105,93 @@ class AutoFillIn(BaseModel):
     website_url: str
 
 
+# Browser-grade UA — many CDN/WAF (Cloudflare/Akamai) block obvious bot UAs
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
+def _fetch_website_resilient(url: str) -> Tuple[str, str]:
+    """Robust homepage fetch. Tries:
+      1) HTTPS with default SSL
+      2) HTTPS with legacy SSL adapter (servers stuck on TLS 1.0/older ciphers)
+      3) HTTP fallback (some Indian/legacy hosts serve only HTTP correctly)
+    Returns (html, source_url) or raises HTTPException with a friendly message.
+    Accepts 4xx responses too — Cloudflare bot-challenge pages still contain useful text."""
+    import ssl
+    from urllib3.util.ssl_ import create_urllib3_context
+
+    headers = {
+        "User-Agent": _BROWSER_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    class _LegacyAdapter(_http.adapters.HTTPAdapter):
+        def init_poolmanager(self, *a, **kw):
+            ctx = create_urllib3_context(ssl_minimum_version=ssl.TLSVersion.TLSv1)
+            try:
+                ctx.set_ciphers("DEFAULT@SECLEVEL=0")
+            except Exception:
+                pass
+            try:
+                ctx.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
+            except Exception:
+                pass
+            kw["ssl_context"] = ctx
+            return super().init_poolmanager(*a, **kw)
+
+    errors: List[str] = []
+
+    # Attempt 1: standard HTTPS
+    https_url = url if url.startswith("http") else "https://" + url
+    if https_url.startswith("http://"):
+        https_url = "https://" + https_url[7:]
+    try:
+        r = _http.get(https_url, timeout=12, headers=headers, allow_redirects=True)
+        if r.text and len(r.text) > 200:
+            return r.text[:60000], r.url
+        errors.append(f"HTTPS returned only {len(r.text or '')} bytes")
+    except Exception as e:
+        errors.append(f"HTTPS: {type(e).__name__}: {str(e)[:120]}")
+
+    # Attempt 2: legacy SSL HTTPS
+    try:
+        s = _http.Session()
+        s.mount("https://", _LegacyAdapter())
+        r = s.get(https_url, timeout=12, headers=headers, allow_redirects=True)
+        if r.text and len(r.text) > 200:
+            return r.text[:60000], r.url
+        errors.append(f"HTTPS-legacy returned only {len(r.text or '')} bytes")
+    except Exception as e:
+        errors.append(f"HTTPS-legacy: {type(e).__name__}: {str(e)[:120]}")
+
+    # Attempt 3: HTTP fallback
+    http_url = "http://" + https_url[8:]
+    try:
+        r = _http.get(http_url, timeout=12, headers=headers, allow_redirects=True)
+        if r.text and len(r.text) > 200:
+            return r.text[:60000], r.url
+        errors.append(f"HTTP returned only {len(r.text or '')} bytes")
+    except Exception as e:
+        errors.append(f"HTTP: {type(e).__name__}: {str(e)[:120]}")
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "We couldn't read your website automatically — this happens when the site uses "
+            "an outdated SSL config or a strict bot blocker (Cloudflare/Akamai/etc.). "
+            "Please fill the profile fields manually below — it takes 30 seconds. "
+            f"(Tried 3 fetch strategies: {' · '.join(errors)[:300]})"
+        ),
+    )
+
+
 @api.post("/business/auto-fill")
 async def auto_fill_business(payload: AutoFillIn, user=Depends(get_current_user)):
-    """Scrape a website's homepage and use Groq to extract structured business profile."""
+    """Scrape a website's homepage and use Groq to extract structured business profile.
+    Resilient: tries HTTPS → legacy-SSL HTTPS → HTTP, with friendly fallback message."""
     url = payload.website_url.strip()
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
@@ -2115,16 +2199,7 @@ async def auto_fill_business(payload: AutoFillIn, user=Depends(get_current_user)
     if not _is_safe_url(url):
         raise HTTPException(status_code=400, detail="URL not allowed (private/internal addresses blocked)")
 
-    def _fetch():
-        try:
-            r = _http.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 ZeroMarkBot"}, allow_redirects=True)
-            return r.text[:30000]
-        except Exception as e:
-            return f"FETCH_ERROR: {e}"
-
-    html = await asyncio.get_event_loop().run_in_executor(None, _fetch)
-    if html.startswith("FETCH_ERROR"):
-        raise HTTPException(status_code=400, detail=f"Could not fetch website. {html[:200]}")
+    html, source_url = await asyncio.get_event_loop().run_in_executor(None, _fetch_website_resilient, url)
 
     # Strip basic HTML tags for prompt
     import re
@@ -3698,7 +3773,9 @@ def _is_public_ip(host: str) -> bool:
 
 
 def _scrape_url_quick(url: str) -> Dict[str, Any]:
-    """Lightweight scrape with SSRF protection: title, meta, h1/h2, word count, simple SEO heuristics."""
+    """Lightweight scrape with SSRF protection: title, meta, h1/h2, word count, simple SEO heuristics.
+    Uses the resilient fetcher (HTTPS → legacy-SSL → HTTP fallback) so we don't fail on Indian /
+    legacy hosts with old TLS configs or Cloudflare bot challenges."""
     try:
         from bs4 import BeautifulSoup
         from urllib.parse import urlparse
@@ -3708,10 +3785,11 @@ def _scrape_url_quick(url: str) -> Dict[str, Any]:
         host = parsed.hostname
         if not host or not _is_public_ip(host):
             return {"ok": False, "error": "blocked host (private/invalid)"}
-        r = _http.get(url, timeout=10, headers={"User-Agent": "ZeroMarkAuditBot/1.0"}, allow_redirects=True)
-        if r.status_code >= 400:
-            return {"ok": False, "error": f"site returned {r.status_code}"}
-        soup = BeautifulSoup(r.text[:300_000], "html.parser")
+        try:
+            html, _ = _fetch_website_resilient(url)
+        except HTTPException as he:
+            return {"ok": False, "error": str(he.detail)[:200]}
+        soup = BeautifulSoup(html[:300_000], "html.parser")
         title = (soup.title.string if soup.title else "").strip()[:200]
         meta_desc = ""
         m = soup.find("meta", attrs={"name": "description"})
