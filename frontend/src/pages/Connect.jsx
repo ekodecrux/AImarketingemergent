@@ -1,104 +1,71 @@
 import { useEffect, useState, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
+import { useAuth } from "@/context/AuthContext";
 import {
     LinkedinLogo, TwitterLogo, FacebookLogo, InstagramLogo, EnvelopeSimple,
     WhatsappLogo, ChatCircle, CurrencyDollar, MegaphoneSimple, CheckCircle,
-    WarningCircle, XCircle, ArrowSquareOut, Lock, Plug, ArrowsClockwise,
-    CaretDown, CaretRight, Sparkle,
+    WarningCircle, XCircle, Lock, ArrowsClockwise, Sparkle, Crown,
 } from "@phosphor-icons/react";
 
-/* ---------- Channel registry ----------
-   Tier 1: User OAuth (the few-minute setup)
-   Tier 2: Platform-wide (env-managed, info only)
-*/
+/* User-facing channels — NO developer-app setup steps. Users just OAuth.
+   The platform owner registers Developer Apps ONCE on /admin/platform-setup. */
 const TIER1_OAUTH = [
     {
         id: "linkedin", label: "LinkedIn", icon: LinkedinLogo, brand: "#0A66C2",
-        why: "B2B gold — every published post can reach thousands of decision-makers organically.",
-        steps: [
-            { title: "Create a LinkedIn Developer App", url: "https://www.linkedin.com/developers/apps", note: "Click 'Create app' — link it to a Company Page you own." },
-            { title: "Add the 'Sign In with LinkedIn using OpenID Connect' product", url: "https://www.linkedin.com/developers/apps", note: "Auto-approved." },
-            { title: "Add the 'Share on LinkedIn' product", url: "https://www.linkedin.com/developers/apps", note: "Auto-approved instantly. This unlocks publishing." },
-            { title: "Authorized redirect URL", url: null, note: "Add: <REPLACE WITH YOUR APP URL>/api/oauth/linkedin/callback" },
-            { title: "Copy Client ID + Secret to backend .env", url: null, note: "LINKEDIN_CLIENT_ID=… and LINKEDIN_CLIENT_SECRET=…" },
-        ],
+        why: "Reach decision-makers organically. Every post can hit thousands of B2B prospects.",
         connect_btn: "Connect with LinkedIn",
     },
     {
         id: "twitter", label: "X (Twitter)", icon: TwitterLogo, brand: "#0F172A",
-        why: "Schedule + auto-publish high-frequency social posts. Real-time tweet via API.",
-        steps: [
-            { title: "Create a Twitter Developer Project", url: "https://developer.twitter.com/en/portal/projects-and-apps", note: "Free tier supports OAuth 2.0 + posting." },
-            { title: "Set OAuth 2.0 with PKCE; type = Web App", url: null, note: "User authentication settings → enable OAuth 2.0." },
-            { title: "Callback URL", url: null, note: "<APP URL>/api/oauth/twitter/callback" },
-            { title: "Required scopes", url: null, note: "tweet.read, tweet.write, users.read, offline.access" },
-            { title: "Paste Client ID + Secret to backend .env", url: null, note: "TWITTER_CLIENT_ID=… and TWITTER_CLIENT_SECRET=…" },
-        ],
+        why: "Schedule + auto-post high-frequency content. Real-time tweet via API.",
         connect_btn: "Connect with X",
     },
     {
         id: "facebook", label: "Facebook Pages", icon: FacebookLogo, brand: "#1877F2",
         why: "Publish to your Facebook Page reach. Required for Instagram + Meta Ads too.",
-        steps: [
-            { title: "Create a Meta Developer App", url: "https://developers.facebook.com/apps/", note: "Type: Business → assign to your Business Manager." },
-            { title: "Add 'Facebook Login for Business' product", url: null, note: "Configure → set login mode to 'OAuth'." },
-            { title: "Add permissions in App Review", url: null, note: "pages_show_list, pages_manage_posts, pages_read_engagement, instagram_content_publish, business_management" },
-            { title: "Valid OAuth redirect URI", url: null, note: "<APP URL>/api/oauth/facebook/callback" },
-            { title: "Paste App ID + Secret to backend .env", url: null, note: "FACEBOOK_APP_ID=… and FACEBOOK_APP_SECRET=…" },
-        ],
         connect_btn: "Connect with Facebook",
     },
     {
         id: "instagram", label: "Instagram Business", icon: InstagramLogo, brand: "#E4405F",
         why: "Schedule organic Instagram posts. Inherits authentication from your Facebook Page.",
-        steps: [
-            { title: "You need an Instagram Business or Creator account", url: "https://help.instagram.com/502981923235522", note: "Convert in IG settings if you have a personal account." },
-            { title: "Link IG to a Facebook Page in Meta Business Suite", url: "https://business.facebook.com/", note: "Settings → Accounts → Instagram Accounts → Add." },
-            { title: "Connect Facebook above", url: null, note: "ZeroMark auto-detects the linked IG Business account." },
-        ],
-        connect_btn: null, // inherits via Facebook
+        connect_btn: null, // inherits from Facebook
+        inherit_from: "facebook",
     },
     {
         id: "meta_ads", label: "Meta Ads (paid)", icon: MegaphoneSimple, brand: "#000",
-        why: "Run REAL Facebook + Instagram ad campaigns inside ZeroMark with capped budgets.",
-        steps: [
-            { title: "Verify Facebook Business Manager + Ad Account", url: "https://business.facebook.com/", note: "Add a payment method (card / UPI auto-debit)." },
-            { title: "Add 'Marketing API' product to your Meta App", url: "https://developers.facebook.com/apps/", note: "Same app you used for Facebook Pages above." },
-            { title: "Generate System User token (long-lived)", url: "https://business.facebook.com/settings/system-users/", note: "Scope: ads_management + ads_read." },
-            { title: "Get your Ad Account ID", url: "https://business.facebook.com/settings/ad-accounts/", note: "Format: act_1234567890" },
-            { title: "Add to backend .env", url: null, note: "META_ACCESS_TOKEN=… META_AD_ACCOUNT_ID=act_… META_ADS_MOCK_MODE=false" },
-        ],
-        connect_btn: null, // env-only for now (Phase 3)
+        why: "Run REAL Facebook + Instagram ad campaigns inside ZeroMark with capped daily budgets.",
+        connect_btn: null,
         coming_soon: "Phase 3 — backend wiring landing next session",
     },
 ];
 
 const TIER2_PLATFORM = [
     { id: "gmail", label: "Email · Gmail SMTP+IMAP", icon: EnvelopeSimple, brand: "#EA4335",
-      detail: "Live out of the box for the platform owner — uses GMAIL_SENDER_EMAIL + GMAIL_APP_PASSWORD env keys for sending and IMAP polling for inbound replies." },
+      detail: "Already live. We send your campaigns from the platform inbox and auto-pull replies into your CRM." },
     { id: "twilio_sms", label: "SMS · Twilio", icon: ChatCircle, brand: "#F22F46",
-      detail: "Live for OTP login + SMS broadcasts. Configure TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_PHONE_NUMBER in env." },
+      detail: "Already live. Powers OTP sign-in + outbound SMS campaigns." },
     { id: "twilio_whatsapp", label: "WhatsApp · Twilio", icon: WhatsappLogo, brand: "#25D366",
-      detail: "Sandbox mode by default — recipients join via Twilio's join code. For production, get WhatsApp Business API approval." },
+      detail: "Sandbox mode for now — recipients join via Twilio code. Production WhatsApp Business API approval underway." },
     { id: "razorpay", label: "Payments · Razorpay", icon: CurrencyDollar, brand: "#3395FF",
-      detail: "Powers wallet auto-recharge + subscription checkout. Currently in TEST MODE — swap to live keys for production." },
+      detail: "Already live in test mode. Powers wallet auto-recharge + subscription checkout." },
 ];
 
 const STATUS_PILL = (s) => {
     if (s?.healthy) return { cls: "bg-[#10B981] text-white", icon: CheckCircle, label: "Live" };
     if (s?.connected) return { cls: "bg-[#F59E0B] text-white", icon: WarningCircle, label: s.status_label || "Stale" };
+    if (s && s.provider_configured === false) return { cls: "bg-[#FFFBEB] text-[#92400E] border border-[#FCD34D]", icon: Crown, label: "Awaiting platform setup" };
     return { cls: "bg-[#F8FAFC] text-[#71717A] border border-[#E2E8F0]", icon: XCircle, label: "Not connected" };
 };
 
 export default function Connect() {
+    const { user } = useAuth();
     const [params] = useSearchParams();
     const [health, setHealth] = useState({});
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
-    const [openGuide, setOpenGuide] = useState(null);
 
     const load = useCallback(async () => {
         try {
@@ -111,7 +78,6 @@ export default function Connect() {
 
     useEffect(() => { load(); }, [load]);
 
-    // Acknowledge OAuth callback redirect
     useEffect(() => {
         const connected = params.get("connected");
         if (connected) {
@@ -133,7 +99,7 @@ export default function Connect() {
             const r = await api.get(`/oauth/${provider}/start`);
             window.location.href = r.data.auth_url;
         } catch (e) {
-            toast.error(e.response?.data?.detail || `${provider} OAuth not configured. Add Client ID/Secret to backend .env first.`);
+            toast.error(e.response?.data?.detail || `${provider} OAuth not configured yet — ask your platform admin to register the Developer App.`);
         }
     };
 
@@ -150,13 +116,15 @@ export default function Connect() {
 
     const liveCount = Object.values(health).filter((c) => c.healthy).length;
     const totalCount = Object.keys(health).length || 9;
+    const isAdmin = user?.role === "admin";
+    const platformPending = TIER1_OAUTH.some((c) => health[c.id]?.provider_configured === false);
 
     return (
         <div data-testid="connect-page">
             <PageHeader
                 eyebrow="// Channel hub"
-                title="Connect real channels"
-                subtitle="A few minutes here = real campaigns, real posts, real leads. ZeroMark stays organic-first; paid is opt-in."
+                title="Connect your accounts"
+                subtitle="Click Connect, OAuth in 30 seconds, your scheduled posts go out for real. No copy-paste of tokens."
                 action={
                     <button onClick={refresh} disabled={refreshing} className="zm-btn-dark" data-testid="connect-refresh">
                         <ArrowsClockwise size={14} weight="bold" className={refreshing ? "animate-spin" : ""} />
@@ -172,26 +140,45 @@ export default function Connect() {
                             <p className="text-[10px] uppercase tracking-[0.25em] text-white/50 font-bold">// Live channels</p>
                             <h2 className="font-display text-3xl font-black tracking-tighter mt-1">{liveCount} of {totalCount} channels live</h2>
                             <p className="text-sm text-white/70 mt-1 max-w-xl">
-                                Each channel below is verified with a live API call — green means we can actually post / send / charge through it right now.
+                                Each channel is verified with a live API call. Green means we can actually post / send / charge through it right now.
                             </p>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-white/60">
-                            <Lock size={12} weight="bold" /> All tokens stored encrypted at rest (Fernet AES-128)
+                            <Lock size={12} weight="bold" /> Tokens encrypted at rest (Fernet AES-128)
                         </div>
                     </div>
                 </div>
 
-                {/* Tier 1 — OAuth user channels */}
+                {/* Admin notice if platform setup is pending */}
+                {isAdmin && platformPending && (
+                    <div className="zm-card p-5 border-l-4 border-[#F59E0B] bg-[#FFFBEB]" data-testid="admin-platform-pending">
+                        <div className="flex items-start gap-3">
+                            <Crown size={20} weight="fill" className="text-[#F59E0B] mt-0.5" />
+                            <div className="flex-1">
+                                <p className="font-bold text-[#92400E]">Some providers aren't set up yet</p>
+                                <p className="text-sm text-[#78350F] mt-0.5">
+                                    As the platform owner, you register a Developer App once per provider. Every customer then OAuths in 30 sec — no setup work for them.
+                                </p>
+                                <Link to="/admin/platform-setup" className="zm-btn-primary text-xs py-1.5 mt-3 inline-flex" data-testid="admin-setup-link">
+                                    <Crown size={12} weight="fill" /> Open Platform Setup
+                                </Link>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tier 1 — User OAuth */}
                 <div>
                     <div className="flex items-baseline justify-between mb-3">
-                        <h3 className="font-display text-xl font-bold tracking-tight text-[#0F172A]">Your accounts (5-minute setup)</h3>
-                        <p className="text-xs text-[#71717A]">OAuth — no copy-paste of tokens needed</p>
+                        <h3 className="font-display text-xl font-bold tracking-tight text-[#0F172A]">Your accounts</h3>
+                        <p className="text-xs text-[#71717A]">30-second OAuth · no developer setup needed</p>
                     </div>
                     <div className="grid md:grid-cols-2 gap-4" data-testid="tier1-cards">
                         {TIER1_OAUTH.map((c) => {
                             const s = health[c.id] || {};
                             const pill = STATUS_PILL(s);
-                            const isOpen = openGuide === c.id;
+                            const blocked = s.provider_configured === false;
+                            const inheritsFrom = c.inherit_from && health[c.inherit_from]?.healthy === false;
                             return (
                                 <div key={c.id} className="zm-card p-6" data-testid={`channel-${c.id}`}>
                                     <div className="flex items-start justify-between gap-3">
@@ -201,11 +188,7 @@ export default function Connect() {
                                             </div>
                                             <div>
                                                 <h4 className="font-display text-lg font-bold tracking-tight">{c.label}</h4>
-                                                {s.account_label ? (
-                                                    <p className="text-xs text-[#71717A]">{s.account_label}</p>
-                                                ) : (
-                                                    <p className="text-xs text-[#71717A]">{c.why.split(".")[0]}</p>
-                                                )}
+                                                <p className="text-xs text-[#71717A]">{c.why.split(".")[0]}.</p>
                                             </div>
                                         </div>
                                         <span className={`zm-badge ${pill.cls}`} data-testid={`status-${c.id}`}>
@@ -220,7 +203,7 @@ export default function Connect() {
                                     )}
 
                                     <div className="flex flex-wrap gap-2 mt-4">
-                                        {c.connect_btn && !c.coming_soon && (
+                                        {c.connect_btn && !c.coming_soon && !blocked && (
                                             <button
                                                 onClick={() => startOauth(c.id)}
                                                 style={{ background: c.brand }}
@@ -240,52 +223,28 @@ export default function Connect() {
                                                 <Sparkle size={10} weight="fill" /> {c.coming_soon}
                                             </span>
                                         )}
-                                        <button
-                                            onClick={() => setOpenGuide(isOpen ? null : c.id)}
-                                            className="zm-btn-secondary text-xs py-2"
-                                            data-testid={`guide-toggle-${c.id}`}
-                                        >
-                                            {isOpen ? <CaretDown size={12} weight="bold" /> : <CaretRight size={12} weight="bold" />}
-                                            {isOpen ? "Hide setup guide" : "Setup guide"}
-                                        </button>
+                                        {inheritsFrom && (
+                                            <span className="zm-badge bg-[#F8FAFC] text-[#71717A]">
+                                                Connect Facebook above first
+                                            </span>
+                                        )}
+                                        {blocked && !isAdmin && (
+                                            <span className="zm-badge bg-[#FFFBEB] text-[#92400E]">
+                                                Coming soon — platform team setting this up
+                                            </span>
+                                        )}
                                     </div>
-
-                                    {isOpen && (
-                                        <div className="mt-4 pt-4 border-t border-[#E2E8F0] space-y-3" data-testid={`guide-${c.id}`}>
-                                            <p className="text-[11px] uppercase tracking-[0.2em] text-[#71717A] font-bold">// Why this channel</p>
-                                            <p className="text-xs text-[#0F172A]">{c.why}</p>
-                                            <p className="text-[11px] uppercase tracking-[0.2em] text-[#71717A] font-bold pt-2">// Step-by-step</p>
-                                            <ol className="space-y-2.5">
-                                                {c.steps.map((step, i) => (
-                                                    <li key={i} className="flex items-start gap-2.5 text-xs">
-                                                        <span className="shrink-0 w-5 h-5 rounded-full bg-[#DBEAFE] text-[#1D4ED8] flex items-center justify-center font-bold text-[10px]">{i + 1}</span>
-                                                        <div className="flex-1">
-                                                            <p className="text-[#0F172A] font-bold">
-                                                                {step.title}
-                                                                {step.url && (
-                                                                    <a href={step.url} target="_blank" rel="noreferrer" className="ml-1.5 text-[#2563EB] inline-flex items-center gap-0.5 hover:underline">
-                                                                        Open <ArrowSquareOut size={10} weight="bold" />
-                                                                    </a>
-                                                                )}
-                                                            </p>
-                                                            {step.note && <p className="text-[#71717A] mt-0.5 break-words">{step.note}</p>}
-                                                        </div>
-                                                    </li>
-                                                ))}
-                                            </ol>
-                                        </div>
-                                    )}
                                 </div>
                             );
                         })}
                     </div>
                 </div>
 
-                {/* Tier 2 — Platform-wide channels */}
+                {/* Tier 2 — Platform-wide */}
                 <div>
                     <div className="flex items-baseline justify-between mb-3">
-                        <h3 className="font-display text-xl font-bold tracking-tight text-[#0F172A]">Platform-wide channels</h3>
-                        <p className="text-xs text-[#71717A]">Configured by ZeroMark · all users share these</p>
+                        <h3 className="font-display text-xl font-bold tracking-tight text-[#0F172A]">Already wired for you</h3>
+                        <p className="text-xs text-[#71717A]">ZeroMark handles these globally</p>
                     </div>
                     <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="tier2-cards">
                         {TIER2_PLATFORM.map((c) => {
@@ -305,9 +264,6 @@ export default function Connect() {
                                         </div>
                                     </div>
                                     <p className="text-[11px] text-[#71717A] leading-relaxed">{c.detail}</p>
-                                    {s.account_label && (
-                                        <p className="text-[10px] text-[#0F172A] mt-2 font-mono break-all">{s.account_label}</p>
-                                    )}
                                 </div>
                             );
                         })}
@@ -318,7 +274,7 @@ export default function Connect() {
                 <div className="zm-card p-6 bg-gradient-to-br from-[#DBEAFE] to-white border-l-4 border-[#2563EB]">
                     <p className="zm-section-label mb-1">// What's next</p>
                     <p className="text-sm text-[#0F172A] leading-relaxed">
-                        Once at least one social channel shows <span className="text-[#10B981] font-bold">Live</span>, your scheduled posts in <a href="/schedule" className="text-[#2563EB] underline">Auto-publish</a> will go out for real.
+                        Once at least one social channel shows <span className="text-[#10B981] font-bold">Live</span>, your scheduled posts in <Link to="/schedule" className="text-[#2563EB] underline">Auto-publish</Link> will go out for real.
                         Need help? Tap the <span className="font-bold">ZeroMark Guide</span> chatbot bottom-right.
                     </p>
                 </div>

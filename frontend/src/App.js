@@ -34,6 +34,7 @@ import AdminOverview from "@/pages/admin/AdminOverview";
 import AdminUsers from "@/pages/admin/AdminUsers";
 import AdminRevenue from "@/pages/admin/AdminRevenue";
 import AdminAudit from "@/pages/admin/AdminAudit";
+import AdminPlatformSetup from "@/pages/admin/AdminPlatformSetup";
 import AdCampaigns from "@/pages/AdCampaigns";
 import FreeAudit from "@/pages/FreeAudit";
 import Competitors from "@/pages/Competitors";
@@ -114,6 +115,7 @@ function App() {
                         <Route path="/admin/users" element={<AdminUsers />} />
                         <Route path="/admin/revenue" element={<AdminRevenue />} />
                         <Route path="/admin/audit" element={<AdminAudit />} />
+                        <Route path="/admin/platform-setup" element={<AdminPlatformSetup />} />
                     </Route>
 
                     <Route path="*" element={<Navigate to="/" replace />} />

@@ -4,13 +4,14 @@ import api from "@/lib/api";
 import ChatbotWidget from "@/components/ChatbotWidget";
 import {
     Crown, Gauge, Users, CurrencyDollar, ClockCounterClockwise, SignOut, Eye,
-    Shield, ArrowSquareOut,
+    Shield, ArrowSquareOut, Plugs,
 } from "@phosphor-icons/react";
 
 const NAV = [
     { to: "/admin", label: "Overview", icon: Gauge, end: true, testid: "admin-nav-overview" },
     { to: "/admin/users", label: "Users", icon: Users, testid: "admin-nav-users" },
     { to: "/admin/revenue", label: "Revenue & Plans", icon: CurrencyDollar, testid: "admin-nav-revenue" },
+    { to: "/admin/platform-setup", label: "Platform Setup", icon: Plugs, testid: "admin-nav-platform-setup" },
     { to: "/admin/audit", label: "Audit Log", icon: ClockCounterClockwise, testid: "admin-nav-audit" },
 ];
 

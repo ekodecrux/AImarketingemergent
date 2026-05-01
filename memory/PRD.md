@@ -1,5 +1,18 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 21 (May 2026) — Multi-tenant clarity: Platform Setup vs User Connect
+User concern: "If I have 100s of users, won't pasting Developer App credentials become painful for the platform owner?"
+Answer: It's a one-time setup — one LinkedIn / X / Meta Developer App per provider serves thousands of customers. Each customer just OAuths through the platform's app in 30 seconds. We made this clear in the UI:
+
+**Backend**
+- New `GET /api/admin/platform-setup` (admin-only) — returns Developer App configuration status for LinkedIn / X / Meta, plus platform service status (Groq, Gmail, Twilio, Razorpay, Fernet). Includes callback URLs, required scopes, products to enable, and env-key names. Never exposes secret values.
+- `GET /api/integrations/health` enhanced — every channel now includes `provider_configured` flag. When false, marks status as "Platform setup pending" so users know admin hasn't set up the Developer App yet (vs just not OAuthing personally).
+
+**Frontend**
+- `/connect` (user-facing) cleaned up: removed Developer App setup steps (those are platform-owner work, not user work). Cards now show "Awaiting platform setup" badge when provider isn't configured. Admin viewing the page sees an additional banner with "Open Platform Setup" deep-link.
+- New `/admin/platform-setup` page (admin-only): hero card explaining "One Developer App per provider serves all your customers", per-provider cards with copy-to-clipboard callback URL, required scopes, products to enable, env-key reference, 5-6 step guide with deep-links to LinkedIn/X/Meta developer portals, and platform-services grid (Groq/Gmail/Twilio/Razorpay/Fernet status).
+- New "Platform Setup" entry in Admin sidebar.
+
 ## Iter 20 (May 2026) — Real Channel Connections (Phase 1 of "from demo to real")
 User: "Bridge gaps in our platform to make it real. User should only spend a few minutes giving credentials with Meta + social media accounts."
 

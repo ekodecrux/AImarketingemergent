@@ -1709,18 +1709,30 @@ async def disconnect_integration(channel: str, user=Depends(get_current_user)):
 @api.get("/integrations/health")
 async def integrations_health(user=Depends(get_current_user)):
     """Live verification of every connected channel by hitting a lightweight endpoint per provider.
-    Returns per-channel: {connected, healthy, status_label, message, account_label, last_checked}.
-    Also reports platform-wide capabilities (Gmail SMTP, Twilio, Slack, Razorpay) from env."""
+    Returns per-channel: {connected, healthy, status_label, message, account_label, last_checked, provider_configured}.
+    `provider_configured` reflects whether the platform owner has registered a Developer App for that provider —
+    when false, regular users can't OAuth yet (regardless of their personal connection)."""
     integ = await db.integrations.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     out: Dict[str, Dict[str, Any]] = {}
 
-    def _stub(connected: bool, healthy: bool, label: str, msg: str = "", account: str = "") -> Dict[str, Any]:
+    # Platform-owner Developer App configuration status (env-based)
+    provider_cfg = {
+        "linkedin": bool(os.environ.get("LINKEDIN_CLIENT_ID") and os.environ.get("LINKEDIN_CLIENT_SECRET")),
+        "twitter": bool(os.environ.get("TWITTER_CLIENT_ID") and os.environ.get("TWITTER_CLIENT_SECRET")),
+        "facebook": bool(os.environ.get("FACEBOOK_APP_ID") and os.environ.get("FACEBOOK_APP_SECRET")),
+        "instagram": bool(os.environ.get("FACEBOOK_APP_ID") and os.environ.get("FACEBOOK_APP_SECRET")),
+    }
+
+    def _stub(connected: bool, healthy: bool, label: str, msg: str = "", account: str = "", provider_key: Optional[str] = None) -> Dict[str, Any]:
         return {"connected": connected, "healthy": healthy, "status_label": label,
-                "message": msg, "account_label": account, "last_checked": now_utc().isoformat()}
+                "message": msg, "account_label": account, "last_checked": now_utc().isoformat(),
+                "provider_configured": provider_cfg.get(provider_key, True) if provider_key else True}
 
     # ---- LinkedIn: hit /v2/userinfo ----
     li = integ.get("linkedin") or {}
-    if li.get("access_token"):
+    if not provider_cfg["linkedin"]:
+        out["linkedin"] = _stub(False, False, "Platform setup pending", "Admin hasn't registered the LinkedIn Developer App yet. Once they do, you can OAuth in 30 seconds.", provider_key="linkedin")
+    elif li.get("access_token"):
         try:
             tok = _dec(li["access_token"])
             def _ck():
@@ -1730,17 +1742,19 @@ async def integrations_health(user=Depends(get_current_user)):
             sc, data = await asyncio.get_event_loop().run_in_executor(None, _ck)
             if sc == 200:
                 out["linkedin"] = _stub(True, True, "Live", "Posting as " + (data.get("name") or "you"),
-                                        data.get("name") or li.get("display_name") or "")
+                                        data.get("name") or li.get("display_name") or "", provider_key="linkedin")
             else:
-                out["linkedin"] = _stub(True, False, "Token stale", f"LinkedIn returned HTTP {sc} — reconnect to refresh")
+                out["linkedin"] = _stub(True, False, "Token stale", f"LinkedIn returned HTTP {sc} — reconnect to refresh", provider_key="linkedin")
         except Exception as e:
-            out["linkedin"] = _stub(True, False, "Check failed", str(e)[:120])
+            out["linkedin"] = _stub(True, False, "Check failed", str(e)[:120], provider_key="linkedin")
     else:
-        out["linkedin"] = _stub(False, False, "Not connected", "Click Connect to start the OAuth flow.")
+        out["linkedin"] = _stub(False, False, "Not connected", "Click Connect — takes 30 seconds.", provider_key="linkedin")
 
     # ---- Twitter: hit /2/users/me ----
     tw = integ.get("twitter") or {}
-    if tw.get("access_token"):
+    if not provider_cfg["twitter"]:
+        out["twitter"] = _stub(False, False, "Platform setup pending", "Admin hasn't registered the X Developer App yet.", provider_key="twitter")
+    elif tw.get("access_token"):
         try:
             tok = _dec(tw["access_token"])
             def _ck():
@@ -1750,34 +1764,39 @@ async def integrations_health(user=Depends(get_current_user)):
             sc, data = await asyncio.get_event_loop().run_in_executor(None, _ck)
             if sc == 200:
                 u = (data.get("data") or {})
-                out["twitter"] = _stub(True, True, "Live", f"Posting as @{u.get('username','you')}", u.get("username") or "")
+                out["twitter"] = _stub(True, True, "Live", f"Posting as @{u.get('username','you')}", u.get("username") or "", provider_key="twitter")
             else:
-                out["twitter"] = _stub(True, False, "Token stale", f"X returned HTTP {sc} — reconnect")
+                out["twitter"] = _stub(True, False, "Token stale", f"X returned HTTP {sc} — reconnect", provider_key="twitter")
         except Exception as e:
-            out["twitter"] = _stub(True, False, "Check failed", str(e)[:120])
+            out["twitter"] = _stub(True, False, "Check failed", str(e)[:120], provider_key="twitter")
     else:
-        out["twitter"] = _stub(False, False, "Not connected", "Click Connect for OAuth.")
+        out["twitter"] = _stub(False, False, "Not connected", "Click Connect — takes 30 seconds.", provider_key="twitter")
 
     # ---- Facebook: list /me/accounts pages ----
     fb = integ.get("facebook") or {}
-    if fb.get("access_token"):
+    if not provider_cfg["facebook"]:
+        out["facebook"] = _stub(False, False, "Platform setup pending", "Admin hasn't registered the Meta Developer App yet.", provider_key="facebook")
+    elif fb.get("access_token"):
         pages = fb.get("pages") or []
         if pages:
-            out["facebook"] = _stub(True, True, "Live", f"Posting via Page: {pages[0].get('name','')}", pages[0].get("name", ""))
+            out["facebook"] = _stub(True, True, "Live", f"Posting via Page: {pages[0].get('name','')}", pages[0].get("name", ""), provider_key="facebook")
         else:
-            out["facebook"] = _stub(True, False, "No Page", "Connected but no Facebook Page found — pick one in Meta Business Suite first")
+            out["facebook"] = _stub(True, False, "No Page", "Connected but no Facebook Page found — create one in Meta Business Suite first", provider_key="facebook")
     else:
-        out["facebook"] = _stub(False, False, "Not connected", "Click Connect for OAuth.")
+        out["facebook"] = _stub(False, False, "Not connected", "Click Connect — takes 30 seconds.", provider_key="facebook")
 
     # ---- Instagram: piggybacks Facebook (IG Business) ----
-    fb_pages = (integ.get("facebook") or {}).get("pages") or []
-    ig_id = next((p.get("instagram_business_account_id") for p in fb_pages if p.get("instagram_business_account_id")), None)
-    if ig_id:
-        out["instagram"] = _stub(True, True, "Live", f"IG Business account ID: {ig_id}", ig_id)
-    elif fb.get("access_token"):
-        out["instagram"] = _stub(True, False, "No IG account", "Connect an Instagram Business account to your Facebook Page")
+    if not provider_cfg["instagram"]:
+        out["instagram"] = _stub(False, False, "Platform setup pending", "Admin hasn't registered the Meta Developer App yet (shared with Facebook).", provider_key="instagram")
     else:
-        out["instagram"] = _stub(False, False, "Not connected", "Connect Facebook first — Instagram inherits from it.")
+        fb_pages = (integ.get("facebook") or {}).get("pages") or []
+        ig_id = next((p.get("instagram_business_account_id") for p in fb_pages if p.get("instagram_business_account_id")), None)
+        if ig_id:
+            out["instagram"] = _stub(True, True, "Live", f"IG Business account ID: {ig_id}", ig_id, provider_key="instagram")
+        elif fb.get("access_token"):
+            out["instagram"] = _stub(True, False, "No IG account", "Link an Instagram Business account to your Facebook Page in Meta Business Suite", provider_key="instagram")
+        else:
+            out["instagram"] = _stub(False, False, "Not connected", "Connect Facebook above — Instagram inherits from it.", provider_key="instagram")
 
     # ---- Platform-owner channels (env-based) ----
     out["gmail"] = _stub(
@@ -5911,6 +5930,74 @@ async def _sync_ad_spend_tick():
 def _require_admin(user):
     if (user.get("role") or "user") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@api.get("/admin/platform-setup")
+async def admin_platform_setup(user=Depends(get_current_user)):
+    """Admin-only: status of platform-level Developer App registrations + global service keys.
+    Used by Super Admins to set up the SaaS ONCE — every customer then OAuths via the platform's apps.
+    Never exposes the actual secret values, only whether they're set."""
+    _require_admin(user)
+    public_app_url = os.environ.get("PUBLIC_APP_URL", "").rstrip("/")
+
+    def _detect(*keys):
+        return all(os.environ.get(k) for k in keys)
+
+    providers = [
+        {
+            "id": "linkedin", "label": "LinkedIn",
+            "configured": _detect("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"),
+            "env_keys": ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"],
+            "callback_url": f"{public_app_url}/api/oauth/linkedin/callback" if public_app_url else "<APP_URL>/api/oauth/linkedin/callback",
+            "developer_portal": "https://www.linkedin.com/developers/apps",
+            "products_required": ["Sign In with LinkedIn using OpenID Connect", "Share on LinkedIn"],
+            "scopes": "openid profile email w_member_social",
+            "covers_users": "All ZeroMark users — they OAuth their own LinkedIn through this one app.",
+        },
+        {
+            "id": "twitter", "label": "X (Twitter)",
+            "configured": _detect("TWITTER_CLIENT_ID", "TWITTER_CLIENT_SECRET"),
+            "env_keys": ["TWITTER_CLIENT_ID", "TWITTER_CLIENT_SECRET"],
+            "callback_url": f"{public_app_url}/api/oauth/twitter/callback" if public_app_url else "<APP_URL>/api/oauth/twitter/callback",
+            "developer_portal": "https://developer.twitter.com/en/portal/projects-and-apps",
+            "products_required": ["OAuth 2.0 with PKCE (User auth)"],
+            "scopes": "tweet.read tweet.write users.read offline.access",
+            "covers_users": "All ZeroMark users — Free tier app supports thousands of OAuths.",
+        },
+        {
+            "id": "meta", "label": "Meta (Facebook + Instagram + Ads)",
+            "configured": _detect("FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"),
+            "env_keys": ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
+            "callback_url": f"{public_app_url}/api/oauth/facebook/callback" if public_app_url else "<APP_URL>/api/oauth/facebook/callback",
+            "developer_portal": "https://developers.facebook.com/apps/",
+            "products_required": ["Facebook Login for Business", "Marketing API (for ads)"],
+            "scopes": "pages_manage_posts,pages_read_engagement,pages_show_list,instagram_content_publish,business_management,ads_management,ads_read",
+            "covers_users": "ONE Meta App handles Facebook Pages + Instagram Business + Meta Ads for all ZeroMark customers.",
+        },
+    ]
+
+    services = [
+        {"id": "groq", "label": "Groq (AI engine)", "configured": _detect("GROQ_API_KEY"), "env_keys": ["GROQ_API_KEY"], "purpose": "Powers Quick Plan, ICP, Market Analysis, Content Studio, Co-Pilot"},
+        {"id": "gmail", "label": "Gmail (outbound + IMAP inbound)", "configured": _detect("GMAIL_SENDER_EMAIL", "GMAIL_APP_PASSWORD"), "env_keys": ["GMAIL_SENDER_EMAIL", "GMAIL_APP_PASSWORD"], "purpose": "Email broadcasts + auto-detection of replies → CRM"},
+        {"id": "twilio", "label": "Twilio (SMS + WhatsApp)", "configured": _detect("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"), "env_keys": ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER"], "purpose": "Phone OTP login + SMS/WhatsApp campaigns"},
+        {"id": "razorpay", "label": "Razorpay (subscription + wallet)", "configured": _detect("RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"), "env_keys": ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"], "purpose": "Charges customers for ZeroMark subscriptions + wallet top-ups", "is_test_mode": os.environ.get("RAZORPAY_KEY_ID", "").startswith("rzp_test")},
+        {"id": "fernet", "label": "Encryption key (Fernet)", "configured": _detect("ENCRYPTION_KEY") or _detect("FERNET_KEY"), "env_keys": ["ENCRYPTION_KEY"], "purpose": "Encrypts every OAuth token and Page Access Token at rest"},
+    ]
+
+    flags = {
+        "META_ADS_MOCK_MODE": os.environ.get("META_ADS_MOCK_MODE", "true").lower() == "true",
+        "PUBLIC_APP_URL": public_app_url or "(not set)",
+    }
+
+    cfg_count = sum(1 for p in providers if p["configured"])
+    return {
+        "providers": providers,
+        "services": services,
+        "flags": flags,
+        "configured_count": cfg_count,
+        "total_providers": len(providers),
+        "all_ready": cfg_count == len(providers),
+    }
 
 
 @api.get("/admin/overview")
