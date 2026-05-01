@@ -54,7 +54,8 @@ const baseSections = [
     {
         title: "Settings",
         items: [
-            { to: "/integrations", label: "Integrations", icon: Plugs, testid: "nav-integrations" },
+            { to: "/connect", label: "Connect Channels", icon: Plugs, testid: "nav-connect", badge: "REAL" },
+            { to: "/integrations", label: "Integrations (legacy)", icon: Plugs, testid: "nav-integrations" },
             { to: "/team", label: "Team & Alerts", icon: UsersThree, testid: "nav-team" },
             { to: "/billing", label: "Billing", icon: Receipt, testid: "nav-billing" },
         ],

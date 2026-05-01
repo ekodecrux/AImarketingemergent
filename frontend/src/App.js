@@ -19,6 +19,7 @@ import Reports from "@/pages/Reports";
 import Billing from "@/pages/Billing";
 import Scraping from "@/pages/Scraping";
 import Integrations from "@/pages/Integrations";
+import Connect from "@/pages/Connect";
 import GrowthStudio from "@/pages/GrowthStudio";
 import Team from "@/pages/Team";
 import LandingPages from "@/pages/LandingPages";
@@ -100,6 +101,7 @@ function App() {
                         <Route path="/competitors" element={<Competitors />} />
                         <Route path="/scraping" element={<Scraping />} />
                         <Route path="/integrations" element={<Integrations />} />
+                        <Route path="/connect" element={<Connect />} />
                         <Route path="/business" element={<Business />} />
                         <Route path="/reports" element={<Reports />} />
                         <Route path="/billing" element={<Billing />} />

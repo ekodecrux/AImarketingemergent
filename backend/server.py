@@ -1706,6 +1706,119 @@ async def disconnect_integration(channel: str, user=Depends(get_current_user)):
     return {"success": True}
 
 
+@api.get("/integrations/health")
+async def integrations_health(user=Depends(get_current_user)):
+    """Live verification of every connected channel by hitting a lightweight endpoint per provider.
+    Returns per-channel: {connected, healthy, status_label, message, account_label, last_checked}.
+    Also reports platform-wide capabilities (Gmail SMTP, Twilio, Slack, Razorpay) from env."""
+    integ = await db.integrations.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    out: Dict[str, Dict[str, Any]] = {}
+
+    def _stub(connected: bool, healthy: bool, label: str, msg: str = "", account: str = "") -> Dict[str, Any]:
+        return {"connected": connected, "healthy": healthy, "status_label": label,
+                "message": msg, "account_label": account, "last_checked": now_utc().isoformat()}
+
+    # ---- LinkedIn: hit /v2/userinfo ----
+    li = integ.get("linkedin") or {}
+    if li.get("access_token"):
+        try:
+            tok = _dec(li["access_token"])
+            def _ck():
+                r = _http.get("https://api.linkedin.com/v2/userinfo",
+                              headers={"Authorization": f"Bearer {tok}"}, timeout=8)
+                return r.status_code, (r.json() if r.status_code == 200 else {})
+            sc, data = await asyncio.get_event_loop().run_in_executor(None, _ck)
+            if sc == 200:
+                out["linkedin"] = _stub(True, True, "Live", "Posting as " + (data.get("name") or "you"),
+                                        data.get("name") or li.get("display_name") or "")
+            else:
+                out["linkedin"] = _stub(True, False, "Token stale", f"LinkedIn returned HTTP {sc} — reconnect to refresh")
+        except Exception as e:
+            out["linkedin"] = _stub(True, False, "Check failed", str(e)[:120])
+    else:
+        out["linkedin"] = _stub(False, False, "Not connected", "Click Connect to start the OAuth flow.")
+
+    # ---- Twitter: hit /2/users/me ----
+    tw = integ.get("twitter") or {}
+    if tw.get("access_token"):
+        try:
+            tok = _dec(tw["access_token"])
+            def _ck():
+                r = _http.get("https://api.twitter.com/2/users/me",
+                              headers={"Authorization": f"Bearer {tok}"}, timeout=8)
+                return r.status_code, (r.json() if r.status_code == 200 else {})
+            sc, data = await asyncio.get_event_loop().run_in_executor(None, _ck)
+            if sc == 200:
+                u = (data.get("data") or {})
+                out["twitter"] = _stub(True, True, "Live", f"Posting as @{u.get('username','you')}", u.get("username") or "")
+            else:
+                out["twitter"] = _stub(True, False, "Token stale", f"X returned HTTP {sc} — reconnect")
+        except Exception as e:
+            out["twitter"] = _stub(True, False, "Check failed", str(e)[:120])
+    else:
+        out["twitter"] = _stub(False, False, "Not connected", "Click Connect for OAuth.")
+
+    # ---- Facebook: list /me/accounts pages ----
+    fb = integ.get("facebook") or {}
+    if fb.get("access_token"):
+        pages = fb.get("pages") or []
+        if pages:
+            out["facebook"] = _stub(True, True, "Live", f"Posting via Page: {pages[0].get('name','')}", pages[0].get("name", ""))
+        else:
+            out["facebook"] = _stub(True, False, "No Page", "Connected but no Facebook Page found — pick one in Meta Business Suite first")
+    else:
+        out["facebook"] = _stub(False, False, "Not connected", "Click Connect for OAuth.")
+
+    # ---- Instagram: piggybacks Facebook (IG Business) ----
+    fb_pages = (integ.get("facebook") or {}).get("pages") or []
+    ig_id = next((p.get("instagram_business_account_id") for p in fb_pages if p.get("instagram_business_account_id")), None)
+    if ig_id:
+        out["instagram"] = _stub(True, True, "Live", f"IG Business account ID: {ig_id}", ig_id)
+    elif fb.get("access_token"):
+        out["instagram"] = _stub(True, False, "No IG account", "Connect an Instagram Business account to your Facebook Page")
+    else:
+        out["instagram"] = _stub(False, False, "Not connected", "Connect Facebook first — Instagram inherits from it.")
+
+    # ---- Platform-owner channels (env-based) ----
+    out["gmail"] = _stub(
+        bool(os.environ.get("GMAIL_SENDER_EMAIL") and os.environ.get("GMAIL_APP_PASSWORD")),
+        bool(os.environ.get("GMAIL_SENDER_EMAIL") and os.environ.get("GMAIL_APP_PASSWORD")),
+        "Live (platform)" if os.environ.get("GMAIL_SENDER_EMAIL") else "Not configured",
+        f"Sending from {os.environ.get('GMAIL_SENDER_EMAIL', '—')}",
+        os.environ.get("GMAIL_SENDER_EMAIL", "")
+    )
+    out["twilio_sms"] = _stub(
+        bool(os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_PHONE_NUMBER")),
+        bool(os.environ.get("TWILIO_ACCOUNT_SID")),
+        "Live (platform)" if os.environ.get("TWILIO_ACCOUNT_SID") else "Not configured",
+        f"From {os.environ.get('TWILIO_PHONE_NUMBER', '—')}",
+        os.environ.get("TWILIO_PHONE_NUMBER", "")
+    )
+    out["twilio_whatsapp"] = _stub(
+        bool(os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_WHATSAPP_FROM")),
+        bool(os.environ.get("TWILIO_WHATSAPP_FROM")),
+        "Live (sandbox)" if os.environ.get("TWILIO_WHATSAPP_FROM") else "Not configured",
+        "Recipients must opt-in once via Twilio sandbox join code",
+        os.environ.get("TWILIO_WHATSAPP_FROM", "")
+    )
+    out["razorpay"] = _stub(
+        bool(os.environ.get("RAZORPAY_KEY_ID")),
+        bool(os.environ.get("RAZORPAY_KEY_ID")),
+        "Live test mode" if os.environ.get("RAZORPAY_KEY_ID", "").startswith("rzp_test") else ("Live production" if os.environ.get("RAZORPAY_KEY_ID") else "Not configured"),
+        "Wallet auto-recharge + subscription billing",
+        os.environ.get("RAZORPAY_KEY_ID", "")[:14]
+    )
+    meta_mock = os.environ.get("META_ADS_MOCK_MODE", "true").lower() == "true"
+    out["meta_ads"] = _stub(
+        not meta_mock,
+        not meta_mock,
+        "Mock mode" if meta_mock else "Live production",
+        "Set META_ADS_MOCK_MODE=false + provide META_ACCESS_TOKEN/META_AD_ACCOUNT_ID to enable real ads",
+        ""
+    )
+    return {"channels": out, "checked_at": now_utc().isoformat()}
+
+
 # ---------- Daily AI Growth Briefing ----------
 @api.post("/briefing/generate")
 async def generate_briefing(user=Depends(get_current_user)):
@@ -3509,7 +3622,7 @@ class ScheduleUpdateIn(BaseModel):
     status: Optional[str] = None
 
 
-SUPPORTED_PLATFORMS = {"linkedin", "twitter", "instagram", "email_broadcast", "blog", "whatsapp_broadcast"}
+SUPPORTED_PLATFORMS = {"linkedin", "twitter", "facebook", "instagram", "email_broadcast", "blog", "whatsapp_broadcast"}
 
 
 @api.post("/schedule")
@@ -3605,8 +3718,9 @@ async def publish_schedule_now(sid: str, user=Depends(get_current_user)):
     return res
 
 
-async def _publish_to_linkedin(content: Dict[str, Any], oauth_token: Optional[str]) -> Dict[str, Any]:
-    """Posts a status update to LinkedIn. Falls back to MOCK if no token."""
+async def _publish_to_linkedin(content: Dict[str, Any], oauth_token: Optional[str], member_urn: Optional[str] = None) -> Dict[str, Any]:
+    """Posts a status update to LinkedIn. Falls back to MOCK if no token. Uses real member URN
+    fetched at OAuth time (urn:li:person:{sub}); falls back to /v2/userinfo lookup if missing."""
     body = next((p["body"] for p in (content.get("kit") or {}).get("social_posts", []) if p.get("platform") == "linkedin"), None)
     if not body:
         body = (content.get("kit") or {}).get("blog_post", {}).get("excerpt", "")
@@ -3614,11 +3728,24 @@ async def _publish_to_linkedin(content: Dict[str, Any], oauth_token: Optional[st
         return {"status": "mock_published", "message": "MOCKED — connect LinkedIn OAuth to actually publish.", "preview": body[:200]}
     try:
         import requests as _rq
+        # Lazy URN fetch if missing
+        if not member_urn:
+            try:
+                ui = _rq.get("https://api.linkedin.com/v2/userinfo",
+                            headers={"Authorization": f"Bearer {oauth_token}"}, timeout=10)
+                if ui.status_code == 200:
+                    sub = ui.json().get("sub")
+                    if sub:
+                        member_urn = f"urn:li:person:{sub}"
+            except Exception:
+                pass
+        if not member_urn:
+            return {"status": "failed", "error": "LinkedIn member URN not available — reconnect LinkedIn"}
         r = _rq.post(
             "https://api.linkedin.com/v2/ugcPosts",
             headers={"Authorization": f"Bearer {oauth_token}", "X-Restli-Protocol-Version": "2.0.0", "Content-Type": "application/json"},
             json={
-                "author": "urn:li:person:me",  # caller must have set their URN; this is a stub
+                "author": member_urn,
                 "lifecycleState": "PUBLISHED",
                 "specificContent": {
                     "com.linkedin.ugc.ShareContent": {
@@ -3630,7 +3757,38 @@ async def _publish_to_linkedin(content: Dict[str, Any], oauth_token: Optional[st
             },
             timeout=15,
         )
-        return {"status": "published" if r.status_code in (200, 201) else "failed", "http": r.status_code, "preview": body[:200]}
+        ok = r.status_code in (200, 201)
+        return {"status": "published" if ok else "failed", "http": r.status_code,
+                "post_id": r.headers.get("x-restli-id") if ok else None,
+                "preview": body[:200], "error": (None if ok else r.text[:200])}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)[:120]}
+
+
+async def _publish_to_facebook(content: Dict[str, Any], oauth_token: Optional[str], pages: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Posts to the user's first connected Facebook Page using the Page Access Token (long-lived)."""
+    body = next((p["body"] for p in (content.get("kit") or {}).get("social_posts", []) if p.get("platform") == "facebook"), None)
+    if not body:
+        body = (content.get("kit") or {}).get("blog_post", {}).get("excerpt", "")
+    if not oauth_token or not pages:
+        return {"status": "mock_published", "message": "MOCKED — connect Facebook OAuth and select a Page.", "preview": (body or "")[:200]}
+    page = pages[0]
+    page_token_enc = page.get("page_access_token")
+    page_id = page.get("id")
+    if not page_token_enc or not page_id:
+        return {"status": "failed", "error": "Facebook Page token missing — reconnect Facebook"}
+    try:
+        page_token = _dec(page_token_enc)
+        import requests as _rq
+        r = _rq.post(
+            f"https://graph.facebook.com/v18.0/{page_id}/feed",
+            data={"message": body[:5000], "access_token": page_token},
+            timeout=15,
+        )
+        ok = r.status_code in (200, 201)
+        return {"status": "published" if ok else "failed", "http": r.status_code,
+                "post_id": (r.json().get("id") if ok else None),
+                "preview": body[:200], "error": (None if ok else r.text[:200])}
     except Exception as e:
         return {"status": "failed", "error": str(e)[:120]}
 
@@ -3766,19 +3924,24 @@ async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
         await db.content_schedules.update_one({"id": sched["id"]}, {"$set": {"status": "FAILED", "error": "content missing"}})
         return {"status": "FAILED"}
 
-    # Lookup OAuth tokens (placeholder — real OAuth flow stores these on db.oauth_tokens)
-    tokens_doc = await db.oauth_tokens.find_one({"user_id": sched["user_id"]}, {"_id": 0}) or {}
+    # Canonical OAuth store: db.integrations (populated by /oauth/{provider}/callback)
+    tokens_doc = await db.integrations.find_one({"user_id": sched["user_id"]}, {"_id": 0}) or {}
     def _tok(plat):
         rec = tokens_doc.get(plat) or {}
         enc = rec.get("access_token")
         return _dec(enc) if enc else None
+    def _meta(plat, key):
+        rec = tokens_doc.get(plat) or {}
+        return rec.get(key)
     delivery: Dict[str, Any] = {}
     for plat in sched["platforms"]:
         try:
             if plat == "linkedin":
-                delivery[plat] = await _publish_to_linkedin(content, _tok("linkedin"))
+                delivery[plat] = await _publish_to_linkedin(content, _tok("linkedin"), _meta("linkedin", "linkedin_urn"))
             elif plat == "twitter":
                 delivery[plat] = await _publish_to_twitter(content, _tok("twitter"))
+            elif plat == "facebook":
+                delivery[plat] = await _publish_to_facebook(content, _tok("facebook"), _meta("facebook", "pages"))
             elif plat == "instagram":
                 delivery[plat] = await _publish_to_instagram(content, _tok("instagram"))
             elif plat == "blog":
@@ -4524,6 +4687,48 @@ async def oauth_callback(provider: str, code: str, state: str):
         raise HTTPException(status_code=400, detail="Token exchange failed — see server logs")
 
     access_token = token_data.get("access_token", "")
+    extra_fields: Dict[str, Any] = {}
+    # LinkedIn fix: fetch the real member URN via OIDC userinfo so we don't hardcode 'me'
+    if provider == "linkedin" and access_token:
+        try:
+            def _userinfo():
+                ui = _http.get(
+                    "https://api.linkedin.com/v2/userinfo",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=10,
+                )
+                ui.raise_for_status()
+                return ui.json()
+            ui_data = await asyncio.get_event_loop().run_in_executor(None, _userinfo)
+            sub = ui_data.get("sub")
+            if sub:
+                extra_fields["linkedin_urn"] = f"urn:li:person:{sub}"
+                extra_fields["linkedin_sub"] = sub
+                extra_fields["display_name"] = ui_data.get("name") or ""
+                extra_fields["account_email"] = ui_data.get("email") or ""
+        except Exception as e:
+            logger.warning("LinkedIn userinfo fetch failed (publish may still fail): %s", e)
+    # Facebook fix: fetch user's Pages so we can pick a Page Access Token later
+    if provider == "facebook" and access_token:
+        try:
+            def _pages():
+                pr = _http.get(
+                    "https://graph.facebook.com/v18.0/me/accounts",
+                    params={"access_token": access_token, "fields": "id,name,access_token,instagram_business_account"},
+                    timeout=10,
+                )
+                pr.raise_for_status()
+                return pr.json()
+            p_data = await asyncio.get_event_loop().run_in_executor(None, _pages)
+            pages = p_data.get("data") or []
+            extra_fields["pages"] = [
+                {"id": p.get("id"), "name": p.get("name"),
+                 "page_access_token": _enc(p.get("access_token", "")),
+                 "instagram_business_account_id": (p.get("instagram_business_account") or {}).get("id")}
+                for p in pages if p.get("id")
+            ]
+        except Exception as e:
+            logger.warning("Facebook pages fetch failed: %s", e)
     await db.integrations.update_one(
         {"user_id": rec["workspace_id"]},
         {"$set": {provider: {
@@ -4533,6 +4738,7 @@ async def oauth_callback(provider: str, code: str, state: str):
             "scope": token_data.get("scope"),
             "connected": True,
             "updated_at": now_utc().isoformat(),
+            **extra_fields,
         }}, "$setOnInsert": {"user_id": rec["workspace_id"]}},
         upsert=True,
     )
@@ -6104,7 +6310,7 @@ async def assistant_chat(payload: ChatIn, user=Depends(get_current_user)):
         "Available pages: /dashboard, /analytics, /leads, /campaigns, /approvals, /inbox, /scraping, "
         "/landing-pages, /growth (Growth Studio — start here for new users with the Quick Plan tab), "
         "/content (Content Studio), /schedule (Auto-publish), "
-        "/business (Business Profile), /integrations, /ad-campaigns (paid ads), "
+        "/business (Business Profile), /connect (Connect Channels — set up real LinkedIn/X/Facebook/Instagram for actual posting), /integrations, /ad-campaigns (paid ads), "
         "/team, /reports, /billing (Wallet + plans). "
         "If the user mentions setup or 'getting started', point them at [Quick Plan](/growth) or [Onboarding](/onboarding). "
         "Never apologise. Never say 'as an AI'. If unsure, give them the 1 next concrete step."

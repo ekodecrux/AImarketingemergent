@@ -1,5 +1,22 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 20 (May 2026) — Real Channel Connections (Phase 1 of "from demo to real")
+User: "Bridge gaps in our platform to make it real. User should only spend a few minutes giving credentials with Meta + social media accounts."
+
+**Backend**
+- **Bug fix (critical)**: `_publish_to_linkedin` was hardcoding `urn:li:person:me` — now fetches real member URN from `/v2/userinfo` at OAuth callback time and stores `linkedin_urn` + `linkedin_sub`. Lazy fallback fetch on publish.
+- **Bug fix (critical)**: Publisher dispatcher (`_run_due_schedule`) read tokens from `db.oauth_tokens` (empty), but OAuth callback wrote to `db.integrations`. Fixed: publisher now reads canonical `db.integrations`.
+- **New**: `_publish_to_facebook` — real Graph API publishing using long-lived Page Access Token. OAuth callback now also fetches user's Facebook Pages (`/me/accounts` with `id,name,access_token,instagram_business_account`) and stores them encrypted.
+- **New**: `GET /api/integrations/health` — live verification per channel (LinkedIn `/v2/userinfo`, Twitter `/2/users/me`, Facebook page list, env-checked platform channels for Gmail/Twilio/Razorpay/Meta Ads). Returns `{connected, healthy, status_label, message, account_label}` per channel.
+- **Updated**: `SUPPORTED_PLATFORMS` now includes `facebook`.
+
+**Frontend — `/connect` Connect Channels page**
+- Dark hero with live "X of Y channels live" counter
+- Tier 1 (5-min OAuth setup): LinkedIn, X, Facebook, Instagram, Meta Ads — each with brand-colored card, status pill (Live ✓ / Token stale ⚠ / Not connected ✗), Connect/Reconnect/Disconnect buttons, expandable Setup Guide with numbered step-by-step instructions + "Open" deep-links to LinkedIn/Twitter/Meta developer portals
+- Tier 2 (platform-wide): Gmail SMTP, Twilio SMS, Twilio WhatsApp, Razorpay — info-only cards showing live env-detected status
+- Sidebar: New "Connect Channels" entry with REAL badge; old `/integrations` page kept as legacy
+- Route: `/connect` mounted under AppLayout
+
 ## Iter 19 (Apr 2026) — Unified Plan Overview + Auto-sync (no manual clicks)
 User complaint: "When I change business profile and target, it should automatically reflect everywhere. Feels like too many steps — instead I want a summary of all tabs from the Plan menu with deep-links for detail."
 
