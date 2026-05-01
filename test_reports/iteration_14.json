@@ -1,0 +1,35 @@
+{
+  "summary": "Iter14 — 4-screen Onboarding Wizard end-to-end test (backend + frontend). Backend: 9/9 pytest passing for /api/onboarding/wizard-state, /wizard-dismiss, /wizard-complete including multi-tenant isolation and re-show prevention. Step 3 /quick-plan/generate accepts `monthly_budget` (not monthly_budget_usd). Step 4 /schedule accepts the wizard payload shape (content_id + scheduled_at + platforms). Frontend: Wizard auto-opens on /dashboard, auto-jumps to next undone step (admin → first_post), all required data-testids present, Back button traverses all 4 steps, missing-field validation toast fires on profile step, X close and Skip dismiss correctly, reload after dismiss/complete does NOT reopen wizard, /content/generate → /schedule → /wizard-complete chain on step 4 fires with correct shape. No blocking issues.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "OnboardingWizard header", "issues": ["Kaomoji-style comment `// First-time setup · ~3 min` rendered literally (contains `//`) — reads as stray characters in the UI. Cosmetic only."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_onboarding_wizard.py",
+    "/app/test_reports/pytest/iter14_wizard_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "OnboardingWizard.jsx Step 3 Continue: disabled={!state.step_done?.plan && !planResult} — correct logic, but Continue enables immediately after generatePlan resolves with any truthy body even if planResult has no guaranteed_leads fields. Works as intended; document intent.",
+    "scheduleFirstPost catches all errors and still calls finish() only on success-path, but if /integrations/health returns non-object it could throw before any network call. Consider a try around just that call with empty-default fallback.",
+    "Wizard decides platforms by calling GET /integrations/health and filtering linkedin/twitter/facebook with healthy=true, else falls back to ['blog']. Correctly documented as expected in preview env where OAuth apps aren't registered.",
+    "server.py still 7165 lines — continued recommendation to split onboarding/wizard, setup-status, integrations, admin into separate routers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_onboarding_wizard.py (new — 9 tests)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% — all 4 steps + navigation + dismiss/complete persistence verified"},
+  "test_credentials": "admin@zeromark.ai / admin123 (from /app/memory/test_credentials.md). Fresh TEST_wizard_*/TEST_iso_*/TEST_done_* users created per test via /api/auth/register (first_name+last_name required).",
+  "seed_data_creation": "3 fresh TEST_* users per pytest run; admin's onboarding_wizard_dismissed_at/completed_at unset via mongo before frontend run to make wizard reappear. Admin currently ends in completed state after the full run — main agent/next tester can unset again with: db.users.updateOne({email:'admin@zeromark.ai'},{$unset:{onboarding_wizard_dismissed_at:1,onboarding_wizard_completed_at:1}})",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 17 required wizard data-testids are wired: onboarding-wizard, wizard-step-{profile|channel|plan|first_post}, wizard-business-name, wizard-industry, wizard-audience, wizard-website, wizard-go-connect, wizard-budget, wizard-duration, wizard-generate-plan, wizard-schedule-post, wizard-back, wizard-save-profile, wizard-channel-next, wizard-plan-next, wizard-finish (only visible when first_post done), wizard-skip-all, wizard-close. Admin login redirects to /admin — must navigate explicitly to /dashboard to trigger the wizard. Register endpoint requires first_name+last_name (not single `name`). Login response uses `token` (not `access_token`). To re-show wizard for admin after a run, unset onboarding_wizard_dismissed_at + onboarding_wizard_completed_at on the user doc. Step 4 successfully chains /content/generate → /schedule (platforms=['blog'] fallback since no OAuth in preview) → /onboarding/wizard-complete.",
+  "rca of the issue": "N/A — no bugs found. The wizard meets all 12 acceptance criteria in the review request."
+}

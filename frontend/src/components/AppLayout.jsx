@@ -9,6 +9,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import NotificationsBell from "@/components/NotificationsBell";
 import ChatbotWidget from "@/components/ChatbotWidget";
+import OnboardingWizard from "@/components/OnboardingWizard";
 
 const baseSections = [
     {
@@ -184,6 +185,7 @@ export default function AppLayout() {
                 <Outlet />
             </main>
             <ChatbotWidget />
+            <OnboardingWizard />
         </div>
     );
 }

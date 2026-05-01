@@ -4313,6 +4313,57 @@ async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
     return {"status": overall, "delivery": delivery}
 
 
+# ---------- Onboarding Wizard (4-screen first-login flow) ----------
+@api.get("/onboarding/wizard-state")
+async def onboarding_wizard_state(user=Depends(get_current_user)):
+    """Returns whether the wizard should auto-show on dashboard, plus per-step completion."""
+    wid = ws(user)
+    fresh_user = await db.users.find_one({"id": user["id"]}, {"_id": 0}) or user
+    dismissed = bool(fresh_user.get("onboarding_wizard_dismissed_at"))
+    completed = bool(fresh_user.get("onboarding_wizard_completed_at"))
+
+    profile = await db.business_profiles.find_one({"user_id": wid}, {"_id": 0})
+    integ = await db.integrations.find_one({"user_id": wid}, {"_id": 0}) or {}
+    plan = await db.growth_plans.find_one({"user_id": wid}, {"_id": 0}, sort=[("generated_at", -1)])
+    schedules = await db.publish_schedules.count_documents({"user_id": wid})
+
+    step_done = {
+        "profile": bool(profile and profile.get("business_name") and profile.get("industry") and profile.get("target_audience")),
+        "channel": any((integ.get(p) or {}).get("connected") for p in ("linkedin", "twitter", "facebook", "instagram")),
+        "plan": bool(plan),
+        "first_post": schedules > 0,
+    }
+    next_step = next((k for k, v in step_done.items() if not v), None)
+    show = (not dismissed) and (not completed) and (not all(step_done.values()))
+    return {
+        "show_wizard": show,
+        "dismissed": dismissed,
+        "completed": completed,
+        "step_done": step_done,
+        "next_step": next_step,
+        "completed_count": sum(1 for v in step_done.values() if v),
+        "total_steps": len(step_done),
+    }
+
+
+@api.post("/onboarding/wizard-dismiss")
+async def onboarding_wizard_dismiss(user=Depends(get_current_user)):
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"onboarding_wizard_dismissed_at": now_utc().isoformat()}},
+    )
+    return {"success": True, "dismissed": True}
+
+
+@api.post("/onboarding/wizard-complete")
+async def onboarding_wizard_complete(user=Depends(get_current_user)):
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"onboarding_wizard_completed_at": now_utc().isoformat()}},
+    )
+    return {"success": True, "completed": True}
+
+
 # ---------- Setup status (drives the onboarding checklist) ----------
 @api.get("/setup/status")
 async def setup_status(user=Depends(get_current_user)):
