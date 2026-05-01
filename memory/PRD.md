@@ -1,5 +1,18 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 29 (May 2026) — 4 user-reported auth/onboarding bugs
+User: "1. No Sign-Up option. 2. SMS OTP not working for unregistered numbers. 3. Admin logout doesn't work. 4. Google login onboarding 'What's your goal' doesn't complete."
+
+**Fixes**
+- **Issue 1 (Sign-up visibility)** — Login page CTA changed from subdued "Start free trial" to prominent bold "Sign up free · 14 days, no card" with "New to ZeroMark?" prefix for clarity.
+- **Issue 2 (SMS OTP)** — Already addressed in iter25 (`/auth/sms/verify-otp` returns 403 for unregistered phones with message "No ZeroMark account found — register first with email, add phone in Settings"). Verified toast surfaces cleanly via `SmsAuthForm` handler.
+- **Issue 3 (Admin logout)** — Root cause: `AdminLayout.logout` cleared localStorage/cookies but did NOT reset the `AuthContext.user` state, so the React app kept rendering authenticated surfaces even after backend cookie was cleared. **Fix**: `AdminLayout` now imports and calls `useAuth().logout()` (the single source of truth) which resets user state + wipes all token surfaces + hits backend `/auth/logout`. Playwright verified: clicking admin-logout → /login, and subsequent `/dashboard` access redirects back to `/login`.
+- **Issue 4 (Google onboarding stuck)** — Root cause: step 3's `runAutopilot` hit default axios timeout (often <autopilot duration of 30-90s for multi-AI calls); any error left the user stuck on step 3. **Fixes**:
+  - Extended timeout to 180s
+  - Graceful fallback: on rate-limit/timeout/any error → toast "Autopilot hit a snag — your target was saved. Continuing to dashboard." → auto-navigate to `/dashboard` after 1.5s
+  - Added persistent **"Skip — go to dashboard now"** button on step 3 so users never feel trapped
+  - Note: since iter25, Google callback never returns `is_new=true` (no auto-create), so new users reach onboarding only via email registration — but the same fix applies to all paths.
+
 ## Iter 28 (May 2026) — Meta Ads live + server.py split deferred
 - **`META_ADS_MOCK_MODE=false`** added to `/app/backend/.env`. Verified `/api/ad-platform/accounts` now returns `mock_mode: false`. Safe because `_meta_post` / `_meta_get` still short-circuit to mocks when a user's token starts with `mock_` — only users who bound real tokens via `/api/integrations/meta-ads/bind` (iter22 flow) will execute live Graph API calls.
 - **`server.py` split — DEFERRED to P3 backlog.** Rationale: the file (~7820 lines) is working perfectly and carries heavy intertwining (APScheduler registrations, 20+ helper fns, shared globals). Splitting mid-session risks regressions with zero user-facing benefit. Will revisit as a dedicated refactor sprint with clean git history between each extraction (auth → locale → leads → campaigns → ai → scheduling).

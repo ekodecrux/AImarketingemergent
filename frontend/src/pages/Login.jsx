@@ -79,10 +79,11 @@ export default function Login() {
                     <p className="zm-section-label mb-3">// Sign in</p>
                     <h1 className="font-display text-3xl font-black tracking-tight mb-2 text-[#0F172A]">Welcome back.</h1>
                     <p className="text-sm text-[#64748B] mb-6">
-                        New here?{" "}
-                        <Link to="/register" className="text-[#2563EB] font-semibold hover:underline" data-testid="link-register">
-                            Start free trial
+                        New to ZeroMark?{" "}
+                        <Link to="/register" className="text-[#2563EB] font-bold hover:underline" data-testid="link-register">
+                            Sign up free
                         </Link>
+                        {" "}· 14 days, no card
                     </p>
 
                     {/* Google */}

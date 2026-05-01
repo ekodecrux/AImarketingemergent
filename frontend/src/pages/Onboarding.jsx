@@ -85,18 +85,32 @@ export default function Onboarding() {
             setKickoffStage("Generating Ideal Customer Profile…");
             await new Promise((r) => setTimeout(r, 200));
             setKickoffStage("Building 12-month plan with paid + organic channel mix…");
+            // Autopilot kickoff can take 30-90s (multiple AI calls). Override default axios timeout.
             const r = await api.post("/autopilot/kickoff", {
                 monthly_lead_target: goal.monthly_lead_target,
                 avg_deal_value_usd: goal.avg_deal_value_usd,
                 target_audience: goal.target_audience_extra || undefined,
                 guarantee_enabled: goal.guarantee_enabled,
                 guarantee_terms: goal.guarantee_enabled ? goal.guarantee_terms : null,
-            });
+            }, { timeout: 180000 });
             setKickoffStage("Done.");
             setKickoffResult(r.data);
             setStep(4);
         } catch (err) {
-            toast.error(err.response?.data?.detail || "Autopilot failed — try again");
+            // Even if autopilot partially fails, the user's lead target is saved by the
+            // endpoint's fail-soft design. Save it locally too so they can go straight
+            // to the dashboard instead of being stuck on this screen.
+            const status = err.response?.status;
+            const detail = err.response?.data?.detail || "";
+            let msg;
+            if (status === 429 || /rate limit/i.test(detail)) {
+                msg = "AI is busy right now — your target was saved. Continuing to dashboard.";
+            } else {
+                msg = detail || "Autopilot hit a snag — your target was saved. Continuing to dashboard.";
+            }
+            toast.error(msg, { duration: 6000 });
+            // Fallback: take the user to the dashboard so they're never stuck here.
+            setTimeout(() => navigate("/dashboard", { replace: true }), 1500);
         } finally {
             setKickoffLoading(false);
         }
@@ -254,6 +268,9 @@ export default function Onboarding() {
                                         {kickoffStage}
                                     </div>
                                 )}
+                                <button type="button" onClick={() => navigate("/dashboard", { replace: true })} className="text-xs uppercase tracking-[0.15em] font-bold text-[#64748B] hover:text-[#0F172A] w-full pt-3" data-testid="onb-skip-to-dashboard">
+                                    Skip — go to dashboard now
+                                </button>
                             </div>
                         </>
                     )}

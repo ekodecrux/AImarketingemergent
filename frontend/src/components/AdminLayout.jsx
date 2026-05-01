@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import ChatbotWidget from "@/components/ChatbotWidget";
 import {
     Crown, Gauge, Users, CurrencyDollar, ClockCounterClockwise, SignOut, Eye,
@@ -17,6 +18,7 @@ const NAV = [
 
 export default function AdminLayout() {
     const navigate = useNavigate();
+    const { logout: authLogout } = useAuth();
     const [me, setMe] = useState(null);
     const [denied, setDenied] = useState(false);
 
@@ -34,11 +36,9 @@ export default function AdminLayout() {
     }, [navigate]);
 
     const logout = async () => {
-        try { await api.post("/auth/logout"); } catch (_) {}
-        localStorage.removeItem("zm_token");
-        // Clear any cached auth cookies from client side too
-        document.cookie = "access_token=; Path=/; Max-Age=0";
-        document.cookie = "zm_token=; Path=/; Max-Age=0";
+        // Use the AuthContext logout as single source of truth — clears user state,
+        // localStorage, sessionStorage, cookies, and calls /api/auth/logout.
+        await authLogout();
         navigate("/login", { replace: true });
     };
 
