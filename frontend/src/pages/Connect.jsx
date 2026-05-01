@@ -6,6 +6,7 @@ import PageHeader from "@/components/PageHeader";
 import FacebookPagePicker from "@/components/FacebookPagePicker";
 import MetaAdsBindForm from "@/components/MetaAdsBindForm";
 import HunterBindForm from "@/components/HunterBindForm";
+import GooglePlacesBindForm from "@/components/GooglePlacesBindForm";
 import { useAuth } from "@/context/AuthContext";
 import {
     LinkedinLogo, TwitterLogo, FacebookLogo, InstagramLogo, EnvelopeSimple,
@@ -321,6 +322,7 @@ export default function Connect() {
                     </div>
                     <div className="grid md:grid-cols-2 gap-4" data-testid="tier3-cards">
                         <HunterBindForm />
+                        <GooglePlacesBindForm />
                     </div>
                 </div>
 

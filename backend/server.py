@@ -1663,25 +1663,55 @@ async def start_scrape(payload: ScrapeIn, user=Depends(get_current_user)):
     }
     await db.scraping_jobs.insert_one(job)
 
-    # Generate sample leads using AI based on inputs (demo-friendly, no Playwright)
+    # If user has enabled real Google Places integration AND it's a Maps lead type,
+    # use the live Places API. Otherwise fall back to AI-generated sample leads.
+    use_real_places = False
+    places_settings = None
+    if payload.type == "GOOGLE_MAPS_LEADS":
+        places_settings = await db.lead_source_settings.find_one(
+            {"user_id": ws(user), "source": "google_places"}, {"_id": 0}
+        )
+        use_real_places = bool(
+            places_settings and places_settings.get("enabled") and places_settings.get("api_key_enc")
+        )
+
     try:
-        results = await _ai_generate_sample_leads(payload, user["id"])
-        # Auto-import leads
+        if use_real_places:
+            api_key = _dec(places_settings["api_key_enc"])
+            results, source_label = await _google_places_search(payload, api_key)
+            is_sample_flag = False
+        else:
+            results = await _ai_generate_sample_leads(payload, user["id"])
+            source_label = payload.type
+            is_sample_flag = True
+
         if results and payload.type in ("GOOGLE_MAPS_LEADS", "LINKEDIN_LEADS"):
             for r in results:
                 r["id"] = str(uuid.uuid4())
                 r["user_id"] = user["id"]
                 r["created_at"] = now_utc().isoformat()
-                r["source"] = payload.type
+                r["source"] = source_label
                 r["status"] = "NEW"
-                r["score"] = 50
-                r["is_sample"] = True  # AI-generated demo lead — flag for UI badge
+                r["score"] = 70 if not is_sample_flag else 50  # real leads get higher base score
+                r["is_sample"] = is_sample_flag
             await db.leads.insert_many(results)
+
         await db.scraping_jobs.update_one(
             {"id": job_id},
-            {"$set": {"status": "COMPLETED", "completed_at": now_utc().isoformat(), "result_count": len(results)}},
+            {"$set": {
+                "status": "COMPLETED",
+                "completed_at": now_utc().isoformat(),
+                "result_count": len(results),
+                "source_used": "google_places" if use_real_places else "ai_sample",
+            }},
         )
-        return {"job_id": job_id, "status": "completed", "count": len(results)}
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "count": len(results),
+            "source": "google_places" if use_real_places else "ai_sample",
+            "is_real_data": not is_sample_flag,
+        }
     except Exception as e:
         logger.exception("Scrape failed")
         await db.scraping_jobs.update_one(
@@ -1689,6 +1719,146 @@ async def start_scrape(payload: ScrapeIn, user=Depends(get_current_user)):
             {"$set": {"status": "FAILED", "error": str(e), "completed_at": now_utc().isoformat()}},
         )
         raise HTTPException(status_code=500, detail=f"Scrape failed: {e}")
+
+
+async def _google_places_search(payload: ScrapeIn, api_key: str) -> Tuple[List[Dict[str, Any]], str]:
+    """Live Google Places API call — returns REAL businesses with verified
+    name, address, phone, website, rating. Uses Places API (New) Text Search +
+    Place Details for contact info. Raises HTTPException on quota/key errors."""
+    query = f"{payload.keyword or 'business'} in {payload.location or ''}".strip()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.internationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.types,places.googleMapsUri",
+    }
+    body = {"textQuery": query, "maxResultCount": 20}
+
+    try:
+        # Use sync requests inside executor (Places API doesn't support websockets, simple HTTPS)
+        import requests as _rq
+        resp = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _rq.post("https://places.googleapis.com/v1/places:searchText",
+                             headers=headers, json=body, timeout=20),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach Google Places: {str(e)[:120]}")
+
+    if resp.status_code == 401 or resp.status_code == 403:
+        raise HTTPException(status_code=400, detail="Google Places API key is invalid or Places API isn't enabled in your Google Cloud Console.")
+    if resp.status_code == 429:
+        raise HTTPException(status_code=429, detail="Google Places quota exceeded — check your Google Cloud billing.")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Google Places error {resp.status_code}: {resp.text[:200]}")
+
+    places = (resp.json() or {}).get("places", [])
+    leads: List[Dict[str, Any]] = []
+    for p in places:
+        display = (p.get("displayName") or {}).get("text") or "Unknown"
+        leads.append({
+            "name": display,  # contact name not available from Places — use business name
+            "company": display,
+            "role": "Owner / Manager",
+            "phone": p.get("nationalPhoneNumber") or p.get("internationalPhoneNumber") or "",
+            "email": "",  # Places does not return email; user can enrich via Hunter.io later
+            "address": p.get("formattedAddress") or "",
+            "website": p.get("websiteUri") or "",
+            "notes": (
+                f"Google Maps · ⭐ {p.get('rating', 'N/A')} ({p.get('userRatingCount', 0)} reviews) · "
+                f"{', '.join((p.get('types') or [])[:3])} · "
+                f"View: {p.get('googleMapsUri', '')}"
+            ),
+            "google_place_id": p.get("id"),
+        })
+    return leads, "GOOGLE_PLACES_LIVE"
+
+
+# ---------- Lead source settings (per-user toggles for paid APIs like Google Places) ----------
+class LeadSourceIn(BaseModel):
+    enabled: bool
+    api_key: Optional[str] = None  # Optional — only required when enabling
+
+
+@api.get("/lead-sources/google-places")
+async def get_google_places_settings(user=Depends(get_current_user)):
+    """Returns the user's Google Places integration state (key is masked)."""
+    rec = await db.lead_source_settings.find_one(
+        {"user_id": ws(user), "source": "google_places"}, {"_id": 0}
+    )
+    if not rec:
+        return {"enabled": False, "has_key": False, "updated_at": None}
+    enc = rec.get("api_key_enc")
+    masked = ""
+    if enc:
+        try:
+            raw = _dec(enc)
+            masked = f"{raw[:6]}…{raw[-4:]}" if len(raw) > 10 else "***"
+        except Exception:
+            masked = "(decryption failed)"
+    return {
+        "enabled": bool(rec.get("enabled")),
+        "has_key": bool(enc),
+        "key_preview": masked,
+        "updated_at": rec.get("updated_at"),
+    }
+
+
+@api.post("/lead-sources/google-places")
+async def save_google_places_settings(payload: LeadSourceIn, user=Depends(get_current_user)):
+    """Save the user's Google Places API key + toggle. Key is Fernet-encrypted at rest.
+    If `enabled=true` you MUST also provide a valid api_key (or have one already saved)."""
+    existing = await db.lead_source_settings.find_one(
+        {"user_id": ws(user), "source": "google_places"}, {"_id": 0}
+    )
+    update: Dict[str, Any] = {
+        "user_id": ws(user),
+        "source": "google_places",
+        "enabled": bool(payload.enabled),
+        "updated_at": now_utc().isoformat(),
+        "updated_by": user["email"],
+    }
+    if payload.api_key and payload.api_key.strip():
+        update["api_key_enc"] = _enc(payload.api_key.strip())
+    elif existing and existing.get("api_key_enc"):
+        # Keep the existing encrypted key
+        update["api_key_enc"] = existing["api_key_enc"]
+    elif payload.enabled:
+        raise HTTPException(status_code=400, detail="Cannot enable Google Places without an API key.")
+
+    await db.lead_source_settings.update_one(
+        {"user_id": ws(user), "source": "google_places"},
+        {"$set": update},
+        upsert=True,
+    )
+    return {"success": True, "enabled": update["enabled"], "has_key": bool(update.get("api_key_enc"))}
+
+
+@api.post("/lead-sources/google-places/test")
+async def test_google_places_key(user=Depends(get_current_user)):
+    """Hits Google Places with a tiny query to verify the saved key works."""
+    rec = await db.lead_source_settings.find_one(
+        {"user_id": ws(user), "source": "google_places"}, {"_id": 0}
+    )
+    if not rec or not rec.get("api_key_enc"):
+        raise HTTPException(status_code=400, detail="No API key saved yet.")
+    api_key = _dec(rec["api_key_enc"])
+    test_payload = ScrapeIn(type="GOOGLE_MAPS_LEADS", location="New Delhi", keyword="coffee shop")
+    try:
+        leads, _ = await _google_places_search(test_payload, api_key)
+        sample = leads[:2]
+        return {"success": True, "verified": True, "result_count": len(leads), "sample": sample}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Test failed: {str(e)[:200]}")
+
+
+@api.delete("/lead-sources/google-places")
+async def delete_google_places_settings(user=Depends(get_current_user)):
+    r = await db.lead_source_settings.delete_one(
+        {"user_id": ws(user), "source": "google_places"}
+    )
+    return {"success": True, "deleted": r.deleted_count}
 
 
 async def _ai_generate_sample_leads(payload: ScrapeIn, user_id: str) -> List[Dict[str, Any]]:

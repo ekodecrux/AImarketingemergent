@@ -1,5 +1,33 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 36 (May 2026) — Google Places API as opt-in real-leads source (per-user, default OFF)
+
+User: "keep Google Places api also one option, but give option to toggle on/off, so that if user wanted then he will pay and on this option. By default it should be off"
+
+**Architecture**: Per-user opt-in BYO-key — the platform NEVER pays, the user binds their own Google Cloud API key. When OFF (default), Lead Discovery returns the existing AI-sample fabrications. When ON, hits the live Places API for verified businesses.
+
+**Backend (`server.py`)**
+- **New collection `lead_source_settings`** — `{user_id, source: 'google_places', enabled, api_key_enc, updated_at}`. Keys Fernet-encrypted at rest.
+- **5 new endpoints**:
+  - `GET /api/lead-sources/google-places` — returns `{enabled, has_key, key_preview}` (preview is masked: `AIzaSy…xxxx`)
+  - `POST /api/lead-sources/google-places` — body `{enabled, api_key?}` — saves/toggles
+  - `POST /api/lead-sources/google-places/test` — verifies key with a real "coffee shop in New Delhi" call to Places
+  - `DELETE /api/lead-sources/google-places` — wipes everything
+- **`_google_places_search(payload, api_key)`** — calls `https://places.googleapis.com/v1/places:searchText` (Places API New, Text Search) with `X-Goog-FieldMask` containing displayName, formattedAddress, nationalPhoneNumber, websiteUri, rating, userRatingCount, types, googleMapsUri. Returns leads with `name = company`, `role = "Owner / Manager"`, real phone/address/website, rating in notes, and `google_place_id`. Handles 401/403 (invalid key), 429 (quota), and surfaces clean errors.
+- **`/api/scraping/start`** rewritten — checks `lead_source_settings.enabled` first; if true uses `_google_places_search` (real, `is_sample=false`, score=70); else falls back to `_ai_generate_sample_leads` (sample, `is_sample=true`, score=50). Source label and `is_real_data` boolean returned in response.
+
+**Frontend (`Connect.jsx` + new `GooglePlacesBindForm.jsx` component)**
+- New card under "Power-ups (optional)" section, sibling to Hunter.io.
+- **Toggle row** — large green/gray pill switch, labeled "Use real Google data when scraping" with subtext "Falls back to AI-generated samples (free)" when off.
+- **API key input** with Show/Hide, autofill prevention (decoy fields + unique name + 1Password/LastPass ignore flags) — Save & verify button does atomic save → test → enable flow (key is rejected as invalid? toggle stays OFF).
+- **Saved-key state** — shows masked key (`AIzaSy…xxxx`) with Replace + Remove buttons.
+- **Status pill** — "OFF · Default" (gray) vs "ON · LIVE" (green CheckCircle).
+- **External link** to Google Cloud Console Places API enablement page.
+
+**Verification**
+- curl: GET (off by default) → 200; POST save key → masked preview returned; POST enable=true with no key keeps existing key; test endpoint → real Places API call (Demo key returns 400 "API key not valid" — exactly the right error path).
+- Playwright: card renders, "OFF · Default" pill visible, toggle + key input + Save button all present.
+
 ## Iter 35 (May 2026) — Lead schema expansion + honest "AI SAMPLE" tagging + autofill bug fix
 
 User: "want school name or company name to be added in the leads scraping. Also add lead should allow company name. Without that and address, no use of CRM. Hope you are giving real time leads, not fake ones."
