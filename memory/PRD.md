@@ -1,5 +1,32 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 22 (May 2026) — From demo to real, end-to-end (E + B sprint)
+User asked to ship dashboard widget first (E), then Phase 2+3+4 sprint (B). Tested 25/25 backend + full frontend regression.
+
+**E — Dashboard Channel Health widget**
+- New `ChannelHealthWidget` mounted on `/dashboard` below stat grid: 5 colored channel dots (LinkedIn / X / Facebook / Instagram / Meta Ads), per-channel status sub-label, 60s auto-refresh, "needs attention" callouts with inline Reconnect deep-links to `/connect`. Only surfaces user-facing OAuth channels (not platform-wide services).
+
+**Phase 2 — Real Instagram + Facebook Page picker**
+- `_publish_to_instagram` rewritten as real Meta Graph 2-step flow: (1) `POST /{ig-user-id}/media` with `image_url` + caption → creation_id, (2) `POST /{ig-user-id}/media_publish` → live post. Falls back to placeholder OG image if no image in content kit.
+- `_publish_to_facebook` accepts `selected_page_id` for users with multiple Pages.
+- New `GET /api/integrations/facebook/pages` returns user's Pages (encrypted Page tokens stripped from response).
+- New `POST /api/integrations/facebook/select-page` lets user choose default Page.
+- Publisher dispatcher passes `selected_page_id` from `db.integrations.facebook.selected_page_id`.
+- New `FacebookPagePicker` component embeds inside the Facebook card on `/connect` (only renders when ≥2 Pages exist).
+
+**Phase 3 — Real Meta Ads (per-user)**
+- New `POST /api/integrations/meta-ads/bind` — verifies token has `ads_management` scope via `/me/permissions`, validates Ad Account is active via `/{ad_account_id}` (status, currency, name), stores encrypted, sets per-user `mock_mode=false`.
+- `_meta_post`/`_meta_get` refactored: dropped the global `META_MOCK_MODE` short-circuit; now ONLY token prefix `mock_` triggers mocking. Real bound tokens go live regardless of global flag — safe per-user gradual rollout.
+- New `MetaAdsBindForm` component — 5-step setup card with deep-links to Business Manager + Ad Accounts, encrypted password input, `act_…` regex validation, encryption notice.
+
+**Phase 4 — Hunter.io + Razorpay live swap**
+- New `POST /api/integrations/hunter/bind` — verifies via `/v2/account`, stores plan + remaining quota.
+- Lead enrichment (`/api/leads/{id}/enrich-domain`) now runs Hunter+AI HYBRID: Hunter `/v2/domain-search` for company info + headcount + tech stack, `/v2/email-finder` for likely role, AI fills gaps. Falls back gracefully to AI-only when no Hunter key bound.
+- New `POST /api/admin/razorpay/swap-live` (admin-only) — verifies live keys against Razorpay before persisting to `db.platform_config`, swaps in-memory env, survives backend restart via startup loader.
+- New `HunterBindForm` component on `/connect` Tier 3 "Power-ups" section.
+
+**Test report:** `/app/test_reports/iteration_13.json` — 25/25 backend pytest pass, frontend renders verified, no token leaks, admin gating correct, AI-only enrichment fallback verified.
+
 ## Iter 21 (May 2026) — Multi-tenant clarity: Platform Setup vs User Connect
 User concern: "If I have 100s of users, won't pasting Developer App credentials become painful for the platform owner?"
 Answer: It's a one-time setup — one LinkedIn / X / Meta Developer App per provider serves thousands of customers. Each customer just OAuths through the platform's app in 30 seconds. We made this clear in the UI:
