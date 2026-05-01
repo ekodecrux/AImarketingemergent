@@ -1,5 +1,22 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 32 (May 2026) — Nav regression fix + comprehensive audit
+**User report**: "add campaign option itself gone... you are breaking existing functionality which is not correct"
+
+**Root cause**: In iter25 I simplified the sidebar into 4 groups (Home/Grow/Engage/Settings) and accidentally dropped the "Campaigns" link from the Engage group. Only "Ad Campaigns" (paid Meta) stayed. The `/campaigns` page existed but was orphaned — reachable only by typing the URL. I also discovered `LandingPages` + `LandingPageEditor` components were imported in App.js but had NO `<Route>` defined (dead code from iter pre-25).
+
+**Fixes**
+- **`AppLayout.jsx`**: Added `Campaigns` (PaperPlaneTilt icon, `data-testid="nav-campaigns"`) and moved `Approvals` into the Engage group. Deduped `Approvals` from Home.
+- **`App.js`**: Added the missing `/landing-pages` and `/landing-pages/:id` routes (deduped after an earlier search_replace accidentally doubled them).
+- **Audit automated**: comm-diff of `grep 'path="/'` in App.js vs `grep 'to: "/'` in AppLayout.jsx — ran as a pre-finish check. Now 100% parity for user-facing routes (admin routes intentionally under Admin group).
+
+**Verification** (`/app/test_reports/iteration_32.json`)
+- 15/15 backend pytest PASS (login, auth, leads, CSV import, campaign create+approve-and-send+duplicate+boost, scraping, competitors, AI generate, quick-plan, assistant chat via Gemini, autopilot)
+- 19/19 sidebar links (18 user + 1 admin) resolve to their pages without 404 or error boundary
+- Real email delivered to ekodecrux@gmail.com via `approve-and-send` — campaign transitioned PENDING → SENT with `sent_count >= 1`
+
+**Reusable regression**: `/app/backend/tests/test_iter32_regression.py` — covers 15 critical paths in ~70s for future sanity checks.
+
 ## Iter 31 (May 2026) — Campaign delivery UX + Connect Channels clarity
 **User report**: "users not allowed to add connections, email campaign created but not sent, what to do to make campaigns successful"
 
