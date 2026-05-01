@@ -21,7 +21,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Any, Dict, Tuple
+from typing import List, Optional, Any, Dict, Tuple, Set
 
 import bcrypt
 import jwt
@@ -33,7 +33,7 @@ import email as _email_lib
 from email.header import decode_header
 from email.utils import parseaddr
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, status, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
@@ -777,6 +777,78 @@ async def import_leads(leads: List[LeadIn], user=Depends(get_current_user)):
     if docs:
         await db.leads.insert_many(docs)
     return {"success": True, "count": len(docs)}
+
+
+@api.post("/leads/import-csv")
+async def import_leads_csv(file: UploadFile = File(...), user=Depends(get_current_user)):
+    """Upload a CSV of leads. Headers (any case, any order):
+       email (required), first_name, last_name, phone, company, role, source, notes
+    Returns count of rows imported, count rejected, and a sample of rejection reasons."""
+    import csv as _csv
+    import io as _io
+    try:
+        raw = (await file.read()).decode("utf-8-sig", errors="ignore")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {e}")
+    if len(raw) > 5_000_000:  # 5 MB cap
+        raise HTTPException(status_code=400, detail="CSV too large (>5MB). Split into smaller files.")
+    reader = _csv.DictReader(_io.StringIO(raw))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV is empty or missing headers")
+    # Normalise headers
+    norm = {h: (h or "").strip().lower().replace(" ", "_") for h in reader.fieldnames}
+    rows = []
+    rejected = []
+    seen_emails: Set[str] = set()
+    for i, raw_row in enumerate(reader):
+        if i >= 5000:  # row cap per upload
+            rejected.append({"row": i, "reason": "row cap (5000) reached — split file"})
+            break
+        row = {norm[k]: (v or "").strip() for k, v in raw_row.items() if k}
+        email = (row.get("email") or "").lower()
+        if not email or "@" not in email:
+            rejected.append({"row": i + 1, "reason": "missing/invalid email"})
+            continue
+        if email in seen_emails:
+            rejected.append({"row": i + 1, "reason": f"duplicate in file: {email}"})
+            continue
+        seen_emails.add(email)
+        rows.append({
+            "id": str(uuid.uuid4()),
+            "user_id": ws(user),
+            "email": email,
+            "first_name": row.get("first_name") or row.get("firstname") or "",
+            "last_name": row.get("last_name") or row.get("lastname") or "",
+            "phone": row.get("phone") or "",
+            "company": row.get("company") or "",
+            "role": row.get("role") or row.get("title") or "",
+            "source": row.get("source") or "csv_upload",
+            "notes": row.get("notes") or "",
+            "status": "new",
+            "created_at": now_utc().isoformat(),
+        })
+    if rows:
+        # Skip emails already in CRM for this workspace
+        existing = await db.leads.distinct("email", {"user_id": ws(user), "email": {"$in": [r["email"] for r in rows]}})
+        existing_set = {e.lower() for e in existing if e}
+        fresh = [r for r in rows if r["email"] not in existing_set]
+        skipped = len(rows) - len(fresh)
+        if fresh:
+            await db.leads.insert_many(fresh)
+        try:
+            await _log_activity(user["id"], "lead.imported_csv",
+                                f"Imported {len(fresh)} leads via CSV ({skipped} duplicates skipped, {len(rejected)} rejected)",
+                                details={"filename": file.filename, "imported": len(fresh), "skipped": skipped, "rejected": len(rejected)})
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "imported": len(fresh),
+            "skipped_duplicates_in_workspace": skipped,
+            "rejected": len(rejected),
+            "rejection_sample": rejected[:5],
+        }
+    return {"success": True, "imported": 0, "rejected": len(rejected), "rejection_sample": rejected[:5]}
 
 
 # ---------- Campaigns ----------

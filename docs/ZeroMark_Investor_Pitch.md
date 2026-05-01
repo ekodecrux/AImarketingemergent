@@ -268,6 +268,45 @@ The wizard auto-opens on first dashboard visit.
 
 ---
 
+## 7.1 Enterprise-Readiness Posture (May 2026)
+
+ZeroMark's safety, reliability, and compliance posture has been deliberately hardened ahead of investor due-diligence and pilot deployments at growth-stage SMBs:
+
+### Trust & Safety
+- **Per-channel approval guardrails** — founders toggle approval on/off for Blog, Social, Email, Paid Ads independently. Email + Paid Ads default ON; social/blog default OFF for speed.
+- **Pre-flight content safety filter** runs before every auto-publish. Catches profanity, medical/health claims missing disclaimers, financial-return claims, and pricing claims missing terms-and-conditions language. Blocked content lands in the approvals queue with reason — never silently dropped.
+- **Ad spend circuit breaker at 110% of daily cap** — auto-pauses ALL of a user's active campaigns, writes an audit-log security incident, and alerts via in-app + email + Slack. Hard stop, no silent overruns.
+- **Channel SLA monitoring** — every social channel surfaces last successful publish timestamp, 30-day success-rate %, and token-expiry warning ≤7 days. Stale channels (>24h since last publish) flagged inline.
+
+### Content quality
+- **Brand Voice Profile** — founders set tone + 1-3 example sentences + forbidden words. ZeroMark injects these into every AI prompt, so blogs/social/emails sound like the founder, not generic AI.
+- **Source citations** — every AI blog post auto-appends a "Sources & Citations" section with 3-5 high-authority references. Builds search-engine trust + reader credibility.
+
+### Lead-acquisition coverage
+ZeroMark serves both ends of the spectrum — merchants who ALREADY have a database and merchants who don't yet have a single lead:
+
+| Scenario | Mechanism |
+|---|---|
+| Merchant has CSV list | **CSV upload** at `/leads/import-csv` (any column order, 5K rows/file, automatic duplicate detection) |
+| Merchant has API/JSON leads | Bulk JSON import at `/leads/import` |
+| Merchant has nothing yet | **Public Free SEO Audit** lead magnet (drop the link on their site, prospects opt-in for instant audit, become CRM leads) |
+| Merchant wants competitor intel | **Competitor Watch** — scrape competitor URLs, surface AI insights, identify their highest-converting pages |
+| Merchant wants enriched leads | **Hunter.io + AI hybrid** — fills role, industry, company size, headcount, tech stack from email domain |
+| Merchant wants hosted capture pages | **Landing Pages** — one-click hosted lead-capture pages with custom forms |
+
+### Retention surfaces
+- **"What just happened?" activity feed** on dashboard — 24-hr running log of AI Co-Pilot actions, publishes, blocks, lead captures.
+- **AI quota usage banner** — proactive warning at 80%, hard block at 100% with one-click upgrade CTA.
+- **Resume onboarding banner** — sticky reminder for users who dismissed the wizard mid-way.
+- **Lead Guarantee Confidence Score** (70-100%) — every Quick Plan now includes a transparent confidence percentage based on safety buffer, channel diversity, and budget headroom.
+
+### Operational logging
+- User activity log captures every safety block, circuit breaker trip, channel disconnect, and lead import for forensic review.
+- Admin audit log captures privileged operations (Razorpay live-key swap, user role changes, wallet adjustments).
+- Encrypted at-rest (Fernet AES-128) for every OAuth token, API key, and Page Access Token.
+
+---
+
 ## 8. Roadmap
 
 ### Q3 2026 (Next 90 days)
@@ -317,6 +356,17 @@ The wizard auto-opens on first dashboard visit.
 - [x] Channel Health widget on dashboard
 - [x] Public Free SEO Audit lead magnet
 - [x] **Resilient website fetcher** — 3-strategy fallback (HTTPS → legacy-SSL HTTPS → HTTP) handles old TLS configs, Cloudflare WAFs, and Indian/legacy hosts gracefully. Reused across business autofill, competitor watch, lead enrichment, and SEO audit.
+- [x] **Per-channel approval workflows** (blog/social/email/paid toggles in Business Profile)
+- [x] **Pre-flight content safety filter** — profanity, medical/financial/pricing claim detection blocks unsafe posts pre-publish
+- [x] **Ad spend circuit breaker** at 110% of daily cap with multi-channel alerting
+- [x] **Channel SLA monitoring** (last publish, 30-day success rate, token expiry ≤7 day warning)
+- [x] **Brand Voice Profile** (tone + examples + forbidden words injected into every AI prompt)
+- [x] **Source citations** auto-appended to AI blog posts
+- [x] **Lead Guarantee Confidence Score** (70-100% with band + transparent factors)
+- [x] **Resume Onboarding banner** for users who dismiss the wizard mid-way
+- [x] **"What just happened?" activity feed** on dashboard (60s auto-refresh)
+- [x] **AI quota usage banner** with 80% warn / 100% block + upgrade CTA
+- [x] **CSV lead upload** with header normalization + dup detection (any merchant can onboard their existing list)
 
 ### Pre-launch checklist (next 30 days)
 - [ ] Register LinkedIn / X / Meta Developer Apps under company name

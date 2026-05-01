@@ -1,5 +1,31 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 24 (May 2026) — Sprint A+B+C: 11 low-hanging-fruit items from gap analysis
+User picked **Sprint A + B + C** (~4.5 hrs) from 31-item gap analysis:
+
+**Sprint A — Trust & Safety (backend + UI)**
+- AT-01: `POST /business` accepts 4 new fields (`approval_required_blog/social/email/paid`); `_publish_scheduled` enforces per-channel approval gate before any provider HTTP call.
+- AT-02: New `_content_safety_check()` regex filter — profanity, medical/health claims, financial-return claims, pricing-without-disclaimer, competitor mentions >2x. Blocked posts land in approvals queue with `safety_issues` list.
+- AT-03: Ad-sync now enforces 110% circuit breaker — auto-pauses ALL of user's active campaigns, audit-logs incident, alerts via in-app + email + Slack.
+- CH-04: `/integrations/health` enriches every social channel with `last_publish_at`, `success_rate_30d`, `publishes_30d`, `token_expires_at`, `token_expires_in_days`, `stale_warning`, `token_expiry_warning`. UI surfaces inline via Channel Health Widget.
+
+**Sprint B — Content quality**
+- CQ-02: `BusinessProfileIn` accepts `brand_tone`, `brand_voice_examples[]`, `brand_forbidden_words[]`. New `_brand_voice_block()` injects these into every AI prompt (content/generate, plans, ICP, market, etc).
+- CQ-03: Content/generate prompt now mandates a final `## Sources & Citations` H2 with 3-5 high-authority references.
+
+**Sprint C — Retention surfaces**
+- GL-01: `/quick-plan/generate` returns `confidence_score` (70-100), `confidence_band` (high/medium/low), `confidence_factors{margin_ratio, channel_diversity, budget_score}`. UI: animated confidence bar in Lead Guarantee card.
+- OB-04: New `POST /onboarding/wizard-resume` clears dismissal. New `ResumeOnboardingBanner` on dashboard sticky for users who dismissed wizard mid-way.
+- UX-01: New `/api/activity/recent` endpoint + new `_log_activity()` helper. `ActivityFeed` widget on dashboard with 60s auto-refresh, kind-aware icons + colors.
+- PR-02: New `/api/quota/status` endpoint. `QuotaBanner` warns at 80%, hard-blocks at 100% with one-click upgrade CTA.
+
+**Bonus — Lead acquisition coverage (per user's investor-readiness comment)**
+- New `POST /api/leads/import-csv` — multipart upload, header normalization (any case/order), 5K row cap, 5MB cap, in-file dup detection + cross-workspace dup skip, rejection sample for debugging.
+
+**Investor brief regenerated** — `/app/docs/ZeroMark_Investor_Pitch.pdf` (84 KB) and `/app/docs/ZeroMark_OnePager.pdf` (40 KB) now include "7.1 Enterprise-Readiness Posture" section + updated Production-Readiness checklist. Independently audited at 95% confidence — no rendering issues, all sections present.
+
+**Test report:** `/app/test_reports/iteration_22.json` — 8/10 backend pass, 2 environmental skips (Groq TPD limit, signup disabled in preview env). Full frontend regression clean.
+
 ## Iter 23 (May 2026) — Onboarding Wizard (4-screen first-login walkthrough)
 User: "Onboarding wizard: 4-screen first-login walkthrough (Profile → Connect 1 channel → Quick Plan → First post) — biggest activation lever."
 

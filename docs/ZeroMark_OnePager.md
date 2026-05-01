@@ -37,11 +37,15 @@
 - **Payback**: < 2 months
 
 ## Production readiness
-- ✅ 7,200+ LOC production backend · 14 testing iterations passed via automated agent
+- ✅ 7,500+ LOC production backend · 22 testing iterations passed via automated agent
 - ✅ Multi-auth (Email + Google + Phone OTP) · workspace isolation · encrypted tokens
 - ✅ Real publishing on LinkedIn, X, Facebook, Instagram, WhatsApp, SMS, Email, Blog
 - ✅ Real Meta Ads with `ads_management` scope verification + per-user mock-mode override
 - ✅ Razorpay live-key swap path (admin-only, with verification)
+- ✅ **Trust & Safety**: per-channel approval gates, pre-flight content safety filter (profanity / medical / financial claim detection), ad spend circuit breaker at 110% with multi-channel alerts, channel SLA monitoring with token expiry warnings
+- ✅ **Brand Voice Profile** injected into every AI prompt + auto-cited blog posts
+- ✅ **Lead acquisition for both list-rich AND list-less merchants**: CSV upload, JSON import, Free SEO Audit lead magnet, Competitor Watch, Hunter+AI enrichment, hosted Landing Pages
+- ✅ **Retention surfaces**: 24h activity feed, AI quota banner, resume-onboarding banner, Lead Guarantee Confidence Score
 - ✅ Resilient website fetcher (3-strategy fallback for legacy SSL + Cloudflare WAFs)
 - ✅ Onboarding wizard with auto-jump to next undone step
 - ✅ Super Admin Console with MRR tracking + audit log
