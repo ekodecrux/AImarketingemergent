@@ -1,5 +1,9 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 28 (May 2026) — Meta Ads live + server.py split deferred
+- **`META_ADS_MOCK_MODE=false`** added to `/app/backend/.env`. Verified `/api/ad-platform/accounts` now returns `mock_mode: false`. Safe because `_meta_post` / `_meta_get` still short-circuit to mocks when a user's token starts with `mock_` — only users who bound real tokens via `/api/integrations/meta-ads/bind` (iter22 flow) will execute live Graph API calls.
+- **`server.py` split — DEFERRED to P3 backlog.** Rationale: the file (~7820 lines) is working perfectly and carries heavy intertwining (APScheduler registrations, 20+ helper fns, shared globals). Splitting mid-session risks regressions with zero user-facing benefit. Will revisit as a dedicated refactor sprint with clean git history between each extraction (auth → locale → leads → campaigns → ai → scheduling).
+
 ## Iter 27 (May 2026) — P2 cleanup: Campaign Edit, Auth 403 UX, LLM rename
 - **`PATCH /api/campaigns/{cid}`** — edit in-place while PENDING_APPROVAL (name, channel, subject, content, all recipient targeting fields). Derives `type` from `channel` automatically. Blocks edits once APPROVED/SENT/FAILED with a 400 ("Duplicate it to make changes."). Mirrors content/subject/channel into the linked `db.approvals` record.
 - **Frontend Edit modal** on `/campaigns` — new `EditCampaignModal` opens with full pre-filled state (channel, scope, statuses, lead IDs, extra_recipients CSV). `data-testid="edit-campaign-<id>"` appears only for PENDING_APPROVAL cards. Full recipients picker identical to Create.
