@@ -1,5 +1,21 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 37 (May 2026) — Honest user-side platform-setup status (no more misleading "Coming soon")
+
+User: "user side it should show as platform enabled if something is configured. user side it is still showing as coming soon, it is misleading"
+
+**Root cause**: `/api/integrations/health` was using ENV-only check for `provider_configured`, ignoring the iter34 DB-saved Developer App credentials. So the moment admin saved LinkedIn creds via the UI, the user-side `/connect` page kept saying "Coming soon — platform team setting this up" — flat out wrong.
+
+**Fix**:
+- **Backend `/integrations/health`** — `provider_cfg` dict now uses `await _provider_configured(...)` (DB-first, env-fallback). Single line change, cascades correctly to all 4 channels (linkedin/twitter/facebook/instagram).
+- **Frontend `Connect.jsx` non-admin banner** — adapts to partial readiness. If LinkedIn is configured but FB+X aren't, banner now reads: "**LinkedIn ready · others rolling out** · LinkedIn is live — click their Connect button below to OAuth in 30 sec. Other providers will unlock as our platform team registers their Developer Apps." Falls back to old "all coming soon" message only when no providers are configured at all.
+
+**End-to-end Playwright verification**:
+1. Admin saves LinkedIn creds via `/admin/platform-setup` → toast confirms
+2. Navigate to `/connect` → LinkedIn card shows "Reconnect" + "Disconnect" buttons (real OAuth ready), NOT "AWAITING PLATFORM SETUP"
+3. Other 3 cards (Twitter/FB/IG) correctly stay in "AWAITING PLATFORM SETUP" state
+4. Remove LinkedIn cred → `/connect` card reverts to "AWAITING PLATFORM SETUP"
+
 ## Iter 36 (May 2026) — Google Places API as opt-in real-leads source (per-user, default OFF)
 
 User: "keep Google Places api also one option, but give option to toggle on/off, so that if user wanted then he will pay and on this option. By default it should be off"

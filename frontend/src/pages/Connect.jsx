@@ -122,6 +122,7 @@ export default function Connect() {
     const totalCount = Object.keys(health).length || 9;
     const isAdmin = user?.role === "admin";
     const platformPending = TIER1_OAUTH.some((c) => health[c.id]?.provider_configured === false);
+    const platformReady = TIER1_OAUTH.filter((c) => health[c.id]?.provider_configured === true).map((c) => c.label);
 
     return (
         <div data-testid="connect-page">
@@ -175,16 +176,27 @@ export default function Connect() {
                     </div>
                 </div>
 
-                {/* User-friendly notice if platform providers pending for non-admins */}
+                {/* User-friendly notice — adapts to partial platform readiness */}
                 {!isAdmin && platformPending && (
                     <div className="zm-card p-5 border-l-4 border-[#2563EB] bg-[#EFF6FF]" data-testid="user-platform-pending">
                         <div className="flex items-start gap-3">
                             <WarningCircle size={20} weight="fill" className="text-[#2563EB] mt-0.5" />
                             <div className="flex-1">
-                                <p className="font-bold text-[#0F172A]">Social channels are coming soon</p>
-                                <p className="text-sm text-[#475569] mt-0.5 leading-relaxed">
-                                    LinkedIn, Facebook, Instagram, and X are being set up by our platform team. <strong>Meanwhile, you can already run Email + SMS + WhatsApp campaigns today</strong> — no connection needed. Head to <Link to="/campaigns" className="underline font-semibold text-[#2563EB]">Campaigns</Link> and pick Email or SMS.
-                                </p>
+                                {platformReady.length > 0 ? (
+                                    <>
+                                        <p className="font-bold text-[#0F172A]">{platformReady.join(" + ")} ready · others rolling out</p>
+                                        <p className="text-sm text-[#475569] mt-0.5 leading-relaxed">
+                                            <strong>{platformReady.join(", ")}</strong> {platformReady.length > 1 ? "are" : "is"} live — click their <span className="font-semibold">Connect</span> button below to OAuth in 30 sec. Other providers will unlock as our platform team registers their Developer Apps.
+                                        </p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <p className="font-bold text-[#0F172A]">Social channels are coming soon</p>
+                                        <p className="text-sm text-[#475569] mt-0.5 leading-relaxed">
+                                            LinkedIn, Facebook, Instagram, and X are being set up by our platform team. <strong>Meanwhile, you can already run Email + SMS + WhatsApp campaigns today</strong> — no connection needed. Head to <Link to="/campaigns" className="underline font-semibold text-[#2563EB]">Campaigns</Link> and pick Email or SMS.
+                                        </p>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </div>

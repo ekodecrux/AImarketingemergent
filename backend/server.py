@@ -2242,12 +2242,12 @@ async def integrations_health(user=Depends(get_current_user)):
     integ = await db.integrations.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
     out: Dict[str, Dict[str, Any]] = {}
 
-    # Platform-owner Developer App configuration status (env-based)
+    # Platform-owner Developer App configuration status (DB-first, env fallback — iter34 helper)
     provider_cfg = {
-        "linkedin": bool(os.environ.get("LINKEDIN_CLIENT_ID") and os.environ.get("LINKEDIN_CLIENT_SECRET")),
-        "twitter": bool(os.environ.get("TWITTER_CLIENT_ID") and os.environ.get("TWITTER_CLIENT_SECRET")),
-        "facebook": bool(os.environ.get("FACEBOOK_APP_ID") and os.environ.get("FACEBOOK_APP_SECRET")),
-        "instagram": bool(os.environ.get("FACEBOOK_APP_ID") and os.environ.get("FACEBOOK_APP_SECRET")),
+        "linkedin": await _provider_configured("linkedin"),
+        "twitter": await _provider_configured("twitter"),
+        "facebook": await _provider_configured("facebook"),
+        "instagram": await _provider_configured("facebook"),
     }
 
     def _stub(connected: bool, healthy: bool, label: str, msg: str = "", account: str = "", provider_key: Optional[str] = None) -> Dict[str, Any]:
