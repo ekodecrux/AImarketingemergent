@@ -40,7 +40,14 @@ export const AuthProvider = ({ children }) => {
 
     const logout = async () => {
         try { await api.post("/auth/logout"); } catch (_) {}
-        localStorage.removeItem("zm_token");
+        // Wipe every token surface so no stale session lingers for ANY role
+        try { localStorage.removeItem("zm_token"); } catch (_) {}
+        try { sessionStorage.clear(); } catch (_) {}
+        try {
+            document.cookie = "access_token=; Path=/; Max-Age=0";
+            document.cookie = "zm_token=; Path=/; Max-Age=0";
+            document.cookie = "access_token=; Path=/api; Max-Age=0";
+        } catch (_) {}
         setUser(null);
     };
 

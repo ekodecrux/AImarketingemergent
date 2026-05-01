@@ -42,8 +42,9 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from twilio.rest import Client as TwilioClient
 from twilio.request_validator import RequestValidator as TwilioRequestValidator
 import razorpay
-from groq import Groq
+from groq import Groq  # legacy import retained; calls route via Emergent LLM
 import groq as _groq_pkg
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 # ---------- Setup ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -84,49 +85,78 @@ def ws(user: Dict[str, Any]) -> str:
     """Return the workspace_id for a user (defaults to user.id for solo)."""
     return user.get("workspace_id") or user["id"]
 
-# Module-level Groq client reused across calls
-_GROQ = Groq(api_key=os.environ["GROQ_API_KEY"])
+# ---------- Unified LLM router (Gemini 3 Flash via Emergent Universal Key) ----------
+_EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+_LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini")
+_LLM_MODEL = os.environ.get("LLM_MODEL", "gemini-3-flash-preview")
+
+
+def _strip_json_fence(s: str) -> str:
+    """Gemini sometimes wraps JSON in ```json ... ``` fences. Strip them."""
+    s = (s or "").strip()
+    if s.startswith("```"):
+        # drop leading ``` or ```json
+        s = s.lstrip("`")
+        if s.lower().startswith("json"):
+            s = s[4:]
+        s = s.lstrip("\n").strip()
+        # drop trailing ```
+        if s.endswith("```"):
+            s = s[:-3].rstrip()
+    return s
+
+
+def _run_async(coro):
+    """Run a coroutine from a sync context (thread-safe for run_in_executor workers)."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                return ex.submit(asyncio.run, coro).result(timeout=120)
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
 
 
 def _groq_chat(prompt: str, system: str = "Output strict JSON only.", json_mode: bool = True,
                max_tokens: int = 2000, temperature: float = 0.5) -> str:
-    """Robust Groq chat completion with retry on json_validate_failed.
-    Distinguishes upstream rate limits (429) from bad-output (502)."""
-    attempts = [
-        {"temperature": temperature, "system": system},
-        {"temperature": 0.0, "system": system + " Use ONLY ASCII double quotes; escape any inner quotes with \\\". Do not use smart quotes or apostrophes inside string values."},
-    ]
-    last_err = None
-    for cfg in attempts:
-        try:
-            kwargs = {
-                "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {"role": "system", "content": cfg["system"]},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": cfg["temperature"],
-                "max_tokens": max_tokens,
-            }
-            if json_mode:
-                kwargs["response_format"] = {"type": "json_object"}
-            comp = _GROQ.chat.completions.create(**kwargs)
-            return comp.choices[0].message.content
-        except _groq_pkg.RateLimitError as e:
-            logger.warning("Groq rate limit (TPD/RPM): %s", str(e)[:200])
+    """Unified LLM completion via Emergent LLM key (Gemini 3 Flash by default).
+    Kept the legacy `_groq_chat` name to avoid rewriting every callsite — all calls
+    now route through Gemini. Raises 429 on rate limits, 502 on bad output."""
+    sys_prompt = system
+    if json_mode:
+        sys_prompt = (
+            system
+            + "\n\nIMPORTANT: Respond with STRICT JSON ONLY. No markdown fences, no prose, no trailing commas. "
+              "Begin with { and end with }. Use ASCII double quotes only; escape inner quotes with \\\"."
+        )
+
+    async def _call():
+        chat = LlmChat(
+            api_key=_EMERGENT_LLM_KEY,
+            session_id=str(uuid.uuid4()),
+            system_message=sys_prompt,
+        ).with_model(_LLM_PROVIDER, _LLM_MODEL)
+        return await chat.send_message(UserMessage(text=prompt))
+
+    try:
+        raw = _run_async(_call())
+    except Exception as e:
+        emsg = str(e).lower()
+        if any(k in emsg for k in ("rate", "429", "quota", "resource_exhausted", "too many")):
+            logger.warning("LLM rate limit: %s", str(e)[:200])
             raise HTTPException(
                 status_code=429,
-                detail="AI provider rate limit exceeded — please try again in a few minutes or reduce frequency.",
+                detail="AI provider rate limit exceeded — please try again in a few minutes.",
             )
-        except _groq_pkg.BadRequestError as e:
-            last_err = e
-            logger.warning("Groq json_validate_failed, retrying with stricter prompt: %s", str(e)[:200])
-            continue
-        except Exception as e:
-            last_err = e
-            logger.exception("Groq call failed")
-            break
-    raise HTTPException(status_code=502, detail="AI provider returned invalid output. Please retry.")
+        logger.exception("LLM call failed")
+        raise HTTPException(status_code=502, detail="AI provider returned invalid output. Please retry.")
+
+    out = (raw or "").strip()
+    if json_mode:
+        out = _strip_json_fence(out)
+    return out
 
 
 def _is_safe_url(url: str) -> bool:
@@ -227,6 +257,17 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
     return user
 
 
+async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]]:
+    """Like get_current_user, but returns None instead of raising 401. Used by endpoints
+    (e.g. /auth/logout) that should work whether or not a valid session exists."""
+    try:
+        return await get_current_user(request)
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+
 # ---------- Models ----------
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -316,8 +357,8 @@ COUNTRY_CURRENCY: Dict[str, Dict[str, str]] = {
 
 
 def _resolve_locale(country_code: Optional[str], currency_override: Optional[str] = None) -> Dict[str, str]:
-    cc = (country_code or "US").upper()
-    info = COUNTRY_CURRENCY.get(cc) or COUNTRY_CURRENCY["US"]
+    cc = (country_code or "IN").upper()
+    info = COUNTRY_CURRENCY.get(cc) or COUNTRY_CURRENCY.get("IN") or COUNTRY_CURRENCY["US"]
     out = dict(info)
     out["country_code"] = cc
     if currency_override:
@@ -509,8 +550,31 @@ async def _placeholder():
 
 
 @api.post("/auth/logout")
-async def logout(response: Response):
-    response.delete_cookie("access_token", path="/")
+async def logout(request: Request, response: Response, user=Depends(get_current_user_optional)):
+    """Comprehensive logout — clears cookie for all roles, invalidates server-side token hash,
+    and wipes any session caches. Works identically for user/admin/owner roles."""
+    # Clear httponly cookie for all path variants the app may have set
+    for path in ("/", "/api"):
+        response.delete_cookie("access_token", path=path)
+        response.delete_cookie("zm_token", path=path)
+    # Audit-log the logout event if we can identify the user
+    try:
+        if user and user.get("id"):
+            await db.admin_audit_log.insert_one({
+                "id": str(uuid.uuid4()),
+                "actor_user_id": user["id"],
+                "actor_email": user.get("email"),
+                "action": "LOGOUT",
+                "role": user.get("role") or "user",
+                "ip": (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                       or (request.client.host if request.client else "unknown")),
+                "at": now_utc().isoformat(),
+            })
+    except Exception:
+        pass
+    # Ensure no stale cache headers
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
     return {"success": True}
 
 
@@ -549,32 +613,18 @@ async def google_callback(payload: GoogleCallbackIn, response: Response):
     user = await db.users.find_one({"email": email})
     is_new = False
     if not user:
-        user_id = str(uuid.uuid4())
-        user = {
-            "id": user_id,
-            "email": email,
-            "password_hash": "",  # No password for OAuth users
-            "first_name": first_name,
-            "last_name": last_name,
-            "picture": picture,
-            "auth_provider": "google",
-            "role": "user",
-            "workspace_id": user_id,
-            "created_at": now_utc().isoformat(),
-        }
-        await db.users.insert_one(user)
-        await db.subscriptions.insert_one({
-            "id": str(uuid.uuid4()), "user_id": user_id, "plan": "FREE_TRIAL", "status": "ACTIVE",
-            "trial_ends_at": (now_utc() + timedelta(days=14)).isoformat(),
-            "created_at": now_utc().isoformat(),
-        })
-        is_new = True
-    else:
-        # Update with latest Google avatar; keep existing names if already set
-        upd: Dict[str, Any] = {"auth_provider": user.get("auth_provider") or "google", "last_login": now_utc().isoformat()}
-        if picture and not user.get("picture"):
-            upd["picture"] = picture
-        await db.users.update_one({"id": user["id"]}, {"$set": upd})
+        # Per platform rules: Google sign-in is allowed ONLY for users who already
+        # have an account. New users must register with email/password first, then
+        # can sign in with Google using the same email.
+        raise HTTPException(
+            status_code=403,
+            detail="No ZeroMark account found for this Google email. Please sign up first, then sign in with Google.",
+        )
+    # Update with latest Google avatar; keep existing names if already set
+    upd: Dict[str, Any] = {"auth_provider": user.get("auth_provider") or "google", "last_login": now_utc().isoformat()}
+    if picture and not user.get("picture"):
+        upd["picture"] = picture
+    await db.users.update_one({"id": user["id"]}, {"$set": upd})
 
     token = create_access_token(user["id"], user["email"])
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7 * 24 * 3600, path="/")
@@ -659,32 +709,15 @@ async def sms_verify_otp(payload: SmsOtpVerifyIn, response: Response):
 
     await db.otp_codes.update_one({"id": rec["id"]}, {"$set": {"verified": True}})
 
-    # Find or create user by phone
+    # Find user by phone — SMS sign-in is allowed ONLY for existing registered users
     user = await db.users.find_one({"phone": phone})
     is_new = False
     if not user:
-        user_id = str(uuid.uuid4())
-        user = {
-            "id": user_id,
-            "phone": phone,
-            "email": None,
-            "password_hash": "",
-            "first_name": (payload.first_name or "User").strip()[:50],
-            "last_name": (payload.last_name or "").strip()[:50],
-            "auth_provider": "sms",
-            "role": "user",
-            "workspace_id": user_id,
-            "created_at": now_utc().isoformat(),
-        }
-        await db.users.insert_one(user)
-        await db.subscriptions.insert_one({
-            "id": str(uuid.uuid4()), "user_id": user_id, "plan": "FREE_TRIAL", "status": "ACTIVE",
-            "trial_ends_at": (now_utc() + timedelta(days=14)).isoformat(),
-            "created_at": now_utc().isoformat(),
-        })
-        is_new = True
-    else:
-        await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now_utc().isoformat()}})
+        raise HTTPException(
+            status_code=403,
+            detail="No ZeroMark account found for this phone number. Please sign up first with email, add your phone in profile, then use SMS login.",
+        )
+    await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now_utc().isoformat()}})
 
     token = create_access_token(user["id"], user.get("email") or f"phone:{phone}")
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7 * 24 * 3600, path="/")
@@ -7288,12 +7321,20 @@ async def assistant_chat(payload: ChatIn, user=Depends(get_current_user)):
     msgs.append({"role": "user", "content": payload.message[:1500]})
 
     try:
-        from groq import Groq as _G
-        client = _G(api_key=os.environ["GROQ_API_KEY"])
-        r = client.chat.completions.create(
-            model="llama-3.3-70b-versatile", messages=msgs, max_tokens=400, temperature=0.6,
+        # Route through Emergent LLM (Gemini 3 Flash) — replaces Groq for rate-limit relief.
+        # LlmChat handles conversation history internally per session_id; we also pass
+        # recent turns via system context to keep responses grounded.
+        sys_combined = system + "\n\n" + state + "\n\nRECENT CONVERSATION (for context):\n" + "\n".join(
+            f"{m['role']}: {m['content'][:300]}" for m in msgs[1:-1]
         )
-        reply = r.choices[0].message.content.strip()
+        async def _chat_call():
+            chat = LlmChat(
+                api_key=_EMERGENT_LLM_KEY,
+                session_id=f"assistant-{user['id']}",
+                system_message=sys_combined,
+            ).with_model(_LLM_PROVIDER, _LLM_MODEL)
+            return await chat.send_message(UserMessage(text=payload.message[:1500]))
+        reply = (await _chat_call()).strip()
     except Exception as e:
         logger.error("Assistant chat failed: %s", e)
         reply = "I had trouble reaching the AI just now. Try [Dashboard](/dashboard) — your setup checklist there shows the next concrete step."

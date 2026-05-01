@@ -1,0 +1,36 @@
+{
+  "summary": "Iter23 — Auth restrictions, IN/INR locale defaults, and Groq→Gemini LLM swap. Backend 10/10 pytest cases pass. Frontend smoke: 4-group sidebar (Home/Grow/Engage/Settings + Admin) renders, all required data-testids present, sidebar freeze verified (bbox unchanged after main-content scroll), AppLayout logout redirects to /login and protects /dashboard, AdminLayout has dark frozen sidebar (rgb(11,17,32)) with working admin-logout, ChatbotWidget produces a high-quality Gemini reply that mentions India (confirms locale default propagates into LLM context).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_auth_locale_llm.py",
+    "/app/test_reports/pytest/iter23_results.xml"
+  ],
+  "action_items": [
+    "All 5 user-requested fixes verified end-to-end. No action items.",
+    "Optional: Recommend showing a non-blocking toast on Google/SMS sign-in failure ('No account found, please register first') so users understand the new restriction instead of seeing a generic 403.",
+    "Optional (carry-over from iter22): server.py is >7700 lines — split into auth/locale/billing/llm modules for maintainability."
+  ],
+  "critical_code_review_comments": [
+    "_groq_chat function name is now misleading since it routes to Gemini via Emergent LLM — rename to _llm_chat to avoid future confusion (server.py ~lines 88-160).",
+    "google_callback raises 403 for unknown email but the variable `is_new` is set before the raise — dead code that should be removed (server.py ~614-622).",
+    "logout endpoint clears cookies for paths '/' and '/api' which is good, but consider also clearing for the explicit cookie domain if any reverse-proxy rewrites it (server.py ~556-558)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter23_auth_locale_llm.py"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all testids + flows verified)"},
+  "test_credentials": "admin@zeromark.ai / admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Registered ephemeral TEST_iter23_<uuid>@example.com via /api/auth/register to verify default IN/INR locale for newly-registered users. Not cleaned up (preview env, low-value seed).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter23 backend test suite at /app/backend/tests/test_iter23_auth_locale_llm.py covers: admin login, logout (with/without token), open registration, restricted Google OAuth (401 on bad session), restricted SMS OTP (403 'No account found' for new phones), default IN/INR locale, Gemini-backed assistant chat, quick-plan generate, content/generate. Use this as regression suite. EMERGENT_LLM_KEY working with gemini-3-flash-preview as of 2026-05-01 — chatbot reply quality is good and respects India context.",
+  "rca of the issue": "N/A — no failures."
+}

@@ -33,9 +33,13 @@ export default function AdminLayout() {
             .catch(() => navigate("/login"));
     }, [navigate]);
 
-    const logout = () => {
+    const logout = async () => {
+        try { await api.post("/auth/logout"); } catch (_) {}
         localStorage.removeItem("zm_token");
-        navigate("/login");
+        // Clear any cached auth cookies from client side too
+        document.cookie = "access_token=; Path=/; Max-Age=0";
+        document.cookie = "zm_token=; Path=/; Max-Age=0";
+        navigate("/login", { replace: true });
     };
 
     if (denied) {
@@ -53,10 +57,10 @@ export default function AdminLayout() {
     if (!me) return <div className="min-h-screen flex items-center justify-center text-sm text-[#64748B]">Loading admin console…</div>;
 
     return (
-        <div className="min-h-screen flex bg-[#0B1120] text-white" data-testid="admin-shell">
-            {/* Admin Sidebar — distinct DARK theme to make it OBVIOUSLY a different surface */}
-            <aside className="w-64 shrink-0 bg-[#0F172A] border-r border-white/5 flex flex-col">
-                <div className="px-5 py-5 border-b border-white/5 flex items-center gap-2.5">
+        <div className="h-screen flex bg-[#0B1120] text-white overflow-hidden" data-testid="admin-shell">
+            {/* Admin Sidebar — distinct DARK theme, frozen full-height with own scroll */}
+            <aside className="w-64 shrink-0 bg-[#0F172A] border-r border-white/5 flex flex-col h-screen sticky top-0">
+                <div className="px-5 py-5 border-b border-white/5 flex items-center gap-2.5 shrink-0">
                     <div className="w-9 h-9 rounded-md bg-gradient-to-br from-[#F59E0B] to-[#EF4444] flex items-center justify-center">
                         <Crown size={18} weight="fill" className="text-white" />
                     </div>
@@ -66,7 +70,7 @@ export default function AdminLayout() {
                     </div>
                 </div>
 
-                <nav className="flex-1 py-4 px-3 space-y-1">
+                <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
                     <p className="text-[9px] uppercase tracking-[0.22em] text-white/40 font-bold px-3 mb-2">// Admin</p>
                     {NAV.map((n) => (
                         <NavLink
@@ -96,7 +100,7 @@ export default function AdminLayout() {
                     </div>
                 </nav>
 
-                <div className="p-3 border-t border-white/5">
+                <div className="p-3 border-t border-white/5 shrink-0">
                     <div className="px-3 py-2 mb-2">
                         <p className="text-xs font-bold truncate">{me.email}</p>
                         <p className="text-[10px] uppercase tracking-[0.18em] text-[#F59E0B] font-bold mt-0.5 flex items-center gap-1">
@@ -113,7 +117,7 @@ export default function AdminLayout() {
                 </div>
             </aside>
 
-            <main className="flex-1 min-w-0 bg-[#F8FAFC] text-[#0F172A] overflow-y-auto">
+            <main className="flex-1 min-w-0 bg-[#F8FAFC] text-[#0F172A] overflow-y-auto h-screen" data-testid="admin-main">
                 <Outlet />
             </main>
             <ChatbotWidget />
