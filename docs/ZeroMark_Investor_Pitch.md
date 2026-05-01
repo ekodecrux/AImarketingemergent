@@ -316,6 +316,7 @@ The wizard auto-opens on first dashboard visit.
 - [x] Health-check endpoint for every channel
 - [x] Channel Health widget on dashboard
 - [x] Public Free SEO Audit lead magnet
+- [x] **Resilient website fetcher** — 3-strategy fallback (HTTPS → legacy-SSL HTTPS → HTTP) handles old TLS configs, Cloudflare WAFs, and Indian/legacy hosts gracefully. Reused across business autofill, competitor watch, lead enrichment, and SEO audit.
 
 ### Pre-launch checklist (next 30 days)
 - [ ] Register LinkedIn / X / Meta Developer Apps under company name
