@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import api from "@/lib/api";
+import { useNavigate } from "react-router-dom";import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import { Plus, Trash, MagnifyingGlass, X, Sparkle, UploadSimple } from "@phosphor-icons/react";
@@ -162,6 +161,21 @@ function BulkUploadModal({ onClose, onDone }) {
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
+
+    // Close on Escape
+    useEffect(() => {
+        const h = (e) => { if (e.key === "Escape") (result ? onDone() : onClose()); };
+        window.addEventListener("keydown", h);
+        return () => window.removeEventListener("keydown", h);
+    }, [result, onClose, onDone]);
+
+    // Auto-close 1.5s after successful import
+    useEffect(() => {
+        if (result && result.imported > 0) {
+            const t = setTimeout(() => onDone(), 1500);
+            return () => clearTimeout(t);
+        }
+    }, [result, onDone]);
 
     const submit = async (e) => {
         e.preventDefault();

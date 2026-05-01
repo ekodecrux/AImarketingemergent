@@ -1,5 +1,23 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 26 (May 2026) — 8-issue sweep: scrape + bulk upload + competitor scan + campaign recipients/duplicate
+User bug report (8 items): (1) Quick Plan "AI busy", (2) menu not frozen, (3) Lead Scrape broken, (4) no bulk upload, (5) can't add lead, (6) competitor scan broken, (7) no receiver selector on campaigns, (8) no manage/rerun campaigns.
+
+**Status**: Items 1+2 already resolved in iter25. This iter fixes 3–8.
+
+**Backend fixes**
+- **Competitor scan NameError fix** (`_scrape_url_quick`, server.py ~L4075–4115): replaced orphaned `r.url` with the `final_url` tuple returned by `_fetch_website_resilient`. Scan now returns clean 200 with title/meta/h1s/AI analysis. (Critical bug.)
+- **Campaign recipient targeting**: `CampaignIn` extended with `recipient_scope` (`all_leads | by_status | selected | manual`), `recipient_statuses[]`, `recipient_lead_ids[]`, `extra_recipients[]` (free-form emails/phones). `_run_campaign_send` honors the scope — filters leads by status/IDs or sends to manual list; `extra_recipients` are merged as pseudo-leads with email OR phone.
+- **Campaign duplicate/rerun**: new `POST /api/campaigns/{cid}/duplicate` — clones the full campaign (content, subject, scope, recipients) into a fresh PENDING_APPROVAL with `(copy)` suffix and separate approval record. Used for both "Duplicate" and "Rerun" flows.
+- Cleanup: removed a leftover duplicated `shutdown()` + admin seed block at EOF (indentation error was preventing clean startup after the swap).
+
+**Frontend additions**
+- **`Leads.jsx` — Bulk Upload**: new `BulkUploadModal` (multipart CSV → `/api/leads/import-csv`) with inline guide (headers, 5MB/5K cap), result card with imported/skipped/rejected counts, Escape-to-close, auto-close 1.5s after success. `data-testid="open-bulk-upload-modal"`, `"bulk-upload-file"`, `"bulk-upload-submit"`.
+- **`Campaigns.jsx` — Recipients selector**: 4-way scope picker (All leads / By status / Pick leads / Manual entry) with contextual controls: status multi-check, scrollable lead list (loaded from `/leads?limit=100`), manual textarea for comma/newline-separated emails or phones. Summary line tells user exactly how many recipients will be hit.
+- **`Campaigns.jsx` — Duplicate + Rerun**: Card actions now show a Copy icon ("Duplicate") for any campaign, and a prominent "Rerun" button for SENT/FAILED campaigns — both POST `/campaigns/{cid}/duplicate`.
+
+**Test report:** `/app/test_reports/iteration_24.json` — 9/9 backend pytest pass (covers all 6 fix paths + iter25 regression), frontend flows verified (bulk upload e2e, Add Lead modal, scope picker rendering).
+
 ## Iter 25 (May 2026) — Auth hardening, IN/INR defaults, Groq→Gemini swap, 4-group nav
 User prompt: "complete fixes.. make it more user intuitive flow ... no confusion, no multiple menus navigation... Also groq AI gives limit issues.. what is alternative"
 
