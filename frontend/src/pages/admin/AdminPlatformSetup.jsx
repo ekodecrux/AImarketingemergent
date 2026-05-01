@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import {
     CheckCircle, XCircle, ArrowSquareOut, Copy, Crown, Sparkle, Lock,
-    LinkedinLogo, TwitterLogo, FacebookLogo,
+    LinkedinLogo, TwitterLogo, FacebookLogo, FloppyDisk, Trash, Database,
 } from "@phosphor-icons/react";
 
 const PROVIDER_ICONS = {
@@ -19,15 +19,15 @@ const SETUP_STEPS = {
         { title: "Add 'Sign In with LinkedIn using OpenID Connect' product", url: "https://www.linkedin.com/developers/apps", note: "Auto-approved." },
         { title: "Add 'Share on LinkedIn' product", url: null, note: "Auto-approved instantly. Required for posting." },
         { title: "Add Authorized redirect URL", url: null, note: "Use the callback URL shown below." },
-        { title: "Copy Client ID + Secret to backend .env", url: null, note: "LINKEDIN_CLIENT_ID + LINKEDIN_CLIENT_SECRET" },
-        { title: "Restart backend → all customers can now Connect with LinkedIn", url: null, note: "From here, every customer OAuths in 30 sec — you don't touch this app again." },
+        { title: "Paste Client ID + Secret in the form below", url: null, note: "Saves instantly — no backend restart needed." },
+        { title: "Done! All customers can now Connect with LinkedIn", url: null, note: "Every customer OAuths in 30 sec through your app." },
     ],
     twitter: [
         { title: "Create a Twitter Developer Project", url: "https://developer.twitter.com/en/portal/projects-and-apps", note: "Free tier supports OAuth 2.0 + posting." },
         { title: "Set up User authentication", url: null, note: "OAuth 2.0 with PKCE · type 'Web App'" },
         { title: "Set Callback URL + Website URL", url: null, note: "Callback shown below." },
         { title: "Required scopes", url: null, note: "tweet.read, tweet.write, users.read, offline.access" },
-        { title: "Copy Client ID + Secret to backend .env", url: null, note: "TWITTER_CLIENT_ID + TWITTER_CLIENT_SECRET" },
+        { title: "Paste Client ID + Secret in the form below", url: null, note: "Saves instantly — no backend restart needed." },
     ],
     meta: [
         { title: "Create a Meta Developer App", url: "https://developers.facebook.com/apps/", note: "Type: Business → assign to your Business Manager." },
@@ -35,7 +35,7 @@ const SETUP_STEPS = {
         { title: "Add 'Marketing API' product (for Meta Ads later)", url: null, note: "Same app handles FB Pages + Instagram + Ads." },
         { title: "Request permissions in App Review", url: null, note: "pages_manage_posts, pages_read_engagement, pages_show_list, instagram_content_publish, business_management, ads_management, ads_read" },
         { title: "Add Valid OAuth Redirect URI", url: null, note: "Use the callback URL below." },
-        { title: "Copy App ID + Secret to backend .env", url: null, note: "FACEBOOK_APP_ID + FACEBOOK_APP_SECRET" },
+        { title: "Paste App ID + Secret in the form below", url: null, note: "Saves instantly — no backend restart needed." },
     ],
 };
 
@@ -43,16 +43,124 @@ function copyToClipboard(text) {
     navigator.clipboard?.writeText(text).then(() => toast.success("Copied to clipboard")).catch(() => toast.error("Copy failed"));
 }
 
+function CredForm({ provider, onSaved }) {
+    const [clientId, setClientId] = useState("");
+    const [clientSecret, setClientSecret] = useState("");
+    const [showSecret, setShowSecret] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+
+    const save = async (e) => {
+        e.preventDefault();
+        if (!clientId.trim() || !clientSecret.trim()) {
+            toast.error("Both fields are required");
+            return;
+        }
+        setSaving(true);
+        try {
+            const r = await api.post("/admin/platform-setup/credentials", {
+                provider: provider.id,
+                client_id: clientId.trim(),
+                client_secret: clientSecret.trim(),
+            });
+            toast.success(r.data.message || `${provider.label} saved`, { duration: 6000 });
+            setClientId("");
+            setClientSecret("");
+            onSaved();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Save failed");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const remove = async () => {
+        if (!window.confirm(`Remove ${provider.label} Developer App credentials?\n\nUsers will no longer be able to Connect until you add new credentials.`)) return;
+        setDeleting(true);
+        try {
+            await api.delete(`/admin/platform-setup/credentials/${provider.id}`);
+            toast.success(`${provider.label} credentials removed`);
+            onSaved();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Delete failed");
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    const idLabel = provider.field_labels?.client_id || "Client ID";
+    const secretLabel = provider.field_labels?.client_secret || "Client Secret";
+
+    return (
+        <div className="border-t border-[#E2E8F0] pt-4 mb-4" data-testid={`cred-form-${provider.id}`}>
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-[#0F172A] font-bold flex items-center gap-1.5">
+                    <Database size={12} weight="bold" className="text-[#2563EB]" />
+                    Paste credentials — saves instantly, no restart needed
+                </p>
+                {provider.configured && provider.source === "db" && (
+                    <button onClick={remove} disabled={deleting} className="text-[10px] uppercase tracking-[0.15em] font-bold text-[#DC2626] hover:underline flex items-center gap-1" data-testid={`remove-${provider.id}`}>
+                        <Trash size={10} weight="bold" /> {deleting ? "Removing…" : "Remove saved creds"}
+                    </button>
+                )}
+            </div>
+            <form onSubmit={save} className="grid md:grid-cols-2 gap-3 bg-[#F0F9FF] border border-[#BAE6FD] p-4 rounded-md">
+                <div>
+                    <label className="block text-[10px] uppercase tracking-[0.15em] text-[#0F172A] font-bold mb-1">{idLabel}</label>
+                    <input
+                        type="text"
+                        required
+                        value={clientId}
+                        onChange={(e) => setClientId(e.target.value)}
+                        placeholder={provider.configured ? "••• already saved ··· paste to replace" : "paste here"}
+                        className="w-full text-xs font-mono px-3 py-2 border border-[#CBD5E1] rounded-md bg-white focus:outline-none focus:border-[#2563EB]"
+                        data-testid={`${provider.id}-client-id`}
+                    />
+                </div>
+                <div>
+                    <label className="block text-[10px] uppercase tracking-[0.15em] text-[#0F172A] font-bold mb-1">{secretLabel}</label>
+                    <div className="relative">
+                        <input
+                            type={showSecret ? "text" : "password"}
+                            required
+                            value={clientSecret}
+                            onChange={(e) => setClientSecret(e.target.value)}
+                            placeholder={provider.configured ? "••• already saved ··· paste to replace" : "paste here"}
+                            className="w-full text-xs font-mono px-3 py-2 pr-14 border border-[#CBD5E1] rounded-md bg-white focus:outline-none focus:border-[#2563EB]"
+                            data-testid={`${provider.id}-client-secret`}
+                        />
+                        <button type="button" onClick={() => setShowSecret((s) => !s)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] uppercase text-[#2563EB] font-bold">
+                            {showSecret ? "Hide" : "Show"}
+                        </button>
+                    </div>
+                </div>
+                <div className="md:col-span-2 flex items-center gap-3">
+                    <button type="submit" disabled={saving} className="zm-btn-primary" data-testid={`save-${provider.id}`}>
+                        <FloppyDisk size={14} weight="bold" /> {saving ? "Saving…" : (provider.configured ? "Replace credentials" : "Save & activate")}
+                    </button>
+                    <p className="text-[11px] text-[#475569] leading-tight flex-1">
+                        <Lock size={11} weight="bold" className="inline mr-1 text-[#10B981]" />
+                        Secret is encrypted with Fernet AES-128 before storage. Server never logs it.
+                    </p>
+                </div>
+            </form>
+        </div>
+    );
+}
+
 export default function AdminPlatformSetup() {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
+    const load = () => {
+        setLoading(true);
         api.get("/admin/platform-setup")
             .then((r) => setData(r.data))
             .catch((e) => toast.error(e.response?.data?.detail || "Failed to load"))
             .finally(() => setLoading(false));
-    }, []);
+    };
+
+    useEffect(() => { load(); }, []);
 
     if (loading) return <div className="p-8 text-[#A1A1AA]">Loading…</div>;
     if (!data) return null;
@@ -127,10 +235,21 @@ export default function AdminPlatformSetup() {
                                     </ul>
                                 </div>
                                 <div className="bg-[#F8FAFC] p-3 rounded-sm border border-[#E2E8F0]">
-                                    <p className="text-[10px] uppercase tracking-[0.2em] text-[#71717A] font-bold mb-1">// Backend .env keys</p>
-                                    <code className="font-mono text-[11px] text-[#0F172A]">{p.env_keys.join(" · ")}</code>
+                                    <p className="text-[10px] uppercase tracking-[0.2em] text-[#71717A] font-bold mb-1">// Source · Status</p>
+                                    <p className="text-[11px] text-[#0F172A]">
+                                        {p.configured ? (
+                                            <>
+                                                Active from <span className="font-bold">{p.source === "db" ? "this UI (encrypted in DB)" : "backend .env"}</span>
+                                            </>
+                                        ) : (
+                                            <span className="text-[#92400E]">Not configured yet — paste credentials below.</span>
+                                        )}
+                                    </p>
                                 </div>
                             </div>
+
+                            {/* UI Credential form — NEW: no backend .env editing required */}
+                            <CredForm provider={p} onSaved={load} />
 
                             {/* Steps */}
                             <div className="border-t border-[#E2E8F0] pt-4">

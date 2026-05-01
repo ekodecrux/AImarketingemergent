@@ -5681,17 +5681,50 @@ OAUTH_PROVIDERS = {
     },
 }
 
+# One backend provider id can power multiple UI channels.
+# e.g. 'meta' in the admin UI → uses the 'facebook' OAuth flow → powers FB Pages + Instagram + Ads
+PROVIDER_ALIAS = {
+    "meta": "facebook",
+    "facebook": "facebook",
+    "instagram": "facebook",
+    "linkedin": "linkedin",
+    "twitter": "twitter",
+    "x": "twitter",
+}
+
+
+async def _get_provider_cred(provider_id: str) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve Developer App credentials for a provider.
+    Priority: DB (admin saved via UI) → env vars → None.
+    Secrets from DB are Fernet-decrypted on the way out."""
+    canonical = PROVIDER_ALIAS.get((provider_id or "").lower(), (provider_id or "").lower())
+    cfg = OAUTH_PROVIDERS.get(canonical)
+    if not cfg:
+        return None, None
+    rec = await db.platform_credentials.find_one({"provider": canonical}, {"_id": 0})
+    if rec and rec.get("client_id") and rec.get("client_secret"):
+        try:
+            return rec["client_id"], _dec(rec["client_secret"])
+        except Exception:
+            logger.warning("Failed to decrypt %s secret from DB; falling back to env", canonical)
+    return os.environ.get(cfg["client_id_env"]), os.environ.get(cfg["client_secret_env"])
+
+
+async def _provider_configured(provider_id: str) -> bool:
+    cid, cs = await _get_provider_cred(provider_id)
+    return bool(cid and cs)
+
 
 @api.get("/oauth/{provider}/start")
 async def oauth_start(provider: str, user=Depends(get_current_user)):
     cfg = OAUTH_PROVIDERS.get(provider)
     if not cfg:
         raise HTTPException(status_code=404, detail="Unknown provider")
-    client_id = os.environ.get(cfg["client_id_env"])
+    client_id, _secret = await _get_provider_cred(provider)
     if not client_id:
         raise HTTPException(
             status_code=400,
-            detail=f"{provider.title()} OAuth not configured. Set {cfg['client_id_env']} and {cfg['client_secret_env']} in backend env.",
+            detail=f"{provider.title()} OAuth not configured yet. Ask an admin to paste Client ID + Secret in /admin/platform-setup.",
         )
     state = secrets.token_urlsafe(16)
     await db.oauth_states.insert_one({
@@ -5718,8 +5751,7 @@ async def oauth_callback(provider: str, code: str, state: str):
         raise HTTPException(status_code=400, detail="Invalid state")
     await db.oauth_states.delete_one({"state": state})
 
-    client_id = os.environ.get(cfg["client_id_env"])
-    client_secret = os.environ.get(cfg["client_secret_env"])
+    client_id, client_secret = await _get_provider_cred(provider)
     redirect_uri = f"{os.environ.get('PUBLIC_APP_URL','').rstrip('/')}/api/oauth/{provider}/callback"
 
     def _exchange():
@@ -7147,8 +7179,10 @@ async def admin_platform_setup(user=Depends(get_current_user)):
     providers = [
         {
             "id": "linkedin", "label": "LinkedIn",
-            "configured": _detect("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"),
+            "configured": await _provider_configured("linkedin"),
+            "source": "db" if await db.platform_credentials.find_one({"provider": "linkedin"}) else ("env" if _detect("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET") else ""),
             "env_keys": ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"],
+            "field_labels": {"client_id": "Client ID", "client_secret": "Client Secret"},
             "callback_url": f"{public_app_url}/api/oauth/linkedin/callback" if public_app_url else "<APP_URL>/api/oauth/linkedin/callback",
             "developer_portal": "https://www.linkedin.com/developers/apps",
             "products_required": ["Sign In with LinkedIn using OpenID Connect", "Share on LinkedIn"],
@@ -7157,8 +7191,10 @@ async def admin_platform_setup(user=Depends(get_current_user)):
         },
         {
             "id": "twitter", "label": "X (Twitter)",
-            "configured": _detect("TWITTER_CLIENT_ID", "TWITTER_CLIENT_SECRET"),
+            "configured": await _provider_configured("twitter"),
+            "source": "db" if await db.platform_credentials.find_one({"provider": "twitter"}) else ("env" if _detect("TWITTER_CLIENT_ID", "TWITTER_CLIENT_SECRET") else ""),
             "env_keys": ["TWITTER_CLIENT_ID", "TWITTER_CLIENT_SECRET"],
+            "field_labels": {"client_id": "Client ID", "client_secret": "Client Secret"},
             "callback_url": f"{public_app_url}/api/oauth/twitter/callback" if public_app_url else "<APP_URL>/api/oauth/twitter/callback",
             "developer_portal": "https://developer.twitter.com/en/portal/projects-and-apps",
             "products_required": ["OAuth 2.0 with PKCE (User auth)"],
@@ -7167,8 +7203,10 @@ async def admin_platform_setup(user=Depends(get_current_user)):
         },
         {
             "id": "meta", "label": "Meta (Facebook + Instagram + Ads)",
-            "configured": _detect("FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"),
+            "configured": await _provider_configured("facebook"),
+            "source": "db" if await db.platform_credentials.find_one({"provider": "facebook"}) else ("env" if _detect("FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET") else ""),
             "env_keys": ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
+            "field_labels": {"client_id": "App ID", "client_secret": "App Secret"},
             "callback_url": f"{public_app_url}/api/oauth/facebook/callback" if public_app_url else "<APP_URL>/api/oauth/facebook/callback",
             "developer_portal": "https://developers.facebook.com/apps/",
             "products_required": ["Facebook Login for Business", "Marketing API (for ads)"],
@@ -7199,6 +7237,60 @@ async def admin_platform_setup(user=Depends(get_current_user)):
         "total_providers": len(providers),
         "all_ready": cfg_count == len(providers),
     }
+
+
+class PlatformCredIn(BaseModel):
+    provider: str  # linkedin | twitter | meta
+    client_id: str
+    client_secret: str
+
+
+@api.post("/admin/platform-setup/credentials")
+async def admin_save_platform_credentials(payload: PlatformCredIn, user=Depends(get_current_user)):
+    """Admin-only: save Developer App Client ID + Secret via the UI.
+    Stored encrypted (Fernet) in db.platform_credentials. OAuth flows look this up
+    BEFORE falling back to env vars — no backend restart required."""
+    _require_admin(user)
+    canonical = PROVIDER_ALIAS.get((payload.provider or "").lower())
+    if not canonical or canonical not in OAUTH_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider '{payload.provider}'. Allowed: linkedin, meta, twitter.")
+    if not payload.client_id or not payload.client_secret or len(payload.client_secret) < 4:
+        raise HTTPException(status_code=400, detail="Client ID and Secret are required.")
+    await db.platform_credentials.update_one(
+        {"provider": canonical},
+        {"$set": {
+            "provider": canonical,
+            "client_id": payload.client_id.strip(),
+            "client_secret": _enc(payload.client_secret.strip()),
+            "updated_by": user["email"],
+            "updated_at": now_utc().isoformat(),
+        }},
+        upsert=True,
+    )
+    try:
+        await _log_activity(user["id"], "platform.credentials.saved",
+                            f"Saved {canonical} Developer App credentials via admin UI",
+                            details={"provider": canonical})
+    except Exception:
+        pass
+    return {
+        "success": True,
+        "provider": canonical,
+        "configured": True,
+        "message": f"{canonical.title()} Developer App saved. All users can now Connect {canonical.title()} from /connect — no backend restart needed.",
+    }
+
+
+@api.delete("/admin/platform-setup/credentials/{provider}")
+async def admin_delete_platform_credentials(provider: str, user=Depends(get_current_user)):
+    """Admin-only: remove stored Developer App credentials for a provider.
+    Afterwards the provider will show as 'not configured' unless env vars are set."""
+    _require_admin(user)
+    canonical = PROVIDER_ALIAS.get((provider or "").lower())
+    if not canonical:
+        raise HTTPException(status_code=400, detail="Unknown provider")
+    r = await db.platform_credentials.delete_one({"provider": canonical})
+    return {"success": True, "deleted": r.deleted_count, "provider": canonical}
 
 
 @api.get("/admin/overview")

@@ -1,5 +1,28 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 34 (May 2026) — Admin UI: save Developer App credentials from browser (no .env editing)
+User: "even if we click on connect in LinkedIn, it doesn't give placeholders for token/secret — instead it says configure at backend. It should allow configuring from frontend."
+
+**Root cause**: Previous `/admin/platform-setup` UI was READ-ONLY — it listed instructions and said "copy to backend .env + restart". Real self-service onboarding requires in-UI save, so admins never touch the server.
+
+**Backend**
+- **New helper `_get_provider_cred(provider_id)`** — resolves Client ID + Secret with DB-first / env-fallback priority. Secrets stored Fernet-encrypted in new `db.platform_credentials` collection.
+- **New alias map `PROVIDER_ALIAS`** — maps UI provider IDs to OAuth flow IDs (e.g. `meta` / `instagram` → `facebook` flow since one Meta app covers both).
+- **New `POST /api/admin/platform-setup/credentials`** — admin-only; upserts `{provider, client_id, client_secret_encrypted, updated_by, updated_at}` with Fernet encryption. No restart needed — `_get_provider_cred` reads fresh from DB on every OAuth start/callback.
+- **New `DELETE /api/admin/platform-setup/credentials/{provider}`** — removes DB-saved creds; provider then falls back to env or shows "not configured".
+- **All OAuth code now uses the helper** — `/oauth/{provider}/start`, `/oauth/{provider}/callback`, `/integrations/health` (provider_cfg map), and `/admin/platform-setup` all route through `_get_provider_cred` / `_provider_configured`.
+- **Recovery note**: During iter34 I accidentally mass-replaced a block and lost ~2240 lines of server.py. Recovered via `git checkout HEAD -- backend/server.py` (every Emergent step is auto-committed) and redid the changes surgically. Lesson: use more targeted old_str patterns on very large files.
+
+**Frontend — `AdminPlatformSetup.jsx`**
+- **New `CredForm` component** rendered inside each provider card. Two inputs (Client ID / Client Secret with Show/Hide toggle), Save button, encryption note, and a Remove-saved-creds link when DB-stored.
+- **"Source · Status" card** replaces the old ".env keys" card — shows "Active from this UI (encrypted in DB)" vs "Active from backend .env" vs "Not configured — paste credentials below".
+- **Step 5 of each step-by-step** rewritten from "Copy to backend .env" to "Paste Client ID + Secret in the form below · Saves instantly — no backend restart needed".
+- **Toast feedback**: "LinkedIn Developer App saved. All users can now Connect LinkedIn from /connect — no backend restart needed."
+
+**End-to-end verification**
+- curl: save → 200 with explicit success message; platform-setup shows `source: db`; `/oauth/linkedin/start` returns a real auth URL with the saved `client_id` embedded; delete → 200.
+- Playwright: all 3 forms render (6 inputs + 3 save buttons); saving LinkedIn triggers toast + "Active from this UI" state + Remove button. Screenshot confirms UX matches design.
+
 ## Iter 33 (May 2026) — Option C shipped: Email/SMS/WhatsApp prominence + LIVE vs SETUP clarity
 User: "enable option c, meanwhile I'll complete option A" — make Email/SMS/WhatsApp feel instantly ready, social channels clearly "needs setup".
 
