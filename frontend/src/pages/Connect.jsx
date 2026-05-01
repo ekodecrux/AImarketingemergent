@@ -10,7 +10,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
     LinkedinLogo, TwitterLogo, FacebookLogo, InstagramLogo, EnvelopeSimple,
     WhatsappLogo, ChatCircle, CurrencyDollar, MegaphoneSimple, CheckCircle,
-    WarningCircle, XCircle, Lock, ArrowsClockwise, Sparkle, Crown,
+    WarningCircle, XCircle, Lock, ArrowsClockwise, Sparkle, Crown, PaperPlaneTilt,
 } from "@phosphor-icons/react";
 
 /* User-facing channels — NO developer-app setup steps. Users just OAuth.
@@ -149,6 +149,28 @@ export default function Connect() {
                         <div className="flex items-center gap-2 text-xs text-white/60">
                             <Lock size={12} weight="bold" /> Tokens encrypted at rest (Fernet AES-128)
                         </div>
+                    </div>
+                </div>
+
+                {/* Ready-to-use callout — makes it loud that Email + SMS + WhatsApp work TODAY */}
+                <div className="zm-card p-5 bg-gradient-to-r from-[#10B981]/10 to-[#2563EB]/10 border-l-4 border-[#10B981]" data-testid="ready-now-banner">
+                    <div className="flex items-start gap-4 flex-wrap">
+                        <div className="flex items-center gap-2 shrink-0">
+                            <CheckCircle size={24} weight="fill" className="text-[#10B981]" />
+                            <p className="font-display text-xl font-black tracking-tight text-[#0F172A]">Ready to run campaigns right now</p>
+                        </div>
+                        <div className="flex-1 min-w-[280px]">
+                            <p className="text-sm text-[#0F172A] font-semibold mb-1">
+                                Email · SMS · WhatsApp are live and real. No setup needed.
+                            </p>
+                            <p className="text-xs text-[#475569] leading-relaxed">
+                                Start with what's working. Your first campaign can go out in under 2 minutes.
+                                Social channels (LinkedIn / FB / IG / X) unlock once Developer Apps are registered below.
+                            </p>
+                        </div>
+                        <Link to="/campaigns" className="zm-btn-primary shrink-0" data-testid="go-to-campaigns">
+                            <PaperPlaneTilt size={14} weight="fill" /> Create Campaign
+                        </Link>
                     </div>
                 </div>
 

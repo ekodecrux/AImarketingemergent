@@ -6,12 +6,12 @@ import { ModalShell } from "@/pages/Leads";
 import { Plus, PaperPlaneTilt, Sparkle, Trash, Copy, PencilSimple, Rocket, EnvelopeSimple, ChatCircle, WhatsappLogo, FacebookLogo, InstagramLogo, LinkedinLogo } from "@phosphor-icons/react";
 
 const CHANNELS = [
-    { v: "EMAIL", label: "Email", icon: EnvelopeSimple },
-    { v: "SMS", label: "SMS", icon: ChatCircle },
-    { v: "WHATSAPP", label: "WhatsApp", icon: WhatsappLogo },
-    { v: "FACEBOOK", label: "Facebook", icon: FacebookLogo },
-    { v: "INSTAGRAM", label: "Instagram", icon: InstagramLogo },
-    { v: "LINKEDIN", label: "LinkedIn", icon: LinkedinLogo },
+    { v: "EMAIL", label: "Email", icon: EnvelopeSimple, live: true },
+    { v: "SMS", label: "SMS", icon: ChatCircle, live: true },
+    { v: "WHATSAPP", label: "WhatsApp", icon: WhatsappLogo, live: true },
+    { v: "FACEBOOK", label: "Facebook", icon: FacebookLogo, live: false },
+    { v: "INSTAGRAM", label: "Instagram", icon: InstagramLogo, live: false },
+    { v: "LINKEDIN", label: "LinkedIn", icon: LinkedinLogo, live: false },
 ];
 
 const STATUS_STYLES = {
@@ -473,15 +473,26 @@ function CreateCampaignModal({ onClose, onCreated }) {
                                 key={c.v} type="button"
                                 onClick={() => setForm({ ...form, channel: c.v })}
                                 data-testid={`channel-${c.v}`}
-                                className={`flex flex-col items-center gap-1 px-2 py-3 border text-xs uppercase tracking-[0.1em] font-bold ${
+                                className={`relative flex flex-col items-center gap-1 px-2 py-3 border text-xs uppercase tracking-[0.1em] font-bold ${
                                     form.channel === c.v ? "bg-[#0F172A] text-white border-[#0F172A]" : "bg-white text-[#71717A] border-[#E2E8F0] hover:border-[#0F172A]"
                                 }`}
                             >
                                 <c.icon size={18} weight="bold" />
                                 {c.label}
+                                {c.live && (
+                                    <span className={`absolute top-1 right-1 text-[8px] px-1 py-0.5 rounded ${form.channel === c.v ? "bg-[#10B981] text-white" : "bg-[#D1FAE5] text-[#065F46]"}`}>LIVE</span>
+                                )}
+                                {!c.live && (
+                                    <span className={`absolute top-1 right-1 text-[8px] px-1 py-0.5 rounded ${form.channel === c.v ? "bg-[#F59E0B] text-white" : "bg-[#FEF3C7] text-[#92400E]"}`}>SETUP</span>
+                                )}
                             </button>
                         ))}
                     </div>
+                    {!(CHANNELS.find((c) => c.v === form.channel) || {}).live && (
+                        <p className="text-[11px] text-[#92400E] bg-[#FFFBEB] border-l-2 border-[#F59E0B] p-2 mt-2">
+                            <strong>⏳ This channel requires platform setup.</strong> Campaign will save but can't be sent yet. Your admin needs to register the Developer App at <span className="font-mono">/admin/platform-setup</span>. Meanwhile, Email / SMS / WhatsApp send for real today.
+                        </p>
+                    )}
                 </div>
 
                 {/* Recipients */}

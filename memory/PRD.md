@@ -1,5 +1,21 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 33 (May 2026) — Option C shipped: Email/SMS/WhatsApp prominence + LIVE vs SETUP clarity
+User: "enable option c, meanwhile I'll complete option A" — make Email/SMS/WhatsApp feel instantly ready, social channels clearly "needs setup".
+
+**Connect page (`/connect`)**
+- **New green "Ready to run campaigns right now" banner** — bright gradient callout with CheckCircle icon, copy: "Email · SMS · WhatsApp are live and real. No setup needed. Start with what's working. Your first campaign can go out in under 2 minutes." + primary "Create Campaign" CTA deep-linking to `/campaigns`. `data-testid="ready-now-banner"`.
+
+**Campaigns create + edit modals**
+- **LIVE vs SETUP pills on channel picker** — Email/SMS/WhatsApp get a green "LIVE" badge top-right; Facebook/Instagram/LinkedIn get amber "SETUP" badges.
+- **Inline warning** when a SETUP channel is picked: "⏳ This channel requires platform setup. Campaign will save but can't be sent yet. Your admin needs to register the Developer App at `/admin/platform-setup`. Meanwhile, Email / SMS / WhatsApp send for real today."
+
+**Documentation**
+- Created `/app/docs/PLATFORM_SETUP_GUIDE.md` — step-by-step guide for the platform owner to register LinkedIn (~15min), Meta FB+IG (~25min, one app covers both), and X/Twitter (~10min, free tier) Developer Apps. Each section has portal URLs, products to request, callback URLs, required permissions, approval timelines. Gives the user a clear self-serve path for Option A while Option C keeps the app usable today.
+
+**Verification**
+- Playwright: ready-now-banner rendered + Create Campaign CTA present; 4 LIVE + 3 SETUP pills rendered in channel picker; setup warning shown after clicking LinkedIn channel.
+
 ## Iter 32 (May 2026) — Nav regression fix + comprehensive audit
 **User report**: "add campaign option itself gone... you are breaking existing functionality which is not correct"
 
