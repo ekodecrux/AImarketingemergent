@@ -1,5 +1,24 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 25 (May 2026) — Auth hardening, IN/INR defaults, Groq→Gemini swap, 4-group nav
+User prompt: "complete fixes.. make it more user intuitive flow ... no confusion, no multiple menus navigation... Also groq AI gives limit issues.. what is alternative"
+
+**Backend**
+- **LLM swap** — `_groq_chat` now routes through Emergent LLM Key → **Gemini 3 Flash** (`gemini-3-flash-preview`). Legacy function signature preserved so all 12+ callsites (quick plan, ICP, content, market research, PR outlets, assistant chat, copilot, etc.) continue to work without changes. JSON-mode enforced via system-prompt contract + markdown-fence stripping. Rate-limit detection converts provider 429/quota errors into clean HTTPException 429.
+- **assistant_chat** rewritten to use `LlmChat` with per-user session_id (`assistant-{user_id}`) + recent-history injected into system prompt for grounding.
+- **Locale defaults** — `_resolve_locale` now falls back to `IN` (INR, ₹) instead of `US`. `/auth/register` already persists `country_code=IN, currency_code=INR` for new users. `/api/locale/me` for a fresh user returns India.
+- **Google OAuth restriction** — `/auth/google/callback` no longer auto-creates users. Unknown email → 403 "No ZeroMark account found. Please sign up first, then sign in with Google." Existing-user sign-in unchanged.
+- **SMS OTP restriction** — `/auth/sms/verify-otp` no longer auto-creates users. Unknown phone → 403 "No account found. Please sign up first with email."
+- **Logout hardening** — `/auth/logout` now accepts optional auth (`get_current_user_optional`), clears cookies for `/` and `/api` paths (both `access_token` and `zm_token`), audit-logs the event if authenticated, sets `no-store` cache headers. Works identically for user/admin/owner roles.
+
+**Frontend**
+- **4-group sidebar** (`AppLayout.jsx`) — collapsed from 6+ sections into `Home · Grow · Engage · Settings` (+ `Admin` only for admins). Section icons added for visual cues. Kept all existing data-testids.
+- **Frozen sidebar layout** — root is `h-screen flex overflow-hidden`; `<aside>` is `lg:h-screen shrink-0` with its own `overflow-y-auto` nav; `<main>` has `h-screen overflow-y-auto` so ONLY the main content scrolls, sidebar stays locked.
+- **AdminLayout.jsx** — same freeze treatment (dark sidebar `sticky h-screen`, main `overflow-y-auto h-screen`). Admin logout now calls `/api/auth/logout` (parity with user logout) and wipes cookies/localStorage before redirect.
+- **AuthContext.jsx** — `logout()` wipes `localStorage`, `sessionStorage`, and every cookie surface (`/`, `/api` paths) so no stale session lingers.
+
+**Test report:** `/app/test_reports/iteration_23.json` — 10/10 backend pytest pass, full frontend flows verified (sidebar freeze bbox check, 4-group visibility, logout redirect, Gemini-backed chatbot with India context).
+
 ## Iter 24 (May 2026) — Sprint A+B+C: 11 low-hanging-fruit items from gap analysis
 User picked **Sprint A + B + C** (~4.5 hrs) from 31-item gap analysis:
 

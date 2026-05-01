@@ -611,7 +611,6 @@ async def google_callback(payload: GoogleCallbackIn, response: Response):
     last_name = parts[1] if len(parts) > 1 else ""
 
     user = await db.users.find_one({"email": email})
-    is_new = False
     if not user:
         # Per platform rules: Google sign-in is allowed ONLY for users who already
         # have an account. New users must register with email/password first, then
@@ -620,6 +619,7 @@ async def google_callback(payload: GoogleCallbackIn, response: Response):
             status_code=403,
             detail="No ZeroMark account found for this Google email. Please sign up first, then sign in with Google.",
         )
+    is_new = False
     # Update with latest Google avatar; keep existing names if already set
     upd: Dict[str, Any] = {"auth_provider": user.get("auth_provider") or "google", "last_login": now_utc().isoformat()}
     if picture and not user.get("picture"):
