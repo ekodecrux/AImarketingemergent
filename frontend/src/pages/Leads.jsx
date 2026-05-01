@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
-import { Plus, Trash, MagnifyingGlass, X, Sparkle } from "@phosphor-icons/react";
+import { Plus, Trash, MagnifyingGlass, X, Sparkle, UploadSimple } from "@phosphor-icons/react";
 
 const STATUSES = ["NEW", "CONTACTED", "INTERESTED", "CONVERTED", "NOT_INTERESTED"];
 
@@ -14,6 +14,7 @@ export default function Leads() {
     const [statusFilter, setStatusFilter] = useState("");
     const [showAdd, setShowAdd] = useState(false);
     const [showScrape, setShowScrape] = useState(false);
+    const [showBulk, setShowBulk] = useState(false);
     const [loading, setLoading] = useState(true);
     const [scoring, setScoring] = useState(false);
 
@@ -66,6 +67,9 @@ export default function Leads() {
                         </button>
                         <button data-testid="open-scrape-modal" onClick={() => setShowScrape(true)} className="zm-btn-secondary">
                             <MagnifyingGlass size={14} weight="bold" /> Scrape
+                        </button>
+                        <button data-testid="open-bulk-upload-modal" onClick={() => setShowBulk(true)} className="zm-btn-secondary">
+                            <UploadSimple size={14} weight="bold" /> Bulk Upload
                         </button>
                         <button data-testid="open-add-lead-modal" onClick={() => setShowAdd(true)} className="zm-btn-primary">
                             <Plus size={14} weight="bold" /> Add Lead
@@ -149,7 +153,73 @@ export default function Leads() {
 
             {showAdd && <AddLeadModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
             {showScrape && <ScrapeModal onClose={() => setShowScrape(false)} onDone={() => { setShowScrape(false); load(); }} />}
+            {showBulk && <BulkUploadModal onClose={() => setShowBulk(false)} onDone={() => { setShowBulk(false); load(); }} />}
         </div>
+    );
+}
+
+function BulkUploadModal({ onClose, onDone }) {
+    const [file, setFile] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [result, setResult] = useState(null);
+
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!file) { toast.error("Choose a CSV file first"); return; }
+        const fd = new FormData();
+        fd.append("file", file);
+        setLoading(true);
+        try {
+            const r = await api.post("/leads/import-csv", fd, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+            setResult(r.data);
+            toast.success(`Imported ${r.data.imported} leads`);
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Upload failed");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <ModalShell title="Bulk upload leads" eyebrow="// CSV import" onClose={onClose}>
+            <form onSubmit={submit} className="space-y-4" data-testid="bulk-upload-form">
+                <div className="bg-[#F8FAFC] border-l-2 border-[#2563EB] p-3 text-xs text-[#475569] leading-relaxed">
+                    <p className="font-bold text-[#0F172A] mb-1">CSV format (any column order):</p>
+                    <code className="text-[11px]">email, first_name, last_name, phone, company, role, notes, source</code>
+                    <p className="mt-2">Only <span className="font-bold">email</span> is required. Max 5,000 rows / 5MB per file. Duplicates are auto-skipped.</p>
+                </div>
+                <div>
+                    <label className="zm-label">CSV file</label>
+                    <input type="file" accept=".csv,text/csv" required onChange={(e) => { setFile(e.target.files?.[0] || null); setResult(null); }}
+                        className="block w-full text-sm border border-[#E2E8F0] rounded-md p-2" data-testid="bulk-upload-file" />
+                </div>
+                {result && (
+                    <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-md p-3 text-xs space-y-1" data-testid="bulk-upload-result">
+                        <p className="font-bold text-[#15803D]">✓ Imported: {result.imported}</p>
+                        <p className="text-[#475569]">Duplicates skipped: {result.skipped_duplicates_in_workspace || 0}</p>
+                        <p className="text-[#475569]">Rejected: {result.rejected || 0}</p>
+                        {(result.rejection_sample || []).length > 0 && (
+                            <details className="mt-2">
+                                <summary className="cursor-pointer text-[#64748B]">Rejection reasons ({result.rejection_sample.length})</summary>
+                                <ul className="mt-1 pl-4 list-disc text-[11px] text-[#64748B]">
+                                    {result.rejection_sample.map((r, i) => <li key={i}>Row {r.row}: {r.reason}</li>)}
+                                </ul>
+                            </details>
+                        )}
+                    </div>
+                )}
+                <div className="flex gap-3 pt-2">
+                    <button type="submit" disabled={loading || !file} className="zm-btn-primary flex-1" data-testid="bulk-upload-submit">
+                        {loading ? "Uploading…" : (result ? "Upload another" : "Upload CSV")}
+                    </button>
+                    <button type="button" onClick={result ? onDone : onClose} className="zm-btn-secondary">
+                        {result ? "Done" : "Cancel"}
+                    </button>
+                </div>
+            </form>
+        </ModalShell>
     );
 }
 

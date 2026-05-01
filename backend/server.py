@@ -400,6 +400,11 @@ class CampaignIn(BaseModel):
     content: str
     subject: Optional[str] = None
     scheduled_at: Optional[str] = None
+    # NEW: recipient targeting
+    recipient_scope: Optional[str] = "all_leads"  # 'all_leads' | 'by_status' | 'selected' | 'manual'
+    recipient_statuses: Optional[List[str]] = None  # for 'by_status'
+    recipient_lead_ids: Optional[List[str]] = None  # for 'selected'
+    extra_recipients: Optional[List[str]] = None   # phone/email strings for 'manual'
 
 
 class ApprovalActionIn(BaseModel):
@@ -969,6 +974,47 @@ async def delete_campaign(cid: str, user=Depends(get_current_user)):
     return {"success": True}
 
 
+@api.post("/campaigns/{cid}/duplicate")
+async def duplicate_campaign(cid: str, user=Depends(get_current_user)):
+    """Clone an existing campaign — creates a fresh PENDING_APPROVAL copy so user can
+    rerun the same message to the same (or different) audience without re-typing.
+    Keeps content, subject, channel, recipients; resets counters + status."""
+    src = await db.campaigns.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    new_id = str(uuid.uuid4())
+    doc = {
+        "id": new_id,
+        "user_id": ws(user),
+        "name": f"{src.get('name', 'Campaign')} (copy)",
+        "type": src.get("type", "EMAIL_BLAST"),
+        "channel": src.get("channel", "EMAIL"),
+        "content": src.get("content", ""),
+        "subject": src.get("subject"),
+        "recipient_scope": src.get("recipient_scope", "all_leads"),
+        "recipient_statuses": src.get("recipient_statuses"),
+        "recipient_lead_ids": src.get("recipient_lead_ids"),
+        "extra_recipients": src.get("extra_recipients"),
+        "status": "PENDING_APPROVAL",
+        "created_at": now_utc().isoformat(),
+        "sent_count": 0,
+        "delivered_count": 0,
+    }
+    await db.campaigns.insert_one(dict(doc))
+    await db.approvals.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": ws(user),
+        "campaign_id": new_id,
+        "channel": doc["channel"],
+        "content": doc["content"],
+        "subject": doc.get("subject"),
+        "status": "PENDING",
+        "created_at": now_utc().isoformat(),
+    })
+    doc.pop("_id", None)
+    return {"success": True, "campaign": doc}
+
+
 @api.post("/campaigns/{cid}/send")
 async def send_campaign(cid: str, background: BackgroundTasks, user=Depends(get_current_user)):
     campaign = await db.campaigns.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
@@ -983,7 +1029,9 @@ async def send_campaign(cid: str, background: BackgroundTasks, user=Depends(get_
 
 
 async def _run_campaign_send(cid: str, user_id: str):
-    """Background job: deliver a campaign to all matching leads."""
+    """Background job: deliver a campaign to the targeted audience.
+    Honors `recipient_scope`: all_leads | by_status | selected | manual (+ extra_recipients).
+    `extra_recipients` are free-form email/phone strings that don't need to be leads."""
     try:
         campaign = await db.campaigns.find_one({"id": cid, "user_id": user_id}, {"_id": 0})
         if not campaign:
@@ -991,11 +1039,35 @@ async def _run_campaign_send(cid: str, user_id: str):
         channel = campaign["channel"]
         content = campaign["content"]
         subject = campaign.get("subject") or campaign["name"]
+        scope = campaign.get("recipient_scope") or "all_leads"
 
         # Pull integration config (for WhatsApp/social via Twilio or stored token)
         integ = await db.integrations.find_one({"user_id": user_id}, {"_id": 0}) or {}
 
-        leads = await db.leads.find({"user_id": user_id}, {"_id": 0}).to_list(2000)
+        # Resolve audience from scope
+        lead_query: Dict[str, Any] = {"user_id": user_id}
+        if scope == "by_status" and campaign.get("recipient_statuses"):
+            lead_query["status"] = {"$in": campaign["recipient_statuses"]}
+        elif scope == "selected" and campaign.get("recipient_lead_ids"):
+            lead_query["id"] = {"$in": campaign["recipient_lead_ids"]}
+        elif scope == "manual":
+            # No DB leads — only extra_recipients are used
+            lead_query = {"__skip__": True}
+
+        leads: List[Dict[str, Any]] = []
+        if "__skip__" not in lead_query:
+            leads = await db.leads.find(lead_query, {"_id": 0}).to_list(2000)
+
+        # Extra free-form recipients (phone numbers or emails)
+        for ex in (campaign.get("extra_recipients") or []):
+            ex = (ex or "").strip()
+            if not ex:
+                continue
+            if "@" in ex:
+                leads.append({"id": f"extra-{ex}", "email": ex, "phone": None, "name": ex})
+            else:
+                leads.append({"id": f"extra-{ex}", "email": None, "phone": ex, "name": ex})
+
         sent = 0
         failed = 0
         for lead in leads:
@@ -1031,7 +1103,7 @@ async def _run_campaign_send(cid: str, user_id: str):
                     "id": str(uuid.uuid4()),
                     "user_id": user_id,
                     "campaign_id": cid,
-                    "lead_id": lead["id"],
+                    "lead_id": lead.get("id"),
                     "channel": channel,
                     "direction": "OUTBOUND",
                     "content": personal[:500],
@@ -4049,7 +4121,7 @@ def _scrape_url_quick(url: str) -> Dict[str, Any]:
         if not host or not _is_public_ip(host):
             return {"ok": False, "error": "blocked host (private/invalid)"}
         try:
-            html, _ = _fetch_website_resilient(url)
+            html, final_url = _fetch_website_resilient(url)
         except HTTPException as he:
             return {"ok": False, "error": str(he.detail)[:200]}
         soup = BeautifulSoup(html[:300_000], "html.parser")
@@ -4076,7 +4148,7 @@ def _scrape_url_quick(url: str) -> Dict[str, Any]:
             "has_favicon": has_favicon,
             "img_count": len(imgs), "img_alt_coverage_pct": int(100 * imgs_with_alt / max(1, len(imgs))),
             "text_sample": text[:1500],
-            "final_url": r.url,
+            "final_url": final_url or url,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
@@ -7714,3 +7786,4 @@ async def shutdown():
     except Exception:
         pass
     client.close()
+

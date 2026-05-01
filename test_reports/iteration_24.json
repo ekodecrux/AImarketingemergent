@@ -1,0 +1,36 @@
+{
+  "summary": "Iter26 — Tested 6 user-reported bug fixes (issues 3-8) + iter25 regressions. Backend pytest 9/9 PASS, including the critical competitor scan NameError fix. Frontend: verified all required data-testids in source, Bulk Upload e2e works (CSV imported), Add Lead modal renders with full form, leads count went 75->76 after CSV upload (persistence confirmed). Note: heavy modal overlays in the SPA prevented clean back-to-back UI tests in a single Playwright run, but each individual feature was reached and verified.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "BulkUploadModal", "issue": "Modal does not auto-close on success and Escape key does not dismiss it — only Done button closes (causes flow friction; subsequent buttons get overlay-intercepted in automation). Add escape-handler / auto-close after 'Done' or after Imported: N message displays for 2s.", "selector": "[data-testid='bulk-upload-result']", "priority": "LOW"},
+      {"component": "AddLeadModal inputs", "issue": "Inputs lack name/placeholder attributes (only data-testid='add-lead-name'/'add-lead-email' etc). Either add placeholders for accessibility, or just keep the testids — non-blocking, just a discoverability hint.", "selector": "[data-testid^='add-lead-']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter26_recipients_competitors.py",
+    "/app/test_reports/pytest/iter26_results.xml"
+  ],
+  "action_items": [
+    "All 8 user-reported issues are RESOLVED end-to-end (1+2 from iter25 still passing; 3-8 fixed in iter26).",
+    "Optional: BulkUploadModal — auto-close on success + Escape-to-close handler.",
+    "Optional (carry-over): server.py is >7800 lines; split into modules.",
+    "Optional: rename _groq_chat to _llm_chat (still routes via Gemini)."
+  ],
+  "critical_code_review_comments": [
+    "duplicate_campaign endpoint (server.py L977-1015) correctly clones recipient_scope/recipient_statuses/recipient_lead_ids/extra_recipients, resets sent/delivered counters, regenerates id, and creates a fresh PENDING approval — looks clean.",
+    "_run_campaign_send (L1031-1129) honors all 4 scopes (all_leads/by_status/selected/manual) with the '__skip__' sentinel for manual-only sends — verified by backend test where a 'selected' scope with 1 lead resulted in <=1 send. Good.",
+    "leads/import-csv has 5MB+5000-row caps and de-dupes by email both in-file and against existing workspace leads — solid implementation.",
+    "Competitor /scan endpoint (referenced as fixed at server.py ~L4075-4115): backend test sent a real scan to https://stripe.com and got a clean 200 — no NameError leaked into payload. Critical fix verified."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter26_recipients_competitors.py"],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "verified — all required data-testids present in source; Bulk Upload + Add Lead modal flows confirmed via UI"},
+  "test_credentials": "admin@zeromark.ai / admin123",
+  "seed_data_creation": "Created TEST_iter26_* leads (1 via Add Lead API, 2 via Bulk CSV API + 1 via UI bulk upload, 2 'selected' leads), 4 TEST_iter26_* campaigns (by_status, manual, orig, selected). All prefixed for easy cleanup. Also created 1 TEST_iter26_* competitor pointing to stripe.com.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite at /app/backend/tests/test_iter26_recipients_competitors.py covers: quick-plan generate, lead create, CSV bulk import, GOOGLE_MAPS_LEADS scrape, competitor add+scan (stripe.com — verifies NameError fix), campaign create with by_status/manual scope, campaign duplicate, and end-to-end 'selected' scope filtering on _run_campaign_send. All 9 pass in ~21s. Modal-overlay issue in Leads page makes back-to-back Playwright UI testing tricky — open one modal at a time, click Done/Cancel before navigating, or use page.goto to force a fresh page state.",
+  "rca of the issue": "Critical bug from iter25 (Issue 6) RCA: _scrape_url_quick used `r.url` after `r` had been reassigned/scoped out — replaced with the `final_url` returned tuple from `_fetch_website_resilient`. Verified by hitting POST /api/competitors/{cid}/scan against stripe.com and getting a clean 200 response with snapshot/title/h1s in payload."
+}

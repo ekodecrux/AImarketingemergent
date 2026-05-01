@@ -3,7 +3,7 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import { ModalShell } from "@/pages/Leads";
-import { Plus, PaperPlaneTilt, Sparkle, Trash, EnvelopeSimple, ChatCircle, WhatsappLogo, FacebookLogo, InstagramLogo, LinkedinLogo } from "@phosphor-icons/react";
+import { Plus, PaperPlaneTilt, Sparkle, Trash, Copy, EnvelopeSimple, ChatCircle, WhatsappLogo, FacebookLogo, InstagramLogo, LinkedinLogo } from "@phosphor-icons/react";
 
 const CHANNELS = [
     { v: "EMAIL", label: "Email", icon: EnvelopeSimple },
@@ -38,14 +38,26 @@ export default function Campaigns() {
         const t = toast.loading("Sending campaign…");
         try {
             const r = await api.post(`/campaigns/${id}/send`);
-            toast.success(`Sent to ${r.data.sent} recipients`, { id: t });
+            toast.success(r.data?.message || `Queued for delivery`, { id: t });
             load();
         } catch (err) {
             toast.error(err.response?.data?.detail || "Send failed", { id: t });
         }
     };
 
+    const duplicateCampaign = async (id) => {
+        const t = toast.loading("Duplicating…");
+        try {
+            await api.post(`/campaigns/${id}/duplicate`);
+            toast.success("Duplicated — edit & send for approval", { id: t });
+            load();
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Duplicate failed", { id: t });
+        }
+    };
+
     const deleteCampaign = async (id) => {
+        if (!window.confirm("Delete this campaign?")) return;
         await api.delete(`/campaigns/${id}`);
         toast.success("Campaign deleted");
         load();
@@ -102,7 +114,15 @@ export default function Campaigns() {
                                             <PaperPlaneTilt size={12} weight="bold" /> Send Now
                                         </button>
                                     )}
-                                    <button onClick={() => deleteCampaign(c.id)} className="zm-btn-secondary text-xs py-2" data-testid={`delete-campaign-${c.id}`}>
+                                    {(c.status === "SENT" || c.status === "FAILED") && (
+                                        <button onClick={() => duplicateCampaign(c.id)} className="zm-btn-primary flex-1 text-xs py-2" data-testid={`rerun-campaign-${c.id}`}>
+                                            <Copy size={12} weight="bold" /> Rerun
+                                        </button>
+                                    )}
+                                    <button onClick={() => duplicateCampaign(c.id)} className="zm-btn-secondary text-xs py-2" title="Duplicate" data-testid={`duplicate-campaign-${c.id}`}>
+                                        <Copy size={12} weight="bold" />
+                                    </button>
+                                    <button onClick={() => deleteCampaign(c.id)} className="zm-btn-secondary text-xs py-2" title="Delete" data-testid={`delete-campaign-${c.id}`}>
                                         <Trash size={12} weight="bold" />
                                     </button>
                                 </div>
@@ -118,11 +138,39 @@ export default function Campaigns() {
 }
 
 function CreateCampaignModal({ onClose, onCreated }) {
-    const [form, setForm] = useState({ name: "", type: "EMAIL_BLAST", channel: "EMAIL", content: "", subject: "" });
+    const [form, setForm] = useState({
+        name: "", type: "EMAIL_BLAST", channel: "EMAIL", content: "", subject: "",
+        recipient_scope: "all_leads", recipient_statuses: [], recipient_lead_ids: [], extra_recipients_raw: "",
+    });
     const [aiOpen, setAiOpen] = useState(false);
     const [aiData, setAiData] = useState({ goal: "", tone: "professional", audience: "", product: "" });
     const [aiLoading, setAiLoading] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [leadsPreview, setLeadsPreview] = useState({ total: 0, leads: [] });
+
+    // Load a quick preview of the user's leads so they can pick recipients visually
+    useEffect(() => {
+        api.get("/leads", { params: { limit: 100, page: 1 } })
+            .then((r) => setLeadsPreview({ total: r.data?.pagination?.total || 0, leads: r.data?.leads || [] }))
+            .catch(() => setLeadsPreview({ total: 0, leads: [] }));
+    }, []);
+
+    const toggleStatus = (s) => {
+        setForm((f) => ({
+            ...f,
+            recipient_statuses: f.recipient_statuses.includes(s)
+                ? f.recipient_statuses.filter((x) => x !== s)
+                : [...f.recipient_statuses, s],
+        }));
+    };
+    const toggleLead = (id) => {
+        setForm((f) => ({
+            ...f,
+            recipient_lead_ids: f.recipient_lead_ids.includes(id)
+                ? f.recipient_lead_ids.filter((x) => x !== id)
+                : [...f.recipient_lead_ids, id],
+        }));
+    };
 
     const generate = async () => {
         if (!aiData.goal) { toast.error("Set a goal first"); return; }
@@ -130,7 +178,7 @@ function CreateCampaignModal({ onClose, onCreated }) {
         try {
             const r = await api.post("/ai/generate-content", { ...aiData, channel: form.channel });
             setForm((f) => ({ ...f, content: r.data.content, subject: r.data.subject || f.subject }));
-            toast.success("Generated by Groq AI");
+            toast.success("Generated by AI");
             setAiOpen(false);
         } catch (err) {
             toast.error(err.response?.data?.detail || "AI failed");
@@ -147,7 +195,20 @@ function CreateCampaignModal({ onClose, onCreated }) {
                 EMAIL: "EMAIL_BLAST", SMS: "SMS_BLAST", WHATSAPP: "WHATSAPP",
                 FACEBOOK: "SOCIAL_POST", INSTAGRAM: "SOCIAL_POST", LINKEDIN: "SOCIAL_POST",
             }[form.channel];
-            await api.post("/campaigns", { ...form, type: typeFromChannel });
+            const extras = (form.extra_recipients_raw || "")
+                .split(/[,\n\s;]+/).map((s) => s.trim()).filter(Boolean);
+            const payload = {
+                name: form.name,
+                type: typeFromChannel,
+                channel: form.channel,
+                content: form.content,
+                subject: form.subject,
+                recipient_scope: form.recipient_scope,
+                recipient_statuses: form.recipient_scope === "by_status" ? form.recipient_statuses : null,
+                recipient_lead_ids: form.recipient_scope === "selected" ? form.recipient_lead_ids : null,
+                extra_recipients: extras.length ? extras : null,
+            };
+            await api.post("/campaigns", payload);
             toast.success("Campaign sent for approval");
             onCreated();
         } catch (err) {
@@ -156,6 +217,10 @@ function CreateCampaignModal({ onClose, onCreated }) {
             setLoading(false);
         }
     };
+
+    const extraPlaceholder = form.channel === "EMAIL"
+        ? "extra1@example.com, extra2@example.com"
+        : "+911234567890, +919876543210";
 
     return (
         <ModalShell title="New Campaign" eyebrow="// Compose & route" onClose={onClose} size="lg">
@@ -182,6 +247,76 @@ function CreateCampaignModal({ onClose, onCreated }) {
                             </button>
                         ))}
                     </div>
+                </div>
+
+                {/* Recipients */}
+                <div>
+                    <label className="zm-label">Recipients</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                        {[
+                            { v: "all_leads", label: "All leads" },
+                            { v: "by_status", label: "By status" },
+                            { v: "selected", label: "Pick leads" },
+                            { v: "manual", label: "Manual entry" },
+                        ].map((o) => (
+                            <button key={o.v} type="button" onClick={() => setForm({ ...form, recipient_scope: o.v })}
+                                data-testid={`recipient-scope-${o.v}`}
+                                className={`px-2 py-2 text-xs uppercase tracking-[0.1em] font-bold border ${
+                                    form.recipient_scope === o.v ? "bg-[#2563EB] text-white border-[#2563EB]" : "bg-white text-[#71717A] border-[#E2E8F0] hover:border-[#2563EB]"
+                                }`}>{o.label}</button>
+                        ))}
+                    </div>
+
+                    {form.recipient_scope === "all_leads" && (
+                        <p className="text-xs text-[#64748B] bg-[#F8FAFC] p-2 border-l-2 border-l-[#2563EB]">
+                            Will send to <span className="font-bold text-[#0F172A]">{leadsPreview.total}</span> leads in your CRM (emails or phones, depending on channel).
+                        </p>
+                    )}
+
+                    {form.recipient_scope === "by_status" && (
+                        <div className="space-y-2">
+                            <div className="flex flex-wrap gap-2">
+                                {["NEW", "CONTACTED", "INTERESTED", "CONVERTED", "NOT_INTERESTED"].map((s) => (
+                                    <label key={s} className="text-xs inline-flex items-center gap-1.5 px-2 py-1 border border-[#E2E8F0] rounded-md cursor-pointer hover:border-[#2563EB]">
+                                        <input type="checkbox" checked={form.recipient_statuses.includes(s)} onChange={() => toggleStatus(s)} data-testid={`recipient-status-${s}`} />
+                                        {s}
+                                    </label>
+                                ))}
+                            </div>
+                            <p className="text-xs text-[#64748B]">{form.recipient_statuses.length} status(es) selected.</p>
+                        </div>
+                    )}
+
+                    {form.recipient_scope === "selected" && (
+                        <div className="max-h-48 overflow-y-auto border border-[#E2E8F0] rounded-md divide-y divide-[#E2E8F0]" data-testid="recipient-lead-picker">
+                            {leadsPreview.leads.length === 0 && (
+                                <p className="p-3 text-xs text-[#94A3B8]">No leads yet — add some first.</p>
+                            )}
+                            {leadsPreview.leads.map((l) => (
+                                <label key={l.id} className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-[#F8FAFC] cursor-pointer">
+                                    <input type="checkbox" checked={form.recipient_lead_ids.includes(l.id)} onChange={() => toggleLead(l.id)} data-testid={`recipient-lead-${l.id}`} />
+                                    <span className="font-semibold flex-1 truncate">{l.name}</span>
+                                    <span className="text-[#64748B] truncate">{l.email || l.phone || "—"}</span>
+                                    <span className="zm-badge bg-[#F8FAFC] text-[10px]">{l.status}</span>
+                                </label>
+                            ))}
+                            <p className="p-2 text-[10px] text-[#94A3B8] bg-[#F8FAFC]">{form.recipient_lead_ids.length} selected of {leadsPreview.leads.length} shown.</p>
+                        </div>
+                    )}
+
+                    {(form.recipient_scope === "manual" || form.recipient_scope === "all_leads") && (
+                        <div className="mt-3">
+                            <label className="zm-label text-[11px]">
+                                {form.recipient_scope === "manual" ? "Recipients" : "Extra recipients (optional)"}
+                                {" · "}{form.channel === "EMAIL" ? "emails" : "phone numbers (E.164)"}
+                            </label>
+                            <textarea rows={2} className="zm-input text-xs" value={form.extra_recipients_raw}
+                                onChange={(e) => setForm({ ...form, extra_recipients_raw: e.target.value })}
+                                placeholder={extraPlaceholder}
+                                data-testid="campaign-extra-recipients" />
+                            <p className="text-[10px] text-[#94A3B8] mt-1">Separate multiple with commas or new lines. These are sent in addition to leads above.</p>
+                        </div>
+                    )}
                 </div>
 
                 {form.channel === "EMAIL" && (
@@ -217,7 +352,7 @@ function CreateCampaignModal({ onClose, onCreated }) {
                                 </div>
                             </div>
                             <button type="button" onClick={generate} disabled={aiLoading} className="zm-btn-dark w-full" data-testid="ai-generate-button">
-                                <Sparkle size={14} weight="fill" /> {aiLoading ? "Generating with Groq…" : "Generate with Groq AI"}
+                                <Sparkle size={14} weight="fill" /> {aiLoading ? "Generating…" : "Generate with AI"}
                             </button>
                         </div>
                     )}
