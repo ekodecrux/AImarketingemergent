@@ -95,9 +95,10 @@ export default function Leads() {
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-[#E2E8F0]">
-                                <th className="text-left px-4 py-3 zm-section-label">Name</th>
+                                <th className="text-left px-4 py-3 zm-section-label">Contact / Company</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Email</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Phone</th>
+                                <th className="text-left px-4 py-3 zm-section-label">Address</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Source</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Status</th>
                                 <th className="text-left px-4 py-3 zm-section-label">Score</th>
@@ -106,18 +107,29 @@ export default function Leads() {
                         </thead>
                         <tbody data-testid="leads-table-body">
                             {loading && (
-                                <tr><td colSpan={7} className="px-4 py-12 text-center text-[#A1A1AA]">Loading…</td></tr>
+                                <tr><td colSpan={8} className="px-4 py-12 text-center text-[#A1A1AA]">Loading…</td></tr>
                             )}
                             {!loading && data.leads.length === 0 && (
-                                <tr><td colSpan={7} className="px-4 py-16 text-center text-[#A1A1AA]">
+                                <tr><td colSpan={8} className="px-4 py-16 text-center text-[#A1A1AA]">
                                     No leads. Add manually or use Scrape.
                                 </td></tr>
                             )}
                             {data.leads.map((l) => (
                                 <tr key={l.id} onClick={() => navigate(`/leads/${l.id}`)} className="border-b border-[#E2E8F0] last:border-b-0 hover:bg-[#F9F9FB] cursor-pointer" data-testid={`lead-row-${l.id}`}>
-                                    <td className="px-4 py-3 font-semibold">{l.name}</td>
+                                    <td className="px-4 py-3">
+                                        <div className="flex items-center gap-2">
+                                            <div className="min-w-0">
+                                                <p className="font-semibold truncate">{l.name || "—"}</p>
+                                                <p className="text-[11px] text-[#64748B] truncate">{l.company || "—"}{l.role ? ` · ${l.role}` : ""}</p>
+                                            </div>
+                                            {l.is_sample && (
+                                                <span className="shrink-0 text-[8px] font-bold uppercase tracking-wider bg-[#FEF3C7] text-[#92400E] px-1.5 py-0.5 rounded" title="AI-generated demo data — not a real lead">AI SAMPLE</span>
+                                            )}
+                                        </div>
+                                    </td>
                                     <td className="px-4 py-3 text-[#71717A]">{l.email || "—"}</td>
                                     <td className="px-4 py-3 text-[#71717A]">{l.phone || "—"}</td>
+                                    <td className="px-4 py-3 text-[#71717A] text-xs max-w-[180px] truncate" title={l.address || ""}>{l.address || "—"}</td>
                                     <td className="px-4 py-3"><span className="zm-badge bg-[#F8FAFC] text-[#0F172A]">{l.source}</span></td>
                                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                         <select value={l.status} onChange={(e) => handleStatusChange(l.id, e.target.value, e)} className="text-xs border border-[#E2E8F0] px-2 py-1 bg-white">
@@ -201,8 +213,8 @@ function BulkUploadModal({ onClose, onDone }) {
             <form onSubmit={submit} className="space-y-4" data-testid="bulk-upload-form">
                 <div className="bg-[#F8FAFC] border-l-2 border-[#2563EB] p-3 text-xs text-[#475569] leading-relaxed">
                     <p className="font-bold text-[#0F172A] mb-1">CSV format (any column order):</p>
-                    <code className="text-[11px]">email, first_name, last_name, phone, company, role, notes, source</code>
-                    <p className="mt-2">Only <span className="font-bold">email</span> is required. Max 5,000 rows / 5MB per file. Duplicates are auto-skipped.</p>
+                    <code className="text-[11px]">email, first_name, last_name, phone, company, role, address, website, notes, source</code>
+                    <p className="mt-2">Only <span className="font-bold">email OR phone</span> is required. <strong>Company</strong> highly recommended for B2B targeting. Max 5,000 rows / 5MB per file. Duplicates auto-skipped.</p>
                 </div>
                 <div>
                     <label className="zm-label">CSV file</label>
@@ -250,33 +262,54 @@ function ScoreCell({ score }) {
 }
 
 function AddLeadModal({ onClose, onSaved }) {
-    const [form, setForm] = useState({ name: "", email: "", phone: "", company: "", notes: "" });
+    const [form, setForm] = useState({
+        name: "", email: "", phone: "", company: "", role: "",
+        address: "", website: "", notes: "",
+    });
     const [loading, setLoading] = useState(false);
     const submit = async (e) => {
         e.preventDefault();
+        if (!form.company.trim() && !form.email.trim() && !form.phone.trim()) {
+            toast.error("Add at least company, email, or phone — a name alone isn't actionable");
+            return;
+        }
         setLoading(true);
         try {
             await api.post("/leads", form);
             toast.success("Lead added");
             onSaved();
         } catch (err) {
-            toast.error("Failed to add");
+            toast.error(err.response?.data?.detail || "Failed to add");
         } finally {
             setLoading(false);
         }
     };
+    const FIELDS = [
+        { k: "name", label: "Contact name *", required: true, placeholder: "Owner, CEO, or full name" },
+        { k: "company", label: "Company / school / business name *", required: true, placeholder: "Acme Pvt Ltd · Greenwood Academy" },
+        { k: "role", label: "Role / designation", placeholder: "Principal, Owner, Marketing Head" },
+        { k: "email", label: "Email", placeholder: "owner@example.com" },
+        { k: "phone", label: "Phone (E.164)", placeholder: "+919876543210" },
+        { k: "website", label: "Website", placeholder: "https://example.com" },
+        { k: "address", label: "Address (city + state + zip)", placeholder: "Indiranagar, Bengaluru, KA 560038" },
+    ];
     return (
         <ModalShell title="Add lead" eyebrow="// New record" onClose={onClose}>
             <form onSubmit={submit} className="space-y-4" data-testid="add-lead-form">
-                {["name", "email", "phone", "company"].map((k) => (
-                    <div key={k}>
-                        <label className="zm-label">{k}</label>
-                        <input className="zm-input" required={k === "name"} value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} data-testid={`add-lead-${k}`} />
-                    </div>
-                ))}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {FIELDS.map(({ k, label, required, placeholder }) => (
+                        <div key={k} className={k === "address" ? "sm:col-span-2" : ""}>
+                            <label className="zm-label">{label}</label>
+                            <input className="zm-input" required={required} value={form[k]}
+                                onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                                placeholder={placeholder}
+                                data-testid={`add-lead-${k}`} />
+                        </div>
+                    ))}
+                </div>
                 <div>
                     <label className="zm-label">Notes</label>
-                    <textarea className="zm-input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} data-testid="add-lead-notes" />
+                    <textarea className="zm-input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} data-testid="add-lead-notes" placeholder="How you met, deal context, custom tags…" />
                 </div>
                 <div className="flex gap-3 pt-2">
                     <button type="submit" disabled={loading} className="zm-btn-primary flex-1" data-testid="add-lead-submit">{loading ? "Saving…" : "Add lead"}</button>
@@ -309,12 +342,17 @@ function ScrapeModal({ onClose, onDone }) {
     };
 
     return (
-        <ModalShell title="AI Lead Discovery" eyebrow="// Scrape engine" onClose={onClose}>
+        <ModalShell title="AI Lead Discovery" eyebrow="// Demo · sample leads" onClose={onClose}>
             <form onSubmit={submit} className="space-y-4" data-testid="scrape-form">
+                <div className="bg-[#FFFBEB] border-l-2 border-[#F59E0B] p-3 text-xs text-[#92400E] leading-relaxed">
+                    <p className="font-bold text-[#0F172A] mb-1">⚠ These are AI-generated <em>sample</em> leads, not real scraped data</p>
+                    <p>Useful for demos, persona testing, and content drafts. They'll be tagged <span className="font-mono bg-white px-1 rounded">AI SAMPLE</span> in your CRM.</p>
+                    <p className="mt-1.5">For <strong>real verified leads</strong>: use <span className="font-mono">Bulk Upload</span> (your CSV) or bind a paid lead-gen API (Apollo / ZoomInfo / Hunter — coming soon to /admin/integrations).</p>
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                     {[
-                        ["GOOGLE_MAPS_LEADS", "Maps"],
-                        ["LINKEDIN_LEADS", "LinkedIn"],
+                        ["GOOGLE_MAPS_LEADS", "Maps-style"],
+                        ["LINKEDIN_LEADS", "LinkedIn-style"],
                         ["COMPETITOR_KEYWORDS", "Competitors"],
                     ].map(([v, label]) => (
                         <button

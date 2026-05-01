@@ -104,12 +104,24 @@ function CredForm({ provider, onSaved }) {
                     </button>
                 )}
             </div>
-            <form onSubmit={save} className="grid md:grid-cols-2 gap-3 bg-[#F0F9FF] border border-[#BAE6FD] p-4 rounded-md">
+            <form onSubmit={save} className="grid md:grid-cols-2 gap-3 bg-[#F0F9FF] border border-[#BAE6FD] p-4 rounded-md" autoComplete="off">
+                {/* Hidden decoy fields — Chrome targets the FIRST text+password pair on a page for autofill.
+                    By providing dummy fields, we absorb the autofill and keep our real inputs clean. */}
+                <input type="text" name="prevent-autofill-username" autoComplete="username" style={{ display: "none" }} tabIndex={-1} aria-hidden="true" />
+                <input type="password" name="prevent-autofill-password" autoComplete="current-password" style={{ display: "none" }} tabIndex={-1} aria-hidden="true" />
                 <div>
                     <label className="block text-[10px] uppercase tracking-[0.15em] text-[#0F172A] font-bold mb-1">{idLabel}</label>
                     <input
                         type="text"
                         required
+                        name={`zm-client-id-${provider.id}`}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        data-form-type="other"
+                        data-lpignore="true"
+                        data-1p-ignore="true"
                         value={clientId}
                         onChange={(e) => setClientId(e.target.value)}
                         placeholder={provider.configured ? "••• already saved ··· paste to replace" : "paste here"}
@@ -123,6 +135,14 @@ function CredForm({ provider, onSaved }) {
                         <input
                             type={showSecret ? "text" : "password"}
                             required
+                            name={`zm-client-secret-${provider.id}`}
+                            autoComplete="new-password"
+                            autoCorrect="off"
+                            autoCapitalize="off"
+                            spellCheck={false}
+                            data-form-type="other"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
                             value={clientSecret}
                             onChange={(e) => setClientSecret(e.target.value)}
                             placeholder={provider.configured ? "••• already saved ··· paste to replace" : "paste here"}

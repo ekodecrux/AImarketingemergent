@@ -378,6 +378,9 @@ class LeadIn(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     company: Optional[str] = None
+    role: Optional[str] = None  # job title / designation
+    address: Optional[str] = None  # full address or city
+    website: Optional[str] = None
     source: str = "MANUAL"
     status: str = "NEW"
     notes: Optional[str] = None
@@ -891,14 +894,18 @@ async def import_leads_csv(file: UploadFile = File(...), user=Depends(get_curren
             "id": str(uuid.uuid4()),
             "user_id": ws(user),
             "email": email,
+            "name": ((row.get("first_name") or row.get("firstname") or "") + " " + (row.get("last_name") or row.get("lastname") or "")).strip() or row.get("name") or email.split("@")[0],
             "first_name": row.get("first_name") or row.get("firstname") or "",
             "last_name": row.get("last_name") or row.get("lastname") or "",
             "phone": row.get("phone") or "",
-            "company": row.get("company") or "",
-            "role": row.get("role") or row.get("title") or "",
+            "company": row.get("company") or row.get("organization") or row.get("school") or "",
+            "role": row.get("role") or row.get("title") or row.get("designation") or "",
+            "address": row.get("address") or row.get("location") or row.get("city") or "",
+            "website": row.get("website") or row.get("url") or "",
             "source": row.get("source") or "csv_upload",
             "notes": row.get("notes") or "",
             "status": "new",
+            "score": 50,
             "created_at": now_utc().isoformat(),
         })
     if rows:
@@ -1668,6 +1675,7 @@ async def start_scrape(payload: ScrapeIn, user=Depends(get_current_user)):
                 r["source"] = payload.type
                 r["status"] = "NEW"
                 r["score"] = 50
+                r["is_sample"] = True  # AI-generated demo lead — flag for UI badge
             await db.leads.insert_many(results)
         await db.scraping_jobs.update_one(
             {"id": job_id},
@@ -1684,23 +1692,31 @@ async def start_scrape(payload: ScrapeIn, user=Depends(get_current_user)):
 
 
 async def _ai_generate_sample_leads(payload: ScrapeIn, user_id: str) -> List[Dict[str, Any]]:
-    """Generate realistic sample leads using Groq based on scrape params."""
+    """Generate realistic SAMPLE leads using AI for demos and discovery.
+    NOTE: These are AI-generated examples, not scraped from real sources. To get
+    real leads, use the CSV import (your data) or bind a paid lead-gen API like
+    Apollo/ZoomInfo (see /admin/integrations roadmap)."""
     if payload.type == "GOOGLE_MAPS_LEADS":
         prompt = (
-            f"Generate 12 realistic sample business leads for the keyword '{payload.keyword}' in '{payload.location}'. "
-            "Return ONLY a JSON array with objects: name, company, email, phone, notes. "
-            "Use realistic-sounding business names; emails on plausible domains; phone numbers in international E.164 format. "
-            "Notes should briefly describe the business (1 sentence). No commentary, just JSON."
+            f"Generate 12 realistic SAMPLE business leads for the keyword '{payload.keyword}' in '{payload.location}'. "
+            "Return ONLY a JSON array with objects: name (contact person if known else use 'Owner'), "
+            "company (the business name — REQUIRED), role (e.g. Owner, Manager), "
+            "email, phone (E.164), address (full street + city + state + zip if known), website (https://...), notes. "
+            "Use plausible business names AND addresses for the location given. No commentary, just JSON."
         )
     elif payload.type == "LINKEDIN_LEADS":
         prompt = (
-            f"Generate 10 realistic sample LinkedIn leads matching the role/keyword '{payload.keyword}'. "
-            "Return ONLY a JSON array with objects: name, company, email, phone, notes (1 line job title). No commentary."
+            f"Generate 10 realistic SAMPLE LinkedIn leads matching the role/keyword '{payload.keyword}'. "
+            "Return ONLY a JSON array with objects: name (full name), company (REQUIRED — current employer), "
+            "role (job title), email, phone, address (city + country), website (LinkedIn profile URL placeholder), "
+            "notes (1 line about the person's seniority/expertise). No commentary."
         )
     else:  # COMPETITOR_KEYWORDS
         prompt = (
             f"Given the website '{payload.website}', list 10 likely competitor companies as JSON array of "
-            "{name, company, email, phone, notes}. The note should be the competitor URL. No commentary, just JSON."
+            "{name, company, role, email, phone, address, website, notes}. "
+            "Set 'name' to the company's known founder/CEO if you can guess, else 'Sales Team'. "
+            "Set 'website' to the competitor URL and 'notes' to a 1-line description. No commentary, just JSON."
         )
 
     def _gen():

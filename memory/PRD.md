@@ -1,5 +1,34 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 35 (May 2026) — Lead schema expansion + honest "AI SAMPLE" tagging + autofill bug fix
+
+User: "want school name or company name to be added in the leads scraping. Also add lead should allow company name. Without that and address, no use of CRM. Hope you are giving real time leads, not fake ones."
+
+**Honest answer on lead source**: Leads from "Scrape" are AI-GENERATED demo data, not real scraped records. The platform never had Google Maps / LinkedIn scrapers (those require paid APIs or browser automation that gets rate-limited within seconds). What we shipped was an LLM that fabricates plausible-looking businesses for demos. **This iter makes that transparent in the UI** AND extends the schema so REAL leads (via CSV import or future paid API integrations like Apollo/ZoomInfo) carry full firmographic data.
+
+**Backend (`server.py`)**
+- **`LeadIn` model** extended with `role`, `address`, `website` fields (all optional but recommended).
+- **`_ai_generate_sample_leads`** prompt rewritten to demand `company` (REQUIRED), `role`, `address`, `website` for each generated lead. Also explicitly labels the function as sample-data generator.
+- **Sample leads tagged `is_sample: true`** in DB so UI can show "AI SAMPLE" badge.
+- **CSV import** now reads `company / organization / school`, `role / title / designation`, `address / location / city`, `website / url` columns — accepts either `name` OR `first_name + last_name` for the contact field.
+
+**Frontend**
+- **Add Lead modal**: 7 fields in 2-column grid — Contact name (required), Company/School (required), Role, Email, Phone, Website, Address (full-width). Helpful placeholders (e.g. "Acme Pvt Ltd · Greenwood Academy"). Submit blocks if NO email/phone/company provided.
+- **Leads table**: Contact column now stacks `name` over `company · role`. New Address column. **Yellow "AI SAMPLE" pill** next to AI-generated leads with title-tooltip "AI-generated demo data — not a real lead".
+- **Scrape modal**: prominent amber warning at top — "⚠ These are AI-generated sample leads, not real scraped data. For real verified leads: use Bulk Upload or bind a paid lead-gen API (Apollo / ZoomInfo / Hunter — coming soon)." Type-pills now read "Maps-style", "LinkedIn-style", "Competitors" to reinforce demo nature.
+- **CSV upload helper**: format string updated to `email, first_name, last_name, phone, company, role, address, website, notes, source` with note "Company highly recommended for B2B targeting".
+
+**Browser autofill bug fix (`AdminPlatformSetup.jsx`)**
+User screenshot showed admin email pre-filled in LinkedIn Client ID field. Root cause: Chrome auto-fills the FIRST text+password input pair on a page with the user's saved login credentials. Fix:
+- Added invisible decoy `<input type="text" autoComplete="username">` + `<input type="password" autoComplete="current-password">` pair that absorbs autofill before our real fields.
+- Real fields use unique `name` attributes (`zm-client-id-{provider}`), `autoComplete="off"` (Client ID) / `"new-password"` (Secret), plus `data-lpignore` / `data-1p-ignore` / `data-form-type="other"` to hint LastPass/1Password/Chrome to skip.
+- `<form autoComplete="off">` belt-and-suspenders.
+
+**Verification**
+- curl: `POST /leads` with all 8 fields → 200 returns lead with role/address/website intact.
+- curl: `POST /scraping/start` for "private schools in Bengaluru" → returns real-looking Karnataka school records with 6-digit pincodes; all tagged `is_sample: true`.
+- Playwright: 12 AI SAMPLE badges visible on table; Add Lead modal renders 7 inputs (company/role/address/website all present); Address column header visible.
+
 ## Iter 34 (May 2026) — Admin UI: save Developer App credentials from browser (no .env editing)
 User: "even if we click on connect in LinkedIn, it doesn't give placeholders for token/secret — instead it says configure at backend. It should allow configuring from frontend."
 
