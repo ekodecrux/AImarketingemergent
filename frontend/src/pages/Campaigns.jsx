@@ -57,6 +57,24 @@ export default function Campaigns() {
         }
     };
 
+    const approveAndSend = async (c) => {
+        const ok = window.confirm(
+            `Send "${c.name}" now?\n\n` +
+            `Channel: ${c.channel}\n` +
+            `Recipients: ${c.recipient_scope === 'all_leads' ? 'All your leads' : c.recipient_scope === 'manual' ? `${(c.extra_recipients || []).length} manual` : `filtered by ${c.recipient_scope}`}\n\n` +
+            `This will approve + queue delivery immediately.`
+        );
+        if (!ok) return;
+        const t = toast.loading("Approving & sending…");
+        try {
+            const r = await api.post(`/campaigns/${c.id}/approve-and-send`);
+            toast.success(r.data?.message || "Queued for delivery — check Approvals if it doesn't arrive.", { id: t, duration: 5000 });
+            setTimeout(load, 1500);
+        } catch (err) {
+            toast.error(err.response?.data?.detail || "Send failed", { id: t });
+        }
+    };
+
     const deleteCampaign = async (id) => {
         if (!window.confirm("Delete this campaign?")) return;
         await api.delete(`/campaigns/${id}`);
@@ -102,6 +120,24 @@ export default function Campaigns() {
                 }
             />
             <div className="px-4 sm:px-6 lg:px-8 py-6">
+                {(() => {
+                    const pending = items.filter((c) => c.status === "PENDING_APPROVAL").length;
+                    const sent_but_zero = items.filter((c) => c.status === "SENT" && (c.sent_count || 0) === 0 && (c.failed_count || 0) === 0).length;
+                    if (pending === 0 && sent_but_zero === 0) return null;
+                    return (
+                        <div className="mb-4 bg-[#EFF6FF] border-l-4 border-[#2563EB] p-4 rounded-md" data-testid="campaigns-banner">
+                            <p className="text-sm font-bold text-[#0F172A] mb-1">
+                                {pending > 0 && `📮 ${pending} campaign${pending > 1 ? "s" : ""} waiting — click "Approve & Send" on each card to deliver.`}
+                                {sent_but_zero > 0 && pending > 0 && " · "}
+                                {sent_but_zero > 0 && `⚠️ ${sent_but_zero} campaign${sent_but_zero > 1 ? "s" : ""} marked SENT but reached 0 recipients.`}
+                            </p>
+                            <p className="text-xs text-[#475569] leading-relaxed">
+                                {pending > 0 && "New campaigns default to 'waiting for approval' so a human signs off before sending. Since you're the workspace owner you can one-click approve+send. "}
+                                {sent_but_zero > 0 && "Check that your recipients have valid emails/phones and that SMTP/Twilio credentials in Connect Channels are healthy."}
+                            </p>
+                        </div>
+                    );
+                })()}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-0 zm-card" data-testid="campaigns-grid">
                     {loading && <div className="p-12 text-[#A1A1AA] text-sm">Loading…</div>}
                     {!loading && items.length === 0 && (
@@ -136,9 +172,14 @@ export default function Campaigns() {
                                 </p>
                                 <div className="flex gap-2">
                                     {c.status === "PENDING_APPROVAL" && (
-                                        <button onClick={() => setEditing(c)} className="zm-btn-primary flex-1 text-xs py-2" data-testid={`edit-campaign-${c.id}`}>
-                                            <PencilSimple size={12} weight="bold" /> Edit
-                                        </button>
+                                        <>
+                                            <button onClick={() => approveAndSend(c)} className="zm-btn-primary flex-1 text-xs py-2" data-testid={`approve-send-campaign-${c.id}`}>
+                                                <PaperPlaneTilt size={12} weight="bold" /> Approve & Send
+                                            </button>
+                                            <button onClick={() => setEditing(c)} className="zm-btn-secondary text-xs py-2" title="Edit before sending" data-testid={`edit-campaign-${c.id}`}>
+                                                <PencilSimple size={12} weight="bold" />
+                                            </button>
+                                        </>
                                     )}
                                     {(c.status === "APPROVED" || c.status === "MODIFIED") && (
                                         <button onClick={() => sendCampaign(c.id)} className="zm-btn-primary flex-1 text-xs py-2" data-testid={`send-campaign-${c.id}`}>

@@ -152,6 +152,21 @@ export default function Connect() {
                     </div>
                 </div>
 
+                {/* User-friendly notice if platform providers pending for non-admins */}
+                {!isAdmin && platformPending && (
+                    <div className="zm-card p-5 border-l-4 border-[#2563EB] bg-[#EFF6FF]" data-testid="user-platform-pending">
+                        <div className="flex items-start gap-3">
+                            <WarningCircle size={20} weight="fill" className="text-[#2563EB] mt-0.5" />
+                            <div className="flex-1">
+                                <p className="font-bold text-[#0F172A]">Social channels are coming soon</p>
+                                <p className="text-sm text-[#475569] mt-0.5 leading-relaxed">
+                                    LinkedIn, Facebook, Instagram, and X are being set up by our platform team. <strong>Meanwhile, you can already run Email + SMS + WhatsApp campaigns today</strong> — no connection needed. Head to <Link to="/campaigns" className="underline font-semibold text-[#2563EB]">Campaigns</Link> and pick Email or SMS.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Admin notice if platform setup is pending */}
                 {isAdmin && platformPending && (
                     <div className="zm-card p-5 border-l-4 border-[#F59E0B] bg-[#FFFBEB]" data-testid="admin-platform-pending">

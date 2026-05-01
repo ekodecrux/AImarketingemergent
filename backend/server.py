@@ -1078,6 +1078,42 @@ async def send_campaign(cid: str, background: BackgroundTasks, user=Depends(get_
     return {"success": True, "queued": True, "message": "Campaign queued for delivery — refresh to see status."}
 
 
+@api.post("/campaigns/{cid}/approve-and-send")
+async def approve_and_send(cid: str, background: BackgroundTasks, user=Depends(get_current_user)):
+    """One-click for the common case of solo operators: self-approve a PENDING_APPROVAL
+    campaign AND immediately queue it for delivery. Audit record still captured in
+    db.approvals so the history is preserved."""
+    campaign = await db.campaigns.find_one({"id": cid, "user_id": ws(user)}, {"_id": 0})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign["status"] != "PENDING_APPROVAL":
+        raise HTTPException(status_code=400, detail=f"Campaign is already {campaign['status']}")
+    # Audit log the self-approval
+    await db.approvals.update_many(
+        {"campaign_id": cid, "status": "PENDING"},
+        {"$set": {
+            "status": "APPROVED",
+            "approved_by": user["id"],
+            "approver_email": user.get("email"),
+            "approved_at": now_utc().isoformat(),
+            "self_approved": True,
+        }}
+    )
+    # Transition to SENDING and dispatch
+    await db.campaigns.update_one(
+        {"id": cid},
+        {"$set": {"status": "SENDING", "started_at": now_utc().isoformat()}},
+    )
+    background.add_task(_run_campaign_send, cid, ws(user))
+    try:
+        await _log_activity(user["id"], "campaign.approve_and_send",
+                            f"Self-approved and sent '{campaign.get('name')}' ({campaign.get('channel')})",
+                            details={"campaign_id": cid})
+    except Exception:
+        pass
+    return {"success": True, "queued": True, "message": "Approved & queued for delivery — check back in a moment."}
+
+
 async def _run_campaign_send(cid: str, user_id: str):
     """Background job: deliver a campaign to the targeted audience.
     Honors `recipient_scope`: all_leads | by_status | selected | manual (+ extra_recipients).

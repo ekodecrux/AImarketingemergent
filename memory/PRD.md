@@ -1,5 +1,22 @@
 # ZeroMark AI — Product Requirements Document
 
+## Iter 31 (May 2026) — Campaign delivery UX + Connect Channels clarity
+**User report**: "users not allowed to add connections, email campaign created but not sent, what to do to make campaigns successful"
+
+**Root-cause analysis**
+1. **"Not sent" campaigns** — SMTP was correctly configured (`GMAIL_SENDER_EMAIL` + app password in .env), verified by sending a real smoke-test email successfully. The real issue was **UX confusion**: new campaigns go to `PENDING_APPROVAL` by design (team-safety), but for solo operators there was no clear next-step CTA. Users saw a "Campaign sent for approval" toast and thought the campaign was delivered — it was actually just sitting in /approvals unanswered. `sent_count: 0` on "SENT" campaigns meant approvals were triggered but delivery produced 0 matches (no leads + manual-recipient mode with blank lists).
+2. **"Not allowed to add connections"** — this is correct gating behavior. LinkedIn/FB/IG/X cards show "AWAITING PLATFORM SETUP" until the Super Admin registers developer apps at `/admin/platform-setup`. No UX guidance was visible for NON-admin users explaining this.
+
+**Fixes**
+- **New `POST /api/campaigns/{cid}/approve-and-send`** — one-click self-approve + dispatch for solo operators. Marks the approval record as `self_approved=true`, transitions campaign PENDING → SENDING → SENT, writes activity log.
+- **Frontend `Campaigns.jsx`**: PENDING_APPROVAL cards now show a **prominent blue "Approve & Send"** primary button with a small pencil Edit icon as secondary. Users don't need to visit `/approvals` for their own campaigns anymore.
+- **Banner on Campaigns page** — surfaces counts of pending campaigns ("📮 8 campaigns waiting") AND zero-recipient SENT campaigns ("⚠️ 2 campaigns marked SENT but reached 0 recipients") with guidance on how to fix each.
+- **Connect Channels non-admin banner** — explains clearly to non-admin users: "LinkedIn/FB/IG/X coming soon. **Email + SMS + WhatsApp work today — no connection needed.** Head to Campaigns to start."
+
+**Verification**
+- curl → `POST /campaigns/{cid}/approve-and-send` → 200, campaign transitioned to SENT with `sent_count=1` (real email delivered to ekodecrux@gmail.com via Gmail SMTP).
+- Playwright → 8 Approve & Send buttons rendered, banner text verified correct.
+
 ## Iter 30 (May 2026) — "Boost this campaign" — one-click organic→paid amplification
 User requested: convert winning SENT email/social campaigns into Meta Ad drafts automatically.
 
