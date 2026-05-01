@@ -1838,6 +1838,196 @@ async def integrations_health(user=Depends(get_current_user)):
     return {"channels": out, "checked_at": now_utc().isoformat()}
 
 
+# ---------- Facebook Page picker (multi-page support) ----------
+@api.get("/integrations/facebook/pages")
+async def list_facebook_pages(user=Depends(get_current_user)):
+    integ = await db.integrations.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    fb = integ.get("facebook") or {}
+    pages = fb.get("pages") or []
+    selected = fb.get("selected_page_id")
+    # Strip encrypted tokens before returning to UI
+    safe_pages = [
+        {"id": p.get("id"), "name": p.get("name"),
+         "instagram_business_account_id": p.get("instagram_business_account_id"),
+         "selected": p.get("id") == selected,
+         "has_instagram": bool(p.get("instagram_business_account_id"))}
+        for p in pages
+    ]
+    return {"pages": safe_pages, "selected_page_id": selected, "connected": bool(fb.get("access_token"))}
+
+
+class FacebookSelectIn(BaseModel):
+    page_id: str
+
+
+@api.post("/integrations/facebook/select-page")
+async def select_facebook_page(payload: FacebookSelectIn, user=Depends(get_current_user)):
+    integ = await db.integrations.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    fb = integ.get("facebook") or {}
+    pages = fb.get("pages") or []
+    if not any(p.get("id") == payload.page_id for p in pages):
+        raise HTTPException(status_code=404, detail="Page not found in your connected Facebook account")
+    await db.integrations.update_one(
+        {"user_id": ws(user)},
+        {"$set": {"facebook.selected_page_id": payload.page_id}},
+    )
+    return {"success": True, "selected_page_id": payload.page_id}
+
+
+# ---------- Meta Ads per-user binding (Phase 3) ----------
+class MetaAdsBindIn(BaseModel):
+    access_token: str  # System User long-lived token with ads_management scope
+    ad_account_id: str  # format: act_1234567890
+
+
+@api.post("/integrations/meta-ads/bind")
+async def bind_meta_ads(payload: MetaAdsBindIn, user=Depends(get_current_user)):
+    """Per-user Meta Ads binding. Verifies the token actually has ads_management scope on the
+    given Ad Account, stores it encrypted, and flips the user's per-user mock_mode off."""
+    if not payload.ad_account_id.startswith("act_"):
+        raise HTTPException(status_code=400, detail="Ad Account ID must start with 'act_'")
+    if len(payload.access_token) < 30:
+        raise HTTPException(status_code=400, detail="Access token looks invalid")
+
+    # Verify token + scopes via Graph API
+    try:
+        def _verify():
+            # /me/permissions returns granted scopes
+            perms = _http.get(
+                "https://graph.facebook.com/v18.0/me/permissions",
+                params={"access_token": payload.access_token}, timeout=10,
+            )
+            perms.raise_for_status()
+            granted = {p["permission"] for p in (perms.json().get("data") or []) if p.get("status") == "granted"}
+            # Verify the Ad Account is reachable
+            acct = _http.get(
+                f"https://graph.facebook.com/v18.0/{payload.ad_account_id}",
+                params={"access_token": payload.access_token, "fields": "id,name,account_status,currency"},
+                timeout=10,
+            )
+            acct.raise_for_status()
+            return granted, acct.json()
+        granted_scopes, acct_data = await asyncio.get_event_loop().run_in_executor(None, _verify)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Verification failed: {str(e)[:200]}")
+
+    if "ads_management" not in granted_scopes:
+        raise HTTPException(status_code=400, detail=f"Token missing 'ads_management' scope. Granted: {sorted(granted_scopes)}")
+    if acct_data.get("account_status") != 1:
+        raise HTTPException(status_code=400, detail=f"Ad Account is not active (status={acct_data.get('account_status')}). Verify billing & in good standing.")
+
+    await db.integrations.update_one(
+        {"user_id": ws(user)},
+        {"$set": {"meta_ads": {
+            "access_token": _enc(payload.access_token),
+            "access_token__encrypted": True,
+            "ad_account_id": payload.ad_account_id,
+            "ad_account_name": acct_data.get("name"),
+            "currency": acct_data.get("currency"),
+            "scopes": sorted(granted_scopes),
+            "mock_mode": False,  # per-user flag overrides global
+            "connected": True,
+            "updated_at": now_utc().isoformat(),
+        }}, "$setOnInsert": {"user_id": ws(user)}},
+        upsert=True,
+    )
+    return {"success": True, "ad_account_name": acct_data.get("name"), "currency": acct_data.get("currency"),
+            "mock_mode": False}
+
+
+@api.delete("/integrations/meta-ads")
+async def unbind_meta_ads(user=Depends(get_current_user)):
+    await db.integrations.update_one({"user_id": ws(user)}, {"$unset": {"meta_ads": ""}})
+    return {"success": True}
+
+
+# ---------- Hunter.io lead enrichment (Phase 4) ----------
+class HunterBindIn(BaseModel):
+    api_key: str
+
+
+@api.post("/integrations/hunter/bind")
+async def bind_hunter(payload: HunterBindIn, user=Depends(get_current_user)):
+    if len(payload.api_key) < 20:
+        raise HTTPException(status_code=400, detail="Hunter API key looks invalid")
+    # Verify with /account endpoint
+    try:
+        def _verify():
+            r = _http.get("https://api.hunter.io/v2/account",
+                          params={"api_key": payload.api_key}, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        data = await asyncio.get_event_loop().run_in_executor(None, _verify)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Hunter verification failed: {str(e)[:200]}")
+
+    info = (data.get("data") or {})
+    await db.integrations.update_one(
+        {"user_id": ws(user)},
+        {"$set": {"hunter": {
+            "api_key": _enc(payload.api_key),
+            "api_key__encrypted": True,
+            "plan_name": info.get("plan_name"),
+            "calls_used": info.get("calls", {}).get("used"),
+            "calls_available": info.get("calls", {}).get("available"),
+            "connected": True,
+            "updated_at": now_utc().isoformat(),
+        }}, "$setOnInsert": {"user_id": ws(user)}},
+        upsert=True,
+    )
+    return {"success": True, "plan": info.get("plan_name"),
+            "quota_used": info.get("calls", {}).get("used"),
+            "quota_total": info.get("calls", {}).get("available")}
+
+
+@api.delete("/integrations/hunter")
+async def unbind_hunter(user=Depends(get_current_user)):
+    await db.integrations.update_one({"user_id": ws(user)}, {"$unset": {"hunter": ""}})
+    return {"success": True}
+
+
+# ---------- Razorpay live-key swap (Phase 4) ----------
+class RazorpayLiveIn(BaseModel):
+    key_id: str  # rzp_live_...
+    key_secret: str
+
+
+@api.post("/admin/razorpay/swap-live")
+async def admin_razorpay_swap(payload: RazorpayLiveIn, user=Depends(get_current_user)):
+    """Admin-only: swap test Razorpay keys for live keys WITHOUT a backend restart by writing to
+    process env. Verifies via Razorpay /payments endpoint before persisting. Persists to a
+    dedicated db.platform_config doc so the swap survives backend restarts (read at startup)."""
+    _require_admin(user)
+    if not payload.key_id.startswith("rzp_live_"):
+        raise HTTPException(status_code=400, detail="Live key ID must start with 'rzp_live_'")
+    # Verify by hitting Razorpay
+    try:
+        def _verify():
+            r = _http.get("https://api.razorpay.com/v1/payments?count=1",
+                          auth=(payload.key_id, payload.key_secret), timeout=10)
+            r.raise_for_status()
+            return r.json()
+        await asyncio.get_event_loop().run_in_executor(None, _verify)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Razorpay verification failed: {str(e)[:200]}")
+    # Persist to mongo + flip env in-memory
+    os.environ["RAZORPAY_KEY_ID"] = payload.key_id
+    os.environ["RAZORPAY_KEY_SECRET"] = payload.key_secret
+    await db.platform_config.update_one(
+        {"key": "razorpay"},
+        {"$set": {
+            "key": "razorpay",
+            "key_id": payload.key_id,
+            "key_secret_encrypted": _enc(payload.key_secret),
+            "is_live": True,
+            "swapped_by": user["email"],
+            "swapped_at": now_utc().isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"success": True, "is_live": True, "key_id_prefix": payload.key_id[:14]}
+
+
 # ---------- Daily AI Growth Briefing ----------
 @api.post("/briefing/generate")
 async def generate_briefing(user=Depends(get_current_user)):
@@ -3393,7 +3583,50 @@ async def enrich_lead(lead_id: str, user=Depends(get_current_user)):
     # Try to fetch the company homepage
     scrape = await asyncio.get_event_loop().run_in_executor(None, _scrape_url_quick, f"https://{domain}")
 
-    # AI inference from first-name + domain + scrape
+    # If user has Hunter.io bound, query it for real company + role data
+    hunter_data: Dict[str, Any] = {}
+    integ = await db.integrations.find_one({"user_id": ws(user)}, {"_id": 0}) or {}
+    h = integ.get("hunter") or {}
+    if h.get("api_key"):
+        try:
+            hunter_key = _dec(h["api_key"])
+            def _hunt():
+                # Domain search returns company info + email patterns
+                r1 = _http.get("https://api.hunter.io/v2/domain-search",
+                               params={"domain": domain, "api_key": hunter_key, "limit": 5}, timeout=10)
+                # Email finder for this exact email if available
+                r2 = _http.get("https://api.hunter.io/v2/email-finder",
+                               params={"domain": domain, "first_name": lead.get("first_name") or "",
+                                       "last_name": lead.get("last_name") or "", "api_key": hunter_key}, timeout=10) if (lead.get("first_name") or lead.get("last_name")) else None
+                return (r1.json() if r1.status_code == 200 else None,
+                        r2.json() if (r2 and r2.status_code == 200) else None)
+            d1, d2 = await asyncio.get_event_loop().run_in_executor(None, _hunt)
+            if d1 and d1.get("data"):
+                co = d1["data"]
+                hunter_data = {
+                    "company_name": co.get("organization"),
+                    "industry": co.get("industry"),
+                    "company_size_estimate": (
+                        "enterprise" if (co.get("headcount") or 0) > 1000 else
+                        "medium" if (co.get("headcount") or 0) > 200 else
+                        "small" if (co.get("headcount") or 0) > 20 else "micro"
+                    ),
+                    "country": co.get("country"),
+                    "linkedin": co.get("linkedin"),
+                    "headcount": co.get("headcount"),
+                    "tech_stack": co.get("technologies"),
+                    "hunter_emails_found": len(co.get("emails") or []),
+                }
+            if d2 and d2.get("data"):
+                ef = d2["data"]
+                if ef.get("position"):
+                    hunter_data["likely_role"] = ef["position"]
+                if ef.get("score"):
+                    hunter_data["email_confidence_score"] = ef["score"]
+        except Exception as e:
+            logger.warning("Hunter.io enrichment failed for %s: %s", domain, e)
+
+    # AI inference from first-name + domain + scrape (always runs as a fallback / supplement)
     try:
         prompt = (
             f"Lead data:\n"
@@ -3402,10 +3635,11 @@ async def enrich_lead(lead_id: str, user=Depends(get_current_user)):
             f"  Company website: https://{domain}\n"
             f"  Title tag: {scrape.get('title','(unreachable)') if scrape.get('ok') else '(unreachable)'}\n"
             f"  Meta: {scrape.get('meta_desc','') if scrape.get('ok') else ''}\n"
-            f"  Headlines: {scrape.get('h1s',[]) if scrape.get('ok') else []}\n\n"
+            f"  Headlines: {scrape.get('h1s',[]) if scrape.get('ok') else []}\n"
+            f"  Hunter data (if any): {hunter_data}\n\n"
             f"Output STRICT JSON:\n"
             f"{{\n"
-            f"  \"company_name\": \"<best guess>\",\n"
+            f"  \"company_name\": \"<best guess — prefer Hunter data if present>\",\n"
             f"  \"industry\": \"<e.g. SaaS, D2C e-commerce, healthcare>\",\n"
             f"  \"company_size_estimate\": \"<micro | small | medium | enterprise>\",\n"
             f"  \"likely_role\": \"<from first name + domain — best guess>\",\n"
@@ -3419,13 +3653,18 @@ async def enrich_lead(lead_id: str, user=Depends(get_current_user)):
 
     enrichment = {
         "domain": domain,
-        "company_name": ai.get("company_name"),
-        "industry": ai.get("industry"),
-        "company_size_estimate": ai.get("company_size_estimate"),
-        "likely_role": ai.get("likely_role"),
+        "company_name": hunter_data.get("company_name") or ai.get("company_name"),
+        "industry": hunter_data.get("industry") or ai.get("industry"),
+        "company_size_estimate": hunter_data.get("company_size_estimate") or ai.get("company_size_estimate"),
+        "likely_role": hunter_data.get("likely_role") or ai.get("likely_role"),
         "personalised_opener": ai.get("personalised_opener"),
         "buying_signals": ai.get("buying_signals") or [],
         "scrape_title": scrape.get("title") if scrape.get("ok") else None,
+        "headcount": hunter_data.get("headcount"),
+        "tech_stack": hunter_data.get("tech_stack"),
+        "linkedin": hunter_data.get("linkedin"),
+        "email_confidence_score": hunter_data.get("email_confidence_score"),
+        "data_source": "hunter+ai" if hunter_data else "ai_only",
         "enriched_at": now_utc().isoformat(),
     }
     await db.leads.update_one(
@@ -3784,14 +4023,19 @@ async def _publish_to_linkedin(content: Dict[str, Any], oauth_token: Optional[st
         return {"status": "failed", "error": str(e)[:120]}
 
 
-async def _publish_to_facebook(content: Dict[str, Any], oauth_token: Optional[str], pages: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-    """Posts to the user's first connected Facebook Page using the Page Access Token (long-lived)."""
+async def _publish_to_facebook(content: Dict[str, Any], oauth_token: Optional[str], pages: Optional[List[Dict[str, Any]]] = None, selected_page_id: Optional[str] = None) -> Dict[str, Any]:
+    """Posts to a Facebook Page using its long-lived Page Access Token.
+    If selected_page_id is provided, publishes to that Page; else falls back to the first connected Page."""
     body = next((p["body"] for p in (content.get("kit") or {}).get("social_posts", []) if p.get("platform") == "facebook"), None)
     if not body:
         body = (content.get("kit") or {}).get("blog_post", {}).get("excerpt", "")
     if not oauth_token or not pages:
         return {"status": "mock_published", "message": "MOCKED — connect Facebook OAuth and select a Page.", "preview": (body or "")[:200]}
-    page = pages[0]
+    page = None
+    if selected_page_id:
+        page = next((p for p in pages if p.get("id") == selected_page_id), None)
+    if not page:
+        page = pages[0]
     page_token_enc = page.get("page_access_token")
     page_id = page.get("id")
     if not page_token_enc or not page_id:
@@ -3807,7 +4051,8 @@ async def _publish_to_facebook(content: Dict[str, Any], oauth_token: Optional[st
         ok = r.status_code in (200, 201)
         return {"status": "published" if ok else "failed", "http": r.status_code,
                 "post_id": (r.json().get("id") if ok else None),
-                "preview": body[:200], "error": (None if ok else r.text[:200])}
+                "preview": body[:200], "page_name": page.get("name"),
+                "error": (None if ok else r.text[:200])}
     except Exception as e:
         return {"status": "failed", "error": str(e)[:120]}
 
@@ -3831,11 +4076,78 @@ async def _publish_to_twitter(content: Dict[str, Any], oauth_token: Optional[str
         return {"status": "failed", "error": str(e)[:120]}
 
 
-async def _publish_to_instagram(content: Dict[str, Any], oauth_token: Optional[str]) -> Dict[str, Any]:
+async def _publish_to_instagram(content: Dict[str, Any], oauth_token: Optional[str], pages: Optional[List[Dict[str, Any]]] = None, selected_page_id: Optional[str] = None) -> Dict[str, Any]:
+    """Publishes a text + image post to Instagram Business via Meta Graph 2-step media flow.
+    1) POST /{ig-user-id}/media with image_url + caption -> creation_id
+    2) POST /{ig-user-id}/media_publish with creation_id -> live post
+
+    Caption-only posts aren't supported by the IG API — we require an image. If no image is
+    in the content kit, we fall back to a sensible OG image generated from the kit title.
+    """
     body = next((p["body"] for p in (content.get("kit") or {}).get("social_posts", []) if p.get("platform") == "instagram"), None)
-    if not oauth_token:
-        return {"status": "mock_published", "message": "MOCKED — Instagram needs Meta OAuth + image asset; connect on Integrations.", "preview": (body or "")[:200]}
-    return {"status": "mock_published", "message": "Instagram OAuth detected but image attachment flow not fully implemented (requires Meta Graph media upload).", "preview": (body or "")[:200]}
+    if not body:
+        body = (content.get("kit") or {}).get("blog_post", {}).get("excerpt", "")
+    if not pages:
+        return {"status": "mock_published", "message": "MOCKED — connect Facebook (which carries IG Business) first.", "preview": (body or "")[:200]}
+
+    # Pick the right Page — selected_page_id wins, else first page with linked IG Business account
+    target_page = None
+    if selected_page_id:
+        target_page = next((p for p in pages if p.get("id") == selected_page_id), None)
+    if not target_page:
+        target_page = next((p for p in pages if p.get("instagram_business_account_id")), None)
+    if not target_page:
+        return {"status": "failed", "error": "No Facebook Page has a linked Instagram Business account. Link IG to your Page in Meta Business Suite first."}
+
+    ig_user_id = target_page.get("instagram_business_account_id")
+    page_token_enc = target_page.get("page_access_token")
+    if not ig_user_id or not page_token_enc:
+        return {"status": "failed", "error": "Missing IG Business ID or Page token — reconnect Facebook"}
+
+    # Image URL — required by IG API. Use blog post hero or a deterministic OG image.
+    image_url = (content.get("kit") or {}).get("blog_post", {}).get("hero_image_url") or content.get("og_image_url")
+    if not image_url:
+        # Fallback: render a placeholder OG image with the title text via existing landing-page asset host
+        title = (content.get("kit") or {}).get("blog_post", {}).get("title") or "ZeroMark"
+        image_url = f"https://placehold.co/1080x1080/0F172A/FFFFFF?text={title[:60].replace(' ', '+')}"
+
+    try:
+        page_token = _dec(page_token_enc)
+        import requests as _rq
+
+        # Step 1: create media container
+        r1 = _rq.post(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+            data={
+                "image_url": image_url,
+                "caption": body[:2200],
+                "access_token": page_token,
+            },
+            timeout=20,
+        )
+        if r1.status_code not in (200, 201):
+            return {"status": "failed", "error": f"IG media creation failed (HTTP {r1.status_code}): {r1.text[:200]}"}
+        creation_id = r1.json().get("id")
+        if not creation_id:
+            return {"status": "failed", "error": "IG media creation returned no id"}
+
+        # Step 2: publish container
+        r2 = _rq.post(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
+            data={"creation_id": creation_id, "access_token": page_token},
+            timeout=20,
+        )
+        if r2.status_code not in (200, 201):
+            return {"status": "failed", "error": f"IG publish failed (HTTP {r2.status_code}): {r2.text[:200]}"}
+        return {
+            "status": "published",
+            "post_id": r2.json().get("id"),
+            "creation_id": creation_id,
+            "preview": body[:200],
+            "image_url": image_url,
+        }
+    except Exception as e:
+        return {"status": "failed", "error": str(e)[:160]}
 
 
 async def _publish_to_blog(content: Dict[str, Any], user_doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -3952,6 +4264,8 @@ async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
     def _meta(plat, key):
         rec = tokens_doc.get(plat) or {}
         return rec.get(key)
+    fb_pages = _meta("facebook", "pages") or []
+    fb_selected = _meta("facebook", "selected_page_id")
     delivery: Dict[str, Any] = {}
     for plat in sched["platforms"]:
         try:
@@ -3960,9 +4274,9 @@ async def _publish_scheduled(sched: Dict[str, Any]) -> Dict[str, Any]:
             elif plat == "twitter":
                 delivery[plat] = await _publish_to_twitter(content, _tok("twitter"))
             elif plat == "facebook":
-                delivery[plat] = await _publish_to_facebook(content, _tok("facebook"), _meta("facebook", "pages"))
+                delivery[plat] = await _publish_to_facebook(content, _tok("facebook"), fb_pages, fb_selected)
             elif plat == "instagram":
-                delivery[plat] = await _publish_to_instagram(content, _tok("instagram"))
+                delivery[plat] = await _publish_to_instagram(content, _tok("facebook"), fb_pages, fb_selected)
             elif plat == "blog":
                 delivery[plat] = await _publish_to_blog(content, user_doc)
             elif plat == "email_broadcast":
@@ -5600,8 +5914,9 @@ def _meta_headers() -> Dict[str, str]:
 
 
 def _meta_post(path: str, token: str, body: Dict[str, Any]) -> Dict[str, Any]:
-    """POST to Meta Marketing API. Raises HTTPException with the platform error on failure."""
-    if META_MOCK_MODE or token.startswith("mock_"):
+    """POST to Meta Marketing API. Raises HTTPException with the platform error on failure.
+    Per-user real-mode: a token NOT starting with 'mock_' goes live regardless of global flag."""
+    if (not token) or token.startswith("mock_"):
         return {"id": f"mock_{uuid.uuid4().hex[:12]}", "_mock": True}
     try:
         r = _http.post(
@@ -5617,7 +5932,8 @@ def _meta_post(path: str, token: str, body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _meta_get(path: str, token: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    if META_MOCK_MODE or token.startswith("mock_"):
+    """Per-user real-mode: a token NOT starting with 'mock_' goes live regardless of global flag."""
+    if (not token) or token.startswith("mock_"):
         # Return a synthetic insights row
         return {
             "data": [{
@@ -6724,6 +7040,17 @@ async def on_startup():
 
     # Migration: backfill workspace_id = user_id on users
     await db.users.update_many({"workspace_id": {"$exists": False}}, [{"$set": {"workspace_id": "$id"}}])
+
+    # Load any persisted platform config (e.g. Razorpay live-key swap) into env so they survive restart
+    try:
+        rzp_cfg = await db.platform_config.find_one({"key": "razorpay"}, {"_id": 0})
+        if rzp_cfg and rzp_cfg.get("is_live") and rzp_cfg.get("key_id"):
+            os.environ["RAZORPAY_KEY_ID"] = rzp_cfg["key_id"]
+            if rzp_cfg.get("key_secret_encrypted"):
+                os.environ["RAZORPAY_KEY_SECRET"] = _dec(rzp_cfg["key_secret_encrypted"])
+            logger.info("Razorpay LIVE keys loaded from platform_config")
+    except Exception as e:
+        logger.warning("Failed to load platform_config razorpay: %s", e)
 
     # Recovery sweep
     cutoff = (now_utc() - timedelta(minutes=5)).isoformat()

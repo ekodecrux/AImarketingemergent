@@ -3,6 +3,9 @@ import { useSearchParams, Link } from "react-router-dom";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
+import FacebookPagePicker from "@/components/FacebookPagePicker";
+import MetaAdsBindForm from "@/components/MetaAdsBindForm";
+import HunterBindForm from "@/components/HunterBindForm";
 import { useAuth } from "@/context/AuthContext";
 import {
     LinkedinLogo, TwitterLogo, FacebookLogo, InstagramLogo, EnvelopeSimple,
@@ -38,7 +41,7 @@ const TIER1_OAUTH = [
         id: "meta_ads", label: "Meta Ads (paid)", icon: MegaphoneSimple, brand: "#000",
         why: "Run REAL Facebook + Instagram ad campaigns inside ZeroMark with capped daily budgets.",
         connect_btn: null,
-        coming_soon: "Phase 3 — backend wiring landing next session",
+        custom: "meta_ads_form",
     },
 ];
 
@@ -234,6 +237,9 @@ export default function Connect() {
                                             </span>
                                         )}
                                     </div>
+
+                                    {c.id === "facebook" && s.connected && <FacebookPagePicker onChange={load} />}
+                                    {c.id === "meta_ads" && <MetaAdsBindForm status={s} onChange={load} />}
                                 </div>
                             );
                         })}
@@ -267,6 +273,17 @@ export default function Connect() {
                                 </div>
                             );
                         })}
+                    </div>
+                </div>
+
+                {/* Tier 3 — Power-ups (per-user paid services) */}
+                <div>
+                    <div className="flex items-baseline justify-between mb-3">
+                        <h3 className="font-display text-xl font-bold tracking-tight text-[#0F172A]">Power-ups (optional)</h3>
+                        <p className="text-xs text-[#71717A]">Bring your own keys for premium data sources</p>
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-4" data-testid="tier3-cards">
+                        <HunterBindForm />
                     </div>
                 </div>
 

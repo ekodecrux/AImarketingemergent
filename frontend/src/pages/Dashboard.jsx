@@ -10,6 +10,7 @@ import PageHeader from "@/components/PageHeader";
 import BriefingCard from "@/components/BriefingCard";
 import SetupChecklist from "@/components/SetupChecklist";
 import CopilotPanel from "@/components/CopilotPanel";
+import ChannelHealthWidget from "@/components/ChannelHealthWidget";
 import { setLocaleCache } from "@/lib/locale";
 
 const STATUS_COLORS = ["#2563EB", "#10B981", "#F59E0B", "#0F172A", "#A855F7"];
@@ -88,6 +89,11 @@ export default function Dashboard() {
                             <p className="text-xs text-[#94A3B8] mt-1">{s.sub}</p>
                         </div>
                     ))}
+                </div>
+
+                {/* Channel health — proactive surface for broken connections */}
+                <div className="mb-6">
+                    <ChannelHealthWidget />
                 </div>
 
                 {/* Charts row */}
